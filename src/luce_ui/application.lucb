@@ -22,6 +22,8 @@ pub struct Application:
     var closed: bool
 
     pub func init(content: interop.Interface[Widget], title: str = "Luce", width: i64 = 800, height: i64 = 600) -> !:
+        if not thread.is_main():
+            error(interop.wrong_thread, "UI applications require the main thread")
         if width < 1 or width > 10000 or height < 1 or height > 10000 or not utf8.valid(title.bytes):
             error(result.invalid, "a window needs valid UTF-8 and dimensions in 1..10000")
         let copied = try interop.copy_text(title)

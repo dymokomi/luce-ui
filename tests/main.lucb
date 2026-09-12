@@ -4,6 +4,7 @@ import interop
 import math
 import memory
 import ownership
+import thread
 import window
 import ui
 from ui import Widget, Button, Spacer, VStack, HStack, Layout, Size, Application, Painter, Rect, Event, BitmapFont
@@ -144,7 +145,19 @@ func drawing() -> !:
         expired = true
     assert(expired)
 
+func construct_on_worker(context: void*?):
+    let rejected = (bool*)(context else trap("missing thread result"))
+    let layout: Layout? = Layout() catch failure:
+        assert(failure.code == interop.wrong_thread)
+        *rejected = true
+        recover none
+    assert(layout == none)
+
 pub func main(arguments: str[]) -> i32!:
+    var rejected = false
+    let worker = try thread.spawn(construct_on_worker, (void*)&rejected)
+    try worker.join()
+    assert(rejected)
     var tracker = Tracker(upstream = memory.heap)
     let previous = memory.heap
     memory.heap = &tracker

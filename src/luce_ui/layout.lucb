@@ -4,6 +4,7 @@ import interop
 import math
 import memory
 import ownership
+import thread
 import luce_ui.result as result
 
 pub type Rect = gpu.Rect
@@ -81,6 +82,7 @@ pub struct Layout:
 
     pub func init(axis: Axis = Axis.overlay, spacing: f64 = 0.0, padding: f64 = 0.0,
                   alignment: Alignment = Alignment.stretch) -> !:
+        try require_main_thread()
         try extent(spacing)
         try extent(padding)
         serial = serial +? 1 else error(result.limit, "UI identities exhausted")
@@ -299,6 +301,7 @@ pub struct Tree:
     var capture: u64
 
     pub func init(content: interop.Interface[Widget]) -> !:
+        try require_main_thread()
         serial = serial +? 1 else error(result.limit, "UI identities exhausted")
         self.identifier = serial
         self.root = content.clone()
@@ -696,3 +699,9 @@ func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect):
 func discard_replacement(entries: Entry[], count: usize*, committed: bool*):
     if not *committed:
         release_entries(entries, *count)
+
+## Base callers can construct storage before adopting it into an interop owner.
+## Check before touching the shared identity/revision state in either path.
+func require_main_thread() -> !:
+    if not thread.is_main():
+        error(interop.wrong_thread, "UI layout requires the main thread")
