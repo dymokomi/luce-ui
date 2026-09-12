@@ -45,7 +45,7 @@ pub struct Text: Widget:
     func paint(target: interop.View[gpu.RenderTarget]) -> !:
         var painter = try Painter(target)
         defer painter.close()
-        let size = try (try target.get()).size()
+        let size = try target.get().size()
         try painter.text(self.caption.value, 0.0, math.max(0.0, (size.height - 14.0) * 0.5))
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:

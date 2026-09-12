@@ -36,7 +36,7 @@ func restore(previous: memory.Allocator):
 
 
 func new_button(text: str) -> interop.Reference[Button]!:
-    return try interop.Reference[Button].adopt(try new Button(text) in memory.heap, ui.button_type, memory.heap)
+    return try interop.Reference[Button].adopt(new Button(text) in memory.heap, ui.button_type, memory.heap)
 
 func expect(outcome: interop.Outcome[unit]) -> !:
     defer outcome.release()
@@ -66,15 +66,15 @@ func ownership_and_layout(tracker: Tracker*) -> !:
     defer control.release()
     let widget = control.as_interface[Widget](control.value())
     defer widget.release()
-    let flexible = try interop.Reference[Spacer].adopt(try new Spacer(1.0) in memory.heap, ui.spacer_type, memory.heap)
+    let flexible = try interop.Reference[Spacer].adopt(new Spacer(1.0) in memory.heap, ui.spacer_type, memory.heap)
     defer flexible.release()
     let space = flexible.as_interface[Widget](flexible.value())
     defer space.release()
-    let row = try interop.Reference[HStack].adopt(try new HStack([widget, space], 10.0, 20.0) in memory.heap, ui.hstack_type, memory.heap)
+    let row = try interop.Reference[HStack].adopt(new HStack([widget, space], 10.0, 20.0) in memory.heap, ui.hstack_type, memory.heap)
     defer row.release()
     let root = row.as_interface[Widget](row.value())
     defer root.release()
-    let app = try interop.Reference[Application].adopt(try new Application(root) in memory.heap, ui.application_type, memory.heap)
+    let app = try interop.Reference[Application].adopt(new Application(root) in memory.heap, ui.application_type, memory.heap)
     defer app.release()
     try expect(app.value().layout(300.0, 100.0))
     let box = control.value().layout()
@@ -116,7 +116,7 @@ func ownership_and_layout(tracker: Tracker*) -> !:
     let first = try row_box.value().child(0)
     defer first.release()
     assert(first.owner == widget.owner)
-    let other = try interop.Reference[Application].adopt(try new Application(root) in memory.heap, ui.application_type, memory.heap)
+    let other = try interop.Reference[Application].adopt(new Application(root) in memory.heap, ui.application_type, memory.heap)
     defer other.release()
     let shared = other.value().layout(300.0, 100.0)
     defer shared.release()

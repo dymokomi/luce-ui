@@ -257,7 +257,7 @@ pub let layout_type: interop.Type[Layout] = interop.Type[Layout]("UI layout", La
 
 pub func make_layout(axis: Axis = Axis.overlay, spacing: f64 = 0.0, padding: f64 = 0.0,
                      alignment: Alignment = Alignment.stretch) -> interop.Reference[Layout]!:
-    return try interop.Reference[Layout].adopt(try new Layout(axis, spacing, padding, alignment) in memory.heap, layout_type, memory.heap)
+    return try interop.Reference[Layout].adopt(new Layout(axis, spacing, padding, alignment) in memory.heap, layout_type, memory.heap)
 
 pub func widget_layout(widget: interop.Interface[Widget]) -> interop.Reference[Layout]!:
     try widget.enter()

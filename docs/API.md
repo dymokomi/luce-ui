@@ -17,8 +17,10 @@ All objects and callbacks belong to the main thread.
 | `Painter` | Checked GPU target; `rectangle`, `text`, `target` |
 | `BitmapFont` | Bitmap pixel size, `measure`, `glyph` |
 
-Constructors that allocate are fallible. For example, `let button = try
-Button("Pause")`. Callbacks are fallible functions, including methods. Keep the
+Constructors that allocate are fallible. Luce propagates automatically inside a
+function declared `-> T!`: `let button = Button("Pause")`. Base uses one explicit
+`try` for the expression. A nonfallible Luce callback adapts to the signal's
+fallible callback contract; callbacks that can fail declare that result. Keep the
 returned `Connection` for the desired subscription lifetime; `disconnect` is
 idempotent. Signals invoke a retained snapshot in registration order. Removal
 during delivery skips disconnected callbacks, new subscriptions start with the

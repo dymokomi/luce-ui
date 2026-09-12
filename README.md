@@ -11,10 +11,10 @@ A Luce application uses public imports and normal construction:
 from ui import Application, Button, Text, VStack
 
 pub func main(arguments: list[str]) -> int!:
-    let button = try Button("Continue")
-    let content = try VStack([try Text("Hello Luce"), button], padding = 24.0)
-    let app = try Application(content, title = "Hello")
-    try app.run()
+    let button = Button("Continue")
+    let content = VStack([Text("Hello Luce"), button], padding = 24.0)
+    let app = Application(content, title = "Hello")
+    app.run()
     return 0
 ```
 

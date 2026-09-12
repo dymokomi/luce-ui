@@ -10,7 +10,7 @@ pub struct Painter:
     let target_view: interop.View[gpu.RenderTarget]
 
     pub func init(target: interop.View[gpu.RenderTarget]) -> !:
-        discard(try (try target.get()).size())
+        discard(try target.get().size())
         self.target_view = target.clone()
 
     pub func target() -> interop.View[gpu.RenderTarget]:

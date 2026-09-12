@@ -10,7 +10,7 @@ class Custom: Widget:
     var events: int = 0
     var fail: bool = false
     pub func init(self) -> unit!:
-        self.box = try Layout()
+        self.box = Layout()
     pub func layout(self) -> Layout:
         return self.box
     pub func measure(self, available: Constraints) -> Size!:
@@ -18,44 +18,44 @@ class Custom: Widget:
     pub func draw(self, target: RenderTarget) -> unit!:
         if self.fail:
             error(ui.invalid, f"custom widget failure {self.events}")
-        let painter = try Painter(target)
-        try painter.rectangle(Rect(0.0, 0.0, 20.0, 20.0), Color(1.0, 0.0, 0.0))
+        let painter = Painter(target)
+        painter.rectangle(Rect(0.0, 0.0, 20.0, 20.0), Color(1.0, 0.0, 0.0))
     pub func event(self, event: Event) -> unit!:
         self.events += 1
 
 class Counter:
     var count: int = 0
-    pub func add(self) -> unit!:
+    pub func add(self):
         self.count += 1
 
 pub func main(arguments: list[str]) -> int!:
-    let button = try Button("pause")
+    let button = Button("pause")
     let counter = Counter()
-    let connection = try button.on_click(counter.add)
-    try button.click()
+    let connection = button.on_click(counter.add)
+    button.click()
     assert(counter.count == 1)
     connection.disconnect()
-    try button.click()
+    button.click()
     assert(counter.count == 1)
-    let custom = try Custom()
-    let stack = try VStack([button, try Text("Mixed case"), custom, try Spacer()])
+    let custom = Custom()
+    let stack = VStack([button, Text("Mixed case"), custom, Spacer()])
     assert(stack.layout().child_count() == 4)
-    let app = try Application(stack)
-    try app.layout(240.0, 180.0)
-    let clicked = try button.on_click(counter.add)
-    try app.dispatch(Event(kind = EventKind.pointer_down, x = 20.0, y = 20.0))
-    try app.dispatch(Event(kind = EventKind.pointer_up, x = 20.0, y = 20.0))
+    let app = Application(stack)
+    app.layout(240.0, 180.0)
+    let clicked = button.on_click(counter.add)
+    app.dispatch(Event(kind = EventKind.pointer_down, x = 20.0, y = 20.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = 20.0, y = 20.0))
     assert(counter.count == 2)
-    try app.dispatch(Event(kind = EventKind.key_down, key = Key.space))
-    try app.dispatch(Event(kind = EventKind.key_up, key = Key.space))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.space))
+    app.dispatch(Event(kind = EventKind.key_up, key = Key.space))
     assert(counter.count == 3)
-    try app.dispatch(Event(kind = EventKind.pointer_down, x = 20.0, y = 20.0))
-    try app.dispatch(Event(kind = EventKind.pointer_up, x = 500.0, y = 20.0))
+    app.dispatch(Event(kind = EventKind.pointer_down, x = 20.0, y = 20.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = 500.0, y = 20.0))
     assert(counter.count == 3)
     clicked.disconnect()
     let widget: Widget = custom
-    let frame = try Frame(window.Size(100.0, 100.0, 100.0, 100.0, 1.0))
-    let target = try frame.target()
+    let frame = Frame(window.Size(100.0, 100.0, 100.0, 100.0, 1.0))
+    let target = frame.target()
     custom.fail = true
     var rejected = false
     app.render(target) catch failure:
@@ -63,11 +63,11 @@ pub func main(arguments: list[str]) -> int!:
         rejected = true
     assert(rejected)
     custom.fail = false
-    try widget.draw(target)
-    try app.render(target)
+    widget.draw(target)
+    app.render(target)
     frame.close()
-    try mutations()
-    try signals()
+    mutations()
+    signals()
     print("ok Luce controls and custom widget")
     return 0
 
@@ -80,31 +80,31 @@ class Removal:
         self.replacement = replacement
     pub func remove(self) -> unit!:
         self.count += 1
-        try self.stack.set_children([self.replacement])
+        self.stack.set_children([self.replacement])
 
 func mutations() -> unit!:
-    let button = try Button("Remove me")
-    let label = try Text("Removed")
-    let stack = try VStack([button])
+    let button = Button("Remove me")
+    let label = Text("Removed")
+    let stack = VStack([button])
     let removal = Removal(stack, label)
-    let connection = try button.on_click(removal.remove)
-    let app = try Application(stack)
-    try app.layout(200.0, 100.0)
-    try app.dispatch(Event(kind = EventKind.pointer_down, x = 10.0, y = 10.0))
-    try app.dispatch(Event(kind = EventKind.pointer_up, x = 10.0, y = 10.0))
+    let connection = button.on_click(removal.remove)
+    let app = Application(stack)
+    app.layout(200.0, 100.0)
+    app.dispatch(Event(kind = EventKind.pointer_down, x = 10.0, y = 10.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = 10.0, y = 10.0))
     assert(removal.count == 1 and not button.layout().is_focused())
-    try app.dispatch(Event(kind = EventKind.key_down, key = Key.space))
-    try app.dispatch(Event(kind = EventKind.key_up, key = Key.space))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.space))
+    app.dispatch(Event(kind = EventKind.key_up, key = Key.space))
     assert(removal.count == 1)
     connection.disconnect()
-    try stack.set_children([button])
-    try app.layout(200.0, 100.0)
-    try app.dispatch(Event(kind = EventKind.pointer_down, x = 10.0, y = 10.0))
+    stack.set_children([button])
+    app.layout(200.0, 100.0)
+    app.dispatch(Event(kind = EventKind.pointer_down, x = 10.0, y = 10.0))
     stack.layout().set_enabled(false)
-    try app.dispatch(Event(kind = EventKind.pointer_up, x = 10.0, y = 10.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = 10.0, y = 10.0))
     assert(not button.layout().is_focused())
     stack.layout().set_enabled(true)
-    try app.dispatch(Event(kind = EventKind.key_down, key = Key.tab))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.tab))
     assert(button.layout().is_focused())
     app.close()
     var closed = false
@@ -129,14 +129,14 @@ class Reentrant:
         error(ui.invalid, f"signal failed after {self.first}")
 
 func signals() -> unit!:
-    let button = try Button("Signal")
+    let button = Button("Signal")
     let state = Reentrant(button)
-    let first = try button.on_click(state.disconnect_next)
-    state.later = try button.on_click(state.next)
-    try button.click()
+    let first = button.on_click(state.disconnect_next)
+    state.later = button.on_click(state.next)
+    button.click()
     assert(state.first == 1 and state.second == 0)
     first.disconnect()
-    let failure = try button.on_click(state.fail)
+    let failure = button.on_click(state.fail)
     var rejected = false
     button.click() catch problem:
         assert(problem.code == ui.invalid and problem.message == "signal failed after 1")
