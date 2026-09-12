@@ -1,0 +1,105 @@
+## Read back real Metal pixels through the standard library's test observer.
+## The UI package itself contains no platform calls or native framework settings.
+import gpu
+import interop
+import memory
+import ownership
+import window
+import native
+import ui
+from ui import Application, Button, Viewport, HStack, Widget, Painter, Rect, Size, Alignment
+
+struct Paint:
+    var saved: interop.View[gpu.RenderTarget]?
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        if let previous = self.saved:
+            previous.release()
+        self.saved = target.clone()
+        var painter = Painter(target) catch failure:
+            return interop.Outcome[unit].failure(failure.code, interop.copy_text(failure.message) catch exhausted: trap(exhausted.message))
+        defer painter.close()
+        painter.rectangle(Rect(-50.0, -50.0, 300.0, 300.0), gpu.Color(1.0, 0.0, 0.0)) catch failure:
+            return interop.Outcome[unit].failure(failure.code, interop.copy_text(failure.message) catch exhausted: trap(exhausted.message))
+        return interop.Outcome[unit].success(interop.Owned[unit](()))
+
+    mutating func close():
+        if let saved = self.saved:
+            saved.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        if let saved = self.saved:
+            saved.trace(visit, context)
+
+let paint_type: interop.Type[Paint] = interop.Type[Paint]("test viewport paint", Paint.close, Paint.trace)
+
+func frame(app: interop.Reference[Application], host: window.Window, surface: gpu.Surface) -> !:
+    while let event = try host.poll():
+        discard(event)
+    native.begin("UI pixel contracts")
+    defer native.end()
+    let recording = try surface.frame()
+    defer recording.release()
+    let target = try recording.value().target()
+    defer target.release()
+    let rendered = app.value().render(target)
+    defer rendered.release()
+    try rendered.get()
+    assert((try recording.value().present()) == gpu.PresentResult.submitted)
+    try surface.wait_idle()
+    let size = try host.size()
+    native.pixel((u64)(12.0 * size.scale), (u64)(12.0 * size.scale), 69, 124, 175)
+    native.pixel((u64)(84.0 * size.scale), (u64)(12.0 * size.scale), 255, 0, 0)
+    native.pixel((u64)(78.0 * size.scale), (u64)(12.0 * size.scale), 0, 0, 0)
+    native.pixel((u64)(146.0 * size.scale), (u64)(12.0 * size.scale), 0, 0, 0)
+    native.pixel((u64)(84.0 * size.scale), (u64)(60.0 * size.scale), 0, 0, 0)
+
+pub func main(arguments: str[]) -> i32!:
+    let pool = native.pool()
+    defer native.drain(pool)
+    let control = try interop.Reference[Button].adopt(try new Button("A") in memory.heap, ui.button_type, memory.heap)
+    defer control.release()
+    let control_box = control.value().layout()
+    defer control_box.release()
+    try control_box.value().set_size(64.0, 40.0)
+    let view = try interop.Reference[Viewport].adopt(try new Viewport(64.0, 40.0) in memory.heap, ui.viewport_type, memory.heap)
+    defer view.release()
+    let view_box = view.value().layout()
+    defer view_box.release()
+    try view_box.value().set_size(64.0, 40.0)
+    let paint = try interop.Reference[Paint].adopt(try new Paint() in memory.heap, paint_type, memory.heap)
+    defer paint.release()
+    let callback = try interop.Callback[interop.View[gpu.RenderTarget], unit].bind_mutating(paint, Paint.draw)
+    defer callback.release()
+    let connection = try view.value().on_render(callback)
+    defer connection.release()
+    let button_widget = control.as_interface[Widget](control.value())
+    defer button_widget.release()
+    let viewport_widget = view.as_interface[Widget](view.value())
+    defer viewport_widget.release()
+    let row = try interop.Reference[HStack].adopt(try new HStack([button_widget, viewport_widget], 8.0, 8.0, Alignment.start) in memory.heap, ui.hstack_type, memory.heap)
+    defer row.release()
+    let root = row.as_interface[Widget](row.value())
+    defer root.release()
+    let app = try interop.Reference[Application].adopt(try new Application(root) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    var host = try window.Window.open(window.Options(title = "UI pixel contracts", width = 160, height = 100))
+    defer host.destroy()
+    var device = try gpu.Device.open()
+    defer device.destroy()
+    var surface = try gpu.Surface.open(device, host)
+    defer surface.destroy()
+    try host.show()
+    try frame(app, host, surface)
+    let saved = paint.value().saved else trap("viewport callback did not run")
+    var expired = false
+    let ended: const gpu.RenderTarget*? = saved.get() catch failure:
+        assert(failure.code == interop.expired)
+        expired = true
+        recover none
+    assert(ended == none)
+    assert(expired)
+    try host.resize(200, 120)
+    try frame(app, host, surface)
+    print("ok UI Metal pixels, ancestor clipping, resize and expired viewport")
+    return 0

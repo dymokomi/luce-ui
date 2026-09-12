@@ -1,0 +1,64 @@
+import gpu
+import interop
+import ownership
+import utf8
+from luce_ui.font import BitmapFont
+
+## A convenience painter over a checked target. Retaining the painter does not
+## extend the target's frame lifetime; every drawing call validates it again.
+pub struct Painter:
+    let target_view: interop.View[gpu.RenderTarget]
+
+    pub func init(target: interop.View[gpu.RenderTarget]) -> !:
+        discard(try (try target.get()).size())
+        self.target_view = target.clone()
+
+    pub func target() -> interop.View[gpu.RenderTarget]:
+        return self.target_view.clone()
+
+    pub func rectangle(rectangle: gpu.Rect, color: gpu.Color) -> !:
+        let target = try self.target_view.get()
+        let size = try target.size()
+        if size.width <= 0.0 or size.height <= 0.0 or rectangle.width <= 0.0 or rectangle.height <= 0.0:
+            return
+        let left = (f32)(rectangle.x * 2.0 / size.width - 1.0)
+        let right = (f32)((rectangle.x + rectangle.width) * 2.0 / size.width - 1.0)
+        let top = (f32)(1.0 - rectangle.y * 2.0 / size.height)
+        let bottom = (f32)(1.0 - (rectangle.y + rectangle.height) * 2.0 / size.height)
+        let a = gpu.Vertex(x = left, y = top, red = (f32)color.red, green = (f32)color.green, blue = (f32)color.blue)
+        var b = a
+        var c = a
+        var d = a
+        b.x = right
+        c.x = right
+        c.y = bottom
+        d.y = bottom
+        try target.triangles([a, b, c, a, c, d])
+
+    pub func text(text: str, x: f64 = 0.0, y: f64 = 0.0,
+                  color: gpu.Color = gpu.Color(red = 0.82, green = 0.9, blue = 1.0),
+                  font: BitmapFont = BitmapFont()) -> !:
+        discard(try font.measure(text))
+        var offset: usize = 0
+        var cursor = x
+        while offset < text.length:
+            let decoded = utf8.decode(text.bytes, offset) else trap("validated text changed")
+            offset += decoded.width
+            let bits = BitmapFont.glyph(decoded.scalar)
+            var row: u64 = 0
+            while row < 7:
+                var column: u64 = 0
+                while column < 5:
+                    if (bits & ((u64)1 << (row * 5 + column))) != 0:
+                        try self.rectangle(gpu.Rect(cursor + (f64)column * font.pixel_size, y + (f64)row * font.pixel_size, font.pixel_size, font.pixel_size), color)
+                    column += 1
+                row += 1
+            cursor += font.pixel_size * 6.0
+
+    pub mutating func close():
+        self.target_view.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.target_view.trace(visit, context)
+
+pub let painter_type: interop.Type[Painter] = interop.Type[Painter]("UI painter", Painter.close, Painter.trace, closeable = true, main_thread = true)

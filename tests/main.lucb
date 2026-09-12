@@ -1,0 +1,161 @@
+import gpu
+import input
+import interop
+import math
+import memory
+import ownership
+import window
+import ui
+from ui import Widget, Button, Spacer, VStack, HStack, Layout, Size, Application, Painter, Rect, Event, BitmapFont
+
+struct Tracker: memory.Allocator:
+    var upstream: memory.Allocator
+    var live: usize
+    var remaining: usize?
+
+    pub mutating func allocate(size: usize, alignment: usize) -> u8[]?:
+        if let remaining = self.remaining:
+            if remaining == 0:
+                return none
+            self.remaining = remaining - 1
+        let block = self.upstream.allocate(size, alignment) else return none
+        self.live += 1
+        return block
+
+    pub mutating func resize(block: u8[], size: usize) -> bool:
+        return self.upstream.resize(block, size)
+
+    pub mutating func release(block: u8[]):
+        assert(self.live > 0)
+        self.live -= 1
+        self.upstream.release(block)
+
+func restore(previous: memory.Allocator):
+    memory.heap = previous
+
+
+func new_button(text: str) -> interop.Reference[Button]!:
+    return try interop.Reference[Button].adopt(try new Button(text) in memory.heap, ui.button_type, memory.heap)
+
+func expect(outcome: interop.Outcome[unit]) -> !:
+    defer outcome.release()
+    outcome.get() catch failure:
+        print(f"unexpected UI failure: {failure.message}")
+        assert(false)
+
+func allocations(tracker: Tracker*) -> !:
+    var succeeded = false
+    var failures: usize = 0
+    for stage in 0..<20:
+        tracker.remaining = (usize)stage
+        let control: interop.Reference[Button]? = new_button("owned label") catch failure:
+            assert(failure.code == memory.exhausted)
+            failures += 1
+            recover none
+        if let value = control:
+            value.release()
+            succeeded = true
+        tracker.remaining = none
+        ownership.collect()
+        assert(tracker.live == 0)
+    assert(succeeded and failures >= 4)
+
+func ownership_and_layout(tracker: Tracker*) -> !:
+    let control = try new_button("pause")
+    defer control.release()
+    let widget = control.as_interface[Widget](control.value())
+    defer widget.release()
+    let flexible = try interop.Reference[Spacer].adopt(try new Spacer(1.0) in memory.heap, ui.spacer_type, memory.heap)
+    defer flexible.release()
+    let space = flexible.as_interface[Widget](flexible.value())
+    defer space.release()
+    let row = try interop.Reference[HStack].adopt(try new HStack([widget, space], 10.0, 20.0) in memory.heap, ui.hstack_type, memory.heap)
+    defer row.release()
+    let root = row.as_interface[Widget](row.value())
+    defer root.release()
+    let app = try interop.Reference[Application].adopt(try new Application(root) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    try expect(app.value().layout(300.0, 100.0))
+    let box = control.value().layout()
+    defer box.release()
+    let bounds = box.value().bounds()
+    assert(bounds.x == 20.0 and bounds.y == 20.0 and bounds.width == 92.0 and bounds.height == 60.0)
+    let spacer_box = flexible.value().layout()
+    defer spacer_box.release()
+    let spare = spacer_box.value().bounds()
+    assert(spare.x == 122.0 and spare.width == 158.0)
+    try spacer_box.value().set_limits(Size(), Size(50.0, 16384.0))
+    try expect(app.value().layout(300.0, 100.0))
+    assert(spacer_box.value().bounds().width == 50.0)
+    try box.value().set_limits(Size(40.0, 20.0), Size(16384.0, 16384.0))
+    try expect(app.value().layout(60.0, 20.0))
+    assert(box.value().bounds().width == 40.0 and spacer_box.value().bounds().width == 0.0)
+    var duplicate = false
+    row.value().set_children([widget, widget]) catch failure:
+        assert(failure.code == ui.invalid)
+        duplicate = true
+    assert(duplicate)
+    var cyclic = false
+    row.value().set_children([root]) catch failure:
+        assert(failure.code == ui.busy or failure.code == ui.invalid)
+        cyclic = true
+    assert(cyclic)
+    let row_box = row.value().layout()
+    defer row_box.release()
+    assert(row_box.value().child_count() == 2)
+    let baseline = tracker.live
+    tracker.remaining = 0
+    var refused = false
+    row.value().set_children([space, widget]) catch failure:
+        assert(failure.code == memory.exhausted)
+        refused = true
+    tracker.remaining = none
+    assert(refused and tracker.live == baseline)
+    assert(row_box.value().child_count() == 2)
+    let first = try row_box.value().child(0)
+    defer first.release()
+    assert(first.owner == widget.owner)
+    let other = try interop.Reference[Application].adopt(try new Application(root) in memory.heap, ui.application_type, memory.heap)
+    defer other.release()
+    let shared = other.value().layout(300.0, 100.0)
+    defer shared.release()
+    assert(not shared.is_success())
+    var empty: interop.Interface[Widget][]
+    try row.value().set_children(empty)
+    try expect(app.value().layout(300.0, 100.0))
+    assert(row_box.value().child_count() == 0)
+    try row.value().set_children([widget])
+    try expect(app.value().layout(300.0, 100.0))
+
+func drawing() -> !:
+    assert(BitmapFont.glyph('a') != BitmapFont.glyph('A'))
+    assert(try BitmapFont().measure("aAé") == 36.0)
+    assert(BitmapFont.glyph('é') == BitmapFont.glyph('中'))
+    var frame = try gpu.Frame(window.Size(100.0, 80.0, 200.0, 160.0, 2.0))
+    let target = try frame.target()
+    defer target.release()
+    var painter = try Painter(target)
+    defer painter.close()
+    try painter.text("Case preserved")
+    frame.close()
+    var expired = false
+    painter.rectangle(Rect(width = 20.0, height = 20.0), gpu.Color()) catch failure:
+        assert(failure.code == interop.expired)
+        expired = true
+    assert(expired)
+
+pub func main(arguments: str[]) -> i32!:
+    var tracker = Tracker(upstream = memory.heap)
+    let previous = memory.heap
+    memory.heap = &tracker
+    defer restore(previous)
+    with tracker:
+        try allocations(&tracker)
+        try ownership_and_layout(&tracker)
+        assert(ownership.finish_run(0) == 0)
+        assert(tracker.live == 0)
+        try drawing()
+        assert(ownership.finish_run(0) == 0)
+        assert(tracker.live == 0)
+    print("ok UI ownership, allocation, layout and drawing scopes")
+    return 0

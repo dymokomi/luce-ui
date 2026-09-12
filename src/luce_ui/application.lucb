@@ -1,0 +1,199 @@
+import gpu
+import input
+import interop
+import ownership
+import thread
+import time
+import utf8
+import window
+import luce_ui.result as result
+from luce_ui.layout import Widget, Tree, Event
+
+## Construction is platform-independent. run acquires native resources and owns
+## their complete lifetime, including error unwinding and callback-driven stop.
+pub struct Application:
+    let title: interop.Owned[str]
+    var tree: Tree
+    let frames: interop.Signal[f64]
+    let width: i64
+    let height: i64
+    var running: bool
+    var operating: bool
+    var closed: bool
+
+    pub func init(content: interop.Interface[Widget], title: str = "Luce", width: i64 = 800, height: i64 = 600) -> !:
+        if width < 1 or width > 10000 or height < 1 or height > 10000 or not utf8.valid(title.bytes):
+            error(result.invalid, "a window needs valid UTF-8 and dimensions in 1..10000")
+        let copied = try interop.copy_text(title)
+        errdefer copied.release()
+        var tree = try Tree(content)
+        errdefer tree.close()
+        let frames = try interop.Signal[f64]()
+        self.title = copied
+        self.tree = tree
+        self.frames = frames
+        self.width = width
+        self.height = height
+        self.running = false
+        self.operating = false
+        self.closed = false
+
+    func check() -> !:
+        if self.closed:
+            error(result.invalid, "the UI application is closed")
+
+    mutating func begin_operation() -> !:
+        try self.check()
+        if self.operating:
+            error(result.busy, "layout, drawing and input dispatch cannot reenter themselves")
+        self.operating = true
+
+    mutating func end_operation():
+        self.operating = false
+
+    ## Frame callbacks receive elapsed seconds since the preceding iteration.
+    pub func on_frame(callback: interop.Callback[f64, unit]) -> interop.Reference[interop.Connection]!:
+        try self.check()
+        return try self.frames.connect(callback)
+
+    pub mutating func layout(width: f64, height: f64) -> interop.Outcome[unit]:
+        self.begin_operation() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer self.end_operation()
+        return self.tree.arrange(width, height)
+
+    ## Portable entry points allow embedding and deterministic input/drawing tests.
+    pub mutating func dispatch(event: Event) -> interop.Outcome[unit]:
+        self.begin_operation() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer self.end_operation()
+        if event.cancelled:
+            return self.tree.dispatch(input.Event(kind = input.EventKind.focus_lost))
+        if event.button < 0 or event.button > 31:
+            return result.failure[unit](result.invalid, "a pointer button must be in 0..31")
+        return self.tree.dispatch(input.Event(kind = event.kind, key = event.key,
+            x = event.x, y = event.y, button = (u32)event.button,
+            repeated = event.repeated, modifiers = input.Modifiers(shift = event.shift), scroll_x = event.scroll_x, scroll_y = event.scroll_y))
+
+    mutating func dispatch_native(event: input.Event) -> interop.Outcome[unit]:
+        self.begin_operation() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer self.end_operation()
+        return self.tree.dispatch(event)
+
+    pub mutating func render(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.begin_operation() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer self.end_operation()
+        let native = target.get() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        let size = native.size() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        let arranged = self.tree.arrange(size.width, size.height)
+        if not arranged.is_success():
+            return arranged
+        arranged.release()
+        return self.tree.draw(target)
+
+    pub mutating func run(frame_limit: i64 = 0) -> interop.Outcome[unit]:
+        self.check() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        if self.running:
+            return result.failure[unit](result.busy, "the application is already running")
+        if frame_limit < 0:
+            return result.failure[unit](result.invalid, "a frame limit must be nonnegative")
+        var host = window.Window.open(window.Options(title = self.title.value, width = (u32)self.width, height = (u32)self.height)) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer host.destroy()
+        var device = gpu.Device.open() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer device.destroy()
+        var surface = gpu.Surface.open(device, host) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer surface.destroy()
+        host.show() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        self.running = true
+        defer self.stop()
+        var previous = time.now()
+        var count: i64 = 0
+        while self.running:
+            let size = host.size() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            let arranged = self.layout(size.width, size.height)
+            if not arranged.is_success():
+                return arranged
+            arranged.release()
+            var events: usize = 0
+            while events < 512 and self.running:
+                let polled = host.poll() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                let event = polled else break
+                if event.kind == input.EventKind.close_requested:
+                    self.stop()
+                elif event.kind == input.EventKind.resized:
+                    let resized = host.size() catch failure:
+                        return result.failure[unit](failure.code, failure.message)
+                    let resized_layout = self.layout(resized.width, resized.height)
+                    if not resized_layout.is_success():
+                        return resized_layout
+                    resized_layout.release()
+                else:
+                    let dispatched = self.dispatch_native(event)
+                    if not dispatched.is_success():
+                        return dispatched
+                    dispatched.release()
+                events += 1
+            if not self.running:
+                break
+            let current = time.now()
+            let elapsed = (f64)(current - previous) / 1000000000.0
+            previous = current
+            let delivered = self.frames.emit(elapsed)
+            if not delivered.is_success():
+                return delivered
+            delivered.release()
+            if not self.running:
+                break
+            let frame = surface.frame() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            defer frame.release()
+            let target = frame.value().target() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            defer target.release()
+            let rendered = self.render(target)
+            if not rendered.is_success():
+                return rendered
+            rendered.release()
+            discard(frame.value().present(gpu.Color(red = 0.016, green = 0.022, blue = 0.04)) catch failure:
+                return result.failure[unit](failure.code, failure.message))
+            count += 1
+            if frame_limit > 0 and count >= frame_limit:
+                self.stop()
+            thread.sleep(8)
+        surface.wait_idle() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    pub mutating func stop():
+        self.running = false
+
+    ## Closing during a callback requests loop termination. Owned fields remain
+    ## alive under the active invocation guard until that callback and run return.
+    pub mutating func close():
+        self.stop()
+        self.closed = true
+
+    mutating func dispose():
+        self.close()
+        self.frames.close()
+        self.frames.release()
+        self.tree.close()
+        self.title.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.frames.trace(visit, context)
+        self.tree.trace(visit, context)
+        self.title.trace(visit, context)
+
+pub let application_type: interop.Type[Application] = interop.Type[Application]("UI application", Application.dispose, Application.trace, main_thread = true)

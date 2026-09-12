@@ -1,0 +1,37 @@
+import gpu
+import interop
+import math
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+
+pub struct Spacer: Widget:
+    let box: interop.Reference[Layout]
+
+    pub func init(weight: f64 = 1.0) -> !:
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_flex(weight, weight)
+        self.box = box
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return result.success[Size](Size())
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+
+pub let spacer_type: interop.Type[Spacer] = interop.Type[Spacer]("Spacer", Spacer.close, Spacer.trace, closeable = true, main_thread = true)

@@ -1,0 +1,6 @@
+[package]
+name = "luce_ui_tests"
+source = "."
+
+[dependencies]
+luce_ui = ".."

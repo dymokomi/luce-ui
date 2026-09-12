@@ -1,0 +1,95 @@
+## Original fixed 5x7 glyphs. Unsupported scalars use one visible replacement.
+## Measurement and drawing advance 12 points per scalar, preserving letter case.
+import utf8
+import luce_ui.result as result
+
+pub struct BitmapFont:
+    pub let pixel_size: f64 = 2.0
+
+    pub func measure(text: str) -> f64!:
+        if not (self.pixel_size >= 0.25 and self.pixel_size <= 64.0):
+            error(result.invalid, "bitmap pixel size must be in 0.25..64 points")
+        if text.length > 4096:
+            error(result.limit, "a bitmap label supports at most 4096 UTF-8 bytes")
+        var offset: usize = 0
+        var count: usize = 0
+        while offset < text.length:
+            let scalar = utf8.decode(text.bytes, offset) else error(result.invalid, "a UI label must be valid UTF-8")
+            offset += scalar.width
+            count += 1
+        if count > 1024:
+            error(result.limit, "a bitmap label supports at most 1024 scalars")
+        return (f64)count * 6.0 * self.pixel_size
+
+    pub static func glyph(code: char) -> u64:
+        match code:
+            'A': return 18842895918
+            'B': return 16694887983
+            'C': return 32246891582
+            'D': return 16694953519
+            'E': return 33321092159
+            'F': return 1108837439
+            'G': return 32801457214
+            'H': return 18842895921
+            'I': return 33424543903
+            'J': return 6754148636
+            'K': return 18560947505
+            'L': return 33320633377
+            'M': return 18842572657
+            'N': return 18842703473
+            'O': return 15621211694
+            'P': return 1108854319
+            'Q': return 23946905134
+            'R': return 18561353263
+            'S': return 16660235326
+            'T': return 4433514655
+            'U': return 15621211697
+            'V': return 4648912433
+            'W': return 19182306865
+            'X': return 18834663985
+            'Y': return 4433521201
+            'Z': return 33321787935
+            'a': return 32814675968
+            'b': return 16694950945
+            'c': return 15067035648
+            'd': return 32801094160
+            'e': return 15099017216
+            'f': return 2216921164
+            'g': return 15601289152
+            'h': return 18842434593
+            'i': return 15170934788
+            'j': return 6753103880
+            'k': return 18563253281
+            'l': return 15170932870
+            'm': return 23275940864
+            'n': return 18842434560
+            'o': return 15621208064
+            'p': return 1123597312
+            'q': return 17748785152
+            'r': return 1108456448
+            's': return 16657741824
+            't': return 13491051586
+            'u': return 24479581184
+            'v': return 4648911872
+            'w': return 11464655872
+            'x': return 18593694720
+            'y': return 15601288192
+            'z': return 33357593600
+            '0': return 15623448110
+            '1': return 15170932932
+            '2': return 33357578798
+            '3': return 16660251151
+            '4': return 8891181448
+            '5': return 16660268095
+            '6': return 15621129262
+            '7': return 2216829471
+            '8': return 15621113390
+            '9': return 15587034670
+            '.': return 4294967296
+            ':': return 4194432
+            '-': return 1015808
+            '+': return 139432064
+            '/': return 1143087376
+            '?': return 4299440686
+            ' ': return 0
+            _: return 0x42100462e

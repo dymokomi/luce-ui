@@ -1,0 +1,43 @@
+import gpu
+import interop
+import math
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+
+pub struct VStack: Widget:
+    let box: interop.Reference[Layout]
+
+    pub func init(children: const interop.Interface[Widget][], spacing: f64 = 12.0,
+                  padding: f64 = 0.0, alignment: layout.Alignment = layout.Alignment.stretch) -> !:
+        let box = try layout.make_layout(layout.Axis.vertical, spacing, padding, alignment)
+        errdefer box.release()
+        try box.value().set_children(children)
+        self.box = box
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub mutating func set_children(children: const interop.Interface[Widget][]) -> !:
+        try self.box.value().set_children(children)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let size = self.box.value().content_size(available) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        return result.success[Size](size)
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+
+pub let vstack_type: interop.Type[VStack] = interop.Type[VStack]("VStack", VStack.close, VStack.trace, closeable = true, main_thread = true)

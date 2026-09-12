@@ -1,0 +1,15 @@
+import interop
+import memory
+
+pub let invalid: ErrorCode = ErrorCode.package(200)
+pub let busy: ErrorCode = ErrorCode.package(201)
+pub let limit: ErrorCode = ErrorCode.package(202)
+
+pub func success[T](value: T) -> interop.Outcome[T]:
+    return interop.Outcome[T].success(interop.Owned[T](value))
+
+## Copy borrowed failure text before an interface or callback guard is released.
+pub func failure[T](code: ErrorCode, message: str) -> interop.Outcome[T]:
+    let text = interop.copy_text(message) catch exhausted:
+        return interop.Outcome[T].failure(memory.exhausted, interop.Owned[str]("out of memory copying a UI error"))
+    return interop.Outcome[T].failure(code, text)

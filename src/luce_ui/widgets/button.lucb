@@ -1,0 +1,112 @@
+import gpu
+import interop
+import math
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+import input
+from luce_ui.font import BitmapFont
+
+pub struct Button: Widget:
+    let box: interop.Reference[Layout]
+    var caption: interop.Owned[str]
+    let clicked: interop.Signal[unit]
+    var pressed: bool
+    var pressed_key: input.Key
+
+    pub func init(text: str) -> !:
+        discard(try BitmapFont().measure(text))
+        let box = try layout.make_layout()
+        errdefer box.release()
+        box.value().set_focusable(true)
+        let signal = try interop.Signal[unit]()
+        errdefer signal.release()
+        self.caption = try interop.copy_text(text)
+        self.clicked = signal
+        self.pressed = false
+        self.pressed_key = input.Key.unknown
+        self.box = box
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func text() -> interop.Owned[str]:
+        return self.caption.clone()
+
+    pub mutating func set_text(text: str) -> !:
+        discard(try BitmapFont().measure(text))
+        let replacement = try interop.copy_text(text)
+        self.caption.release()
+        self.caption = replacement
+        self.box.value().invalidate()
+
+    pub func on_click(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.clicked.connect(callback)
+
+    pub func click() -> interop.Outcome[unit]:
+        if not self.box.value().is_enabled():
+            return result.success[unit](())
+        return self.clicked.emit(())
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let width = BitmapFont().measure(self.caption.value) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        return result.success[Size](Size(width + 32.0, 40.0))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try (try target.get()).size()
+        let color = gpu.Color(red = 0.025, green = 0.1, blue = 0.26) if self.pressed else gpu.Color(red = 0.06, green = 0.2, blue = 0.43)
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), color)
+        if self.box.value().is_focused():
+            try painter.rectangle(gpu.Rect(width = size.width, height = 2.0), gpu.Color(red = 0.3, green = 0.75, blue = 1.0))
+        try painter.text(self.caption.value, 16.0, math.max(0.0, (size.height - 14.0) * 0.5))
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if event.cancelled:
+            self.pressed = false
+            self.pressed_key = input.Key.unknown
+        elif event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
+            self.pressed = true
+            self.pressed_key = input.Key.unknown
+        elif event.kind == input.EventKind.pointer_up and event.button == 0:
+            let activate = self.pressed and self.pressed_key == input.Key.unknown and event.inside
+            self.pressed = false
+            self.box.value().invalidate()
+            if activate:
+                return self.click()
+        elif event.kind == input.EventKind.key_down and not event.repeated and (event.key == input.Key.space or event.key == input.Key.enter):
+            self.pressed = true
+            self.pressed_key = event.key
+        elif event.kind == input.EventKind.key_up and (event.key == input.Key.space or event.key == input.Key.enter):
+            let activate = self.pressed and self.pressed_key == event.key
+            if self.pressed_key != event.key:
+                return result.success[unit](())
+            self.pressed = false
+            self.pressed_key = input.Key.unknown
+            self.box.value().invalidate()
+            if activate:
+                return self.click()
+        self.box.value().invalidate()
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.clicked.close()
+        self.clicked.release()
+        self.caption.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+        self.caption.trace(visit, context)
+        self.clicked.trace(visit, context)
+
+pub let button_type: interop.Type[Button] = interop.Type[Button]("Button", Button.close, Button.trace, closeable = true, main_thread = true)

@@ -1,0 +1,698 @@
+import gpu
+import input
+import interop
+import math
+import memory
+import ownership
+import luce_ui.result as result
+
+pub type Rect = gpu.Rect
+
+pub struct Size:
+    pub var width: f64
+    pub var height: f64
+
+pub struct Constraints:
+    pub var width: f64 = 16384.0
+    pub var height: f64 = 16384.0
+
+pub enum Axis as u8:
+    overlay = 0
+    horizontal = 1
+    vertical = 2
+
+pub enum Alignment as u8:
+    start = 0
+    center = 1
+    end = 2
+    stretch = 3
+
+## Coordinates are local to the receiving widget. Cancellation clears any press.
+pub struct Event:
+    pub var kind: input.EventKind
+    pub var key: input.Key
+    pub var x: f64
+    pub var y: f64
+    pub var button: i64
+    pub var repeated: bool
+    pub var shift: bool
+    pub var inside: bool
+    pub var cancelled: bool
+    pub var scroll_x: f64
+    pub var scroll_y: f64
+
+## layout returns one retained reference to the same Layout for this widget's
+## lifetime. A measure/draw/event implementation may fail or reenter application
+## code. The framework invokes it under an active interface guard.
+pub interface Widget:
+    func layout() -> interop.Reference[Layout]
+    func measure(available: Constraints) -> interop.Outcome[Size]
+    mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]
+    mutating func event(event: Event) -> interop.Outcome[unit]
+
+var serial: u64 = 0
+var revision: u64 = 0
+
+pub func epoch() -> u64:
+    return revision
+
+## Layout owns child interfaces and geometry, never control-specific state.
+## Parent/application membership is weak identity, so trees have no parent cycle.
+pub struct Layout:
+    let identifier: u64
+    var parent: u64
+    var application: u64
+    var items: interop.Interface[Widget][]
+    let axis: Axis
+    let spacing: f64
+    let padding: f64
+    let alignment: Alignment
+    var minimum: Size
+    var maximum: Size
+    var growth: Size
+    var measured: Size
+    var rectangle: Rect
+    var clipping: Rect
+    var accepts_focus: bool
+    var accepts_pointer: bool
+    var active: bool
+    var focused: bool
+    var editing: bool
+
+    pub func init(axis: Axis = Axis.overlay, spacing: f64 = 0.0, padding: f64 = 0.0,
+                  alignment: Alignment = Alignment.stretch) -> !:
+        try extent(spacing)
+        try extent(padding)
+        serial = serial +? 1 else error(result.limit, "UI identities exhausted")
+        self.identifier = serial
+        self.parent = 0
+        self.application = 0
+        var empty: interop.Interface[Widget][]
+        self.items = empty
+        self.axis = axis
+        self.spacing = spacing
+        self.padding = padding
+        self.alignment = alignment
+        self.minimum = Size()
+        self.maximum = Size(16384.0, 16384.0)
+        self.growth = Size()
+        self.measured = Size()
+        self.rectangle = Rect()
+        self.clipping = Rect()
+        self.accepts_focus = false
+        self.accepts_pointer = false
+        self.active = true
+        self.focused = false
+        self.editing = false
+
+    pub func id() -> u64:
+        return self.identifier
+
+    pub func bounds() -> Rect:
+        return self.rectangle
+
+    pub func is_focused() -> bool:
+        return self.focused
+
+    pub func is_enabled() -> bool:
+        return self.active
+
+    pub mutating func set_enabled(enabled: bool):
+        self.active = enabled
+        self.invalidate()
+
+    pub mutating func set_focusable(focusable: bool):
+        self.accepts_focus = focusable
+        if focusable:
+            self.accepts_pointer = true
+        self.invalidate()
+
+    pub mutating func set_interactive(interactive: bool):
+        self.accepts_pointer = interactive
+        self.invalidate()
+
+    pub func invalidate():
+        revision = revision +? 1 else trap("UI revision exhausted")
+
+    pub mutating func set_limits(minimum: Size, maximum: Size) -> !:
+        try extent(minimum.width)
+        try extent(minimum.height)
+        try extent(maximum.width)
+        try extent(maximum.height)
+        if minimum.width > maximum.width or minimum.height > maximum.height:
+            error(result.invalid, "layout minimum exceeds maximum")
+        self.minimum = minimum
+        self.maximum = maximum
+        self.invalidate()
+
+    pub mutating func set_size(width: f64, height: f64) -> !:
+        try self.set_limits(Size(width, height), Size(width, height))
+
+    pub mutating func set_flex(horizontal: f64 = 1.0, vertical: f64 = 1.0) -> !:
+        try extent(horizontal)
+        try extent(vertical)
+        self.growth = Size(horizontal, vertical)
+        self.invalidate()
+
+    pub func child_count() -> i64:
+        return (i64)self.items.length
+
+    pub func child(index: i64) -> interop.Interface[Widget]!:
+        if index < 0 or (usize)index >= self.items.length:
+            error(result.invalid, "child index is outside this layout")
+        return self.items[(usize)index].clone()
+
+    ## Replacement is transactional: validate and allocate before changing edges.
+    pub mutating func set_children(children: const interop.Interface[Widget][]) -> !:
+        if self.editing:
+            error(result.busy, "child replacement cannot reenter the same layout")
+        self.editing = true
+        defer self.finish_edit()
+        if children.length > 1024:
+            error(result.limit, "a layout supports at most 1024 children")
+        var index: usize = 0
+        for child in children:
+            try child.enter()
+            defer child.leave()
+            let layout = child.value().layout()
+            defer layout.release()
+            let state = try layout.get()
+            if state.parent != 0 and state.parent != self.identifier:
+                error(result.busy, "a widget already has a parent")
+            if state.application != 0 and state.parent != self.identifier:
+                error(result.busy, "a widget is mounted in an application")
+            if try contains(child, self.identifier, 0):
+                error(result.invalid, "a widget tree cannot contain a cycle")
+            for previous in children[..<index]:
+                let other = try widget_layout(previous)
+                defer other.release()
+                if other.value().identifier == state.identifier:
+                    error(result.invalid, "a layout cannot contain the same widget twice")
+            index += 1
+        var replacement: interop.Interface[Widget][]
+        if children.length > 0:
+            replacement = try alloc interop.Interface[Widget][children.length] in memory.heap
+        index = 0
+        for child in children:
+            replacement[index] = child.clone()
+            index += 1
+        self.detach()
+        self.items = replacement
+        for child in self.items:
+            let layout = try widget_layout(child)
+            defer layout.release()
+            layout.value().parent = self.identifier
+        self.invalidate()
+
+    pub func content_size(available: Constraints) -> Size!:
+        var size = Size()
+        for child in self.items:
+            let layout = try widget_layout(child)
+            defer layout.release()
+            let measured = layout.value().measured
+            if self.axis == Axis.horizontal:
+                size.width += measured.width
+                size.height = math.max(size.height, measured.height)
+            elif self.axis == Axis.vertical:
+                size.width = math.max(size.width, measured.width)
+                size.height += measured.height
+            else:
+                size.width = math.max(size.width, measured.width)
+                size.height = math.max(size.height, measured.height)
+        let gaps = (f64)(self.items.length - 1) * self.spacing if self.items.length > 0 else 0.0
+        size.width += self.padding * 2.0 + (gaps if self.axis == Axis.horizontal else 0.0)
+        size.height += self.padding * 2.0 + (gaps if self.axis == Axis.vertical else 0.0)
+        return Size(math.min(size.width, available.width), math.min(size.height, available.height))
+
+    mutating func finish_edit():
+        self.editing = false
+
+    mutating func detach():
+        let previous = self.items
+        var empty: interop.Interface[Widget][]
+        self.items = empty
+        for child in previous:
+            # Parents retain interfaces; a child's explicit close may precede
+            # removal. Closed children need no further membership mutation.
+            let layout = widget_layout(child) catch failure:
+                child.release()
+                continue
+            layout.value().parent = 0
+            layout.release()
+            child.release()
+        if previous.length > 0:
+            free(previous) in memory.heap
+
+    mutating func dispose():
+        self.detach()
+        self.invalidate()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        for child in self.items:
+            child.trace(visit, context)
+
+pub let layout_type: interop.Type[Layout] = interop.Type[Layout]("UI layout", Layout.dispose, Layout.trace, main_thread = true)
+
+pub func make_layout(axis: Axis = Axis.overlay, spacing: f64 = 0.0, padding: f64 = 0.0,
+                     alignment: Alignment = Alignment.stretch) -> interop.Reference[Layout]!:
+    return try interop.Reference[Layout].adopt(try new Layout(axis, spacing, padding, alignment) in memory.heap, layout_type, memory.heap)
+
+pub func widget_layout(widget: interop.Interface[Widget]) -> interop.Reference[Layout]!:
+    try widget.enter()
+    defer widget.leave()
+    return widget.value().layout()
+
+func contains(widget: interop.Interface[Widget], identifier: u64, depth: usize) -> bool!:
+    if depth >= 64:
+        error(result.limit, "a widget tree supports at most 64 levels")
+    let layout = try widget_layout(widget)
+    defer layout.release()
+    let state = try layout.get()
+    if state.identifier == identifier:
+        return true
+    for child in state.items:
+        if try contains(child, identifier, depth + 1):
+            return true
+    return false
+
+pub func extent(value: f64) -> !:
+    if not (value >= 0.0 and value <= 16384.0):
+        error(result.invalid, "layout dimensions must be finite and in 0..16384")
+
+struct Entry:
+    let widget: interop.Interface[Widget]
+    let box: interop.Reference[Layout]
+    let parent: i64
+    var end: usize
+
+## A retained traversal protects callbacks against reentrant tree replacement.
+## It is rebuilt transactionally and bounded independently of recursion depth.
+pub struct Tree:
+    let root: interop.Interface[Widget]
+    let identifier: u64
+    var entries: Entry[]
+    var count: usize
+    var width: f64
+    var height: f64
+    var version: u64
+    var focus: u64
+    var capture: u64
+
+    pub func init(content: interop.Interface[Widget]) -> !:
+        serial = serial +? 1 else error(result.limit, "UI identities exhausted")
+        self.identifier = serial
+        self.root = content.clone()
+        var empty: Entry[]
+        self.entries = empty
+        self.count = 0
+        self.width = 0.0
+        self.height = 0.0
+        self.version = 0
+        self.focus = 0
+        self.capture = 0
+
+    pub mutating func arrange(width: f64, height: f64) -> interop.Outcome[unit]:
+        extent(width) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        extent(height) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        if self.count > 0 and self.width == width and self.height == height and self.version == epoch():
+            return result.success[unit](())
+        let replacement = alloc Entry[1024] in memory.heap catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        var count: usize = 0
+        var committed = false
+        defer discard_replacement(replacement, &count, &committed)
+        let started = epoch()
+        gather(self.root, replacement, &count, -1, 0, self.identifier) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        var index = count
+        while index > 0:
+            index -= 1
+            let entry = &replacement[index]
+            entry.widget.enter() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            defer entry.widget.leave()
+            let measured = entry.widget.value().measure(Constraints(width, height))
+            defer measured.release()
+            let size = measured.get() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            extent(size.width) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            extent(size.height) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            let box = entry.box.value()
+            box.measured = Size(math.clamp(size.width, box.minimum.width, box.maximum.width),
+                                math.clamp(size.height, box.minimum.height, box.maximum.height))
+        if epoch() != started:
+            return result.failure[unit](result.busy, "a widget changed the tree during measurement")
+        let bounds = Rect(width = width, height = height)
+        place(replacement, 0, bounds, bounds)
+        # Cancel against the old retained snapshot before its edges are released.
+        if self.capture != 0 and not eligible(replacement, count, self.capture, false):
+            let capture_cancelled = self.cancel(self.capture)
+            if not capture_cancelled.is_success():
+                return capture_cancelled
+            capture_cancelled.release()
+            self.capture = 0
+        if self.focus != 0 and not eligible(replacement, count, self.focus, true):
+            if self.focus != self.capture:
+                let focus_cancelled = self.cancel(self.focus)
+                if not focus_cancelled.is_success():
+                    return focus_cancelled
+                focus_cancelled.release()
+            self.focus = 0
+        for entry in self.entries[..<self.count]:
+            entry.box.value().application = 0
+            entry.box.value().focused = false
+        release_entries(self.entries, self.count)
+        committed = true
+        self.entries = replacement
+        self.count = count
+        self.width = width
+        self.height = height
+        self.version = started
+        for entry in self.entries[..<self.count]:
+            let box = entry.box.value()
+            box.application = self.identifier
+            box.focused = box.identifier == self.focus
+        return result.success[unit](())
+
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        for entry in self.entries[..<self.count]:
+            let box = entry.box.value()
+            if box.clipping.width <= 0.0 or box.clipping.height <= 0.0:
+                continue
+            let native_target = target.get() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            let clipped = native_target.clipped(box.clipping) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            defer clipped.release()
+            let native_clipped = clipped.get() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            let region = native_clipped.region(box.rectangle) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            defer region.release()
+            entry.widget.enter() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            defer entry.widget.leave()
+            var widget = entry.widget.value()
+            let drawn = widget.draw(region)
+            if not drawn.is_success():
+                return drawn
+            drawn.release()
+        return result.success[unit](())
+
+    pub mutating func dispatch(event: input.Event) -> interop.Outcome[unit]:
+        let arranged = self.arrange(self.width, self.height)
+        if not arranged.is_success():
+            return arranged
+        arranged.release()
+        if event.kind == input.EventKind.focus_lost or event.kind == input.EventKind.overflow:
+            let capture_cancelled = self.cancel(self.capture)
+            if not capture_cancelled.is_success():
+                return capture_cancelled
+            capture_cancelled.release()
+            if self.focus != self.capture:
+                let focus_cancelled = self.cancel(self.focus)
+                if not focus_cancelled.is_success():
+                    return focus_cancelled
+                focus_cancelled.release()
+            self.capture = 0
+            self.set_focus(0)
+            return result.success[unit](())
+        if event.kind == input.EventKind.key_down and event.key == input.Key.tab:
+            if not event.repeated:
+                let capture_cancelled = self.cancel(self.capture)
+                if not capture_cancelled.is_success():
+                    return capture_cancelled
+                capture_cancelled.release()
+                let focus_cancelled = self.cancel(self.focus)
+                if not focus_cancelled.is_success():
+                    return focus_cancelled
+                focus_cancelled.release()
+                self.capture = 0
+                self.advance_focus(event.modifiers.shift)
+            return result.success[unit](())
+        var destination: u64 = 0
+        if event.kind == input.EventKind.pointer_down and event.button == 0:
+            destination = self.hit(event.x, event.y)
+            let capture_cancelled = self.cancel(self.capture)
+            if not capture_cancelled.is_success():
+                return capture_cancelled
+            capture_cancelled.release()
+            if destination != self.focus:
+                let focus_cancelled = self.cancel(self.focus)
+                if not focus_cancelled.is_success():
+                    return focus_cancelled
+                focus_cancelled.release()
+            self.capture = destination
+            let selected = self.find(destination)
+            if let index = selected:
+                self.set_focus(destination if self.entries[index].box.value().accepts_focus else 0)
+            else:
+                self.set_focus(0)
+        elif event.kind == input.EventKind.pointer_up and event.button == 0:
+            destination = self.capture
+            self.capture = 0
+        elif event.kind == input.EventKind.pointer_moved:
+            destination = self.capture if self.capture != 0 else self.hit(event.x, event.y)
+        elif event.kind == input.EventKind.scroll:
+            destination = self.hit(event.x, event.y)
+        elif event.kind == input.EventKind.key_down or event.kind == input.EventKind.key_up:
+            destination = self.focus
+        if let index = self.find(destination):
+            let box = self.entries[index].box.value()
+            let translated = Event(kind = event.kind, key = event.key,
+                x = event.x - box.rectangle.x, y = event.y - box.rectangle.y,
+                button = (i64)event.button, repeated = event.repeated, shift = event.modifiers.shift,
+                inside = inside(box.clipping, event.x, event.y), scroll_x = event.scroll_x, scroll_y = event.scroll_y)
+            let delivered = self.send(index, translated)
+            if not delivered.is_success():
+                return delivered
+            delivered.release()
+        let refreshed = self.arrange(self.width, self.height)
+        if not refreshed.is_success():
+            return refreshed
+        refreshed.release()
+        return result.success[unit](())
+
+    func find(identifier: u64) -> usize?:
+        if identifier == 0:
+            return none
+        var index: usize = 0
+        while index < self.count:
+            if self.entries[index].box.value().identifier == identifier:
+                return index
+            index += 1
+        return none
+
+    func hit(x: f64, y: f64) -> u64:
+        var index = self.count
+        while index > 0:
+            index -= 1
+            let box = self.entries[index].box.value()
+            if path_enabled(self.entries, index) and box.accepts_pointer and inside(box.clipping, x, y):
+                return box.identifier
+        return 0
+
+    func send(index: usize, event: Event) -> interop.Outcome[unit]:
+        let widget = self.entries[index].widget
+        widget.enter() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer widget.leave()
+        var native = widget.value()
+        let delivered = native.event(event)
+        return delivered
+
+    func cancel(identifier: u64) -> interop.Outcome[unit]:
+        if let index = self.find(identifier):
+            let cancelled = self.send(index, Event(cancelled = true))
+            if not cancelled.is_success():
+                return cancelled
+            cancelled.release()
+        return result.success[unit](())
+
+    mutating func set_focus(identifier: u64):
+        self.focus = identifier
+        for entry in self.entries[..<self.count]:
+            entry.box.value().focused = entry.box.value().identifier == identifier
+        revision = revision +? 1 else trap("UI revision exhausted")
+
+    mutating func advance_focus(backwards: bool):
+        if self.count == 0:
+            return
+        var index = self.find(self.focus) else (0 if backwards else self.count - 1)
+        var visited: usize = 0
+        while visited < self.count:
+            index = (self.count - 1 if index == 0 else index - 1) if backwards else (index + 1) % self.count
+            let box = self.entries[index].box.value()
+            if path_enabled(self.entries, index) and box.accepts_focus and box.clipping.width > 0.0 and box.clipping.height > 0.0:
+                self.set_focus(box.identifier)
+                return
+            visited += 1
+        self.set_focus(0)
+
+    pub mutating func close():
+        for entry in self.entries[..<self.count]:
+            entry.box.value().application = 0
+            entry.box.value().focused = false
+        release_entries(self.entries, self.count)
+        self.count = 0
+        var empty: Entry[]
+        self.entries = empty
+        self.root.release()
+
+    pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.root.trace(visit, context)
+        for entry in self.entries[..<self.count]:
+            entry.widget.trace(visit, context)
+            entry.box.trace(visit, context)
+
+func release_entries(entries: Entry[], count: usize):
+    for entry in entries[..<count]:
+        entry.widget.release()
+        entry.box.release()
+    if entries.length > 0:
+        free(entries) in memory.heap
+
+func path_enabled(entries: const Entry[], index: usize) -> bool:
+    var cursor = (i64)index
+    while cursor >= 0:
+        let entry = &entries[(usize)cursor]
+        if not entry.box.value().active:
+            return false
+        cursor = entry.parent
+    return true
+
+func eligible(entries: const Entry[], count: usize, identifier: u64, focus: bool) -> bool:
+    var index: usize = 0
+    while index < count:
+        let box = entries[index].box.value()
+        if box.identifier == identifier:
+            return path_enabled(entries, index) and (box.accepts_focus if focus else box.accepts_pointer) and box.clipping.width > 0.0 and box.clipping.height > 0.0
+        index += 1
+    return false
+
+func gather(widget: interop.Interface[Widget], entries: Entry[], count: usize*, parent: i64,
+            depth: usize, application: u64) -> !:
+    if depth >= 64 or *count >= entries.length:
+        error(result.limit, "a widget tree supports at most 1024 widgets and 64 levels")
+    let box = try widget_layout(widget)
+    errdefer box.release()
+    let state = try box.get()
+    if state.application != 0 and state.application != application:
+        error(result.busy, "a widget already belongs to another application")
+    if parent == -1 and state.parent != 0:
+        error(result.busy, "an application root already has a parent")
+    for previous in entries[..<*count]:
+        if previous.box.value().identifier == state.identifier:
+            error(result.invalid, "widgets must return distinct stable layouts")
+    let index = *count
+    entries[index] = Entry(widget.clone(), box.clone(), parent, 0)
+    *count += 1
+    let length = state.child_count()
+    var child_index: i64 = 0
+    while child_index < length:
+        let child = try state.child(child_index)
+        defer child.release()
+        try gather(child, entries, count, (i64)index, depth + 1, application)
+        child_index += 1
+    entries[index].end = *count
+    box.release()
+
+func inside(rectangle: Rect, x: f64, y: f64) -> bool:
+    return x >= rectangle.x and y >= rectangle.y and x < rectangle.x + rectangle.width and y < rectangle.y + rectangle.height
+
+func intersection(a: Rect, b: Rect) -> Rect:
+    let x = math.max(a.x, b.x)
+    let y = math.max(a.y, b.y)
+    return Rect(x, y, math.max(0.0, math.min(a.x + a.width, b.x + b.width) - x),
+                math.max(0.0, math.min(a.y + a.height, b.y + b.height) - y))
+
+func along(size: Size, horizontal: bool) -> f64:
+    return size.width if horizontal else size.height
+
+func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect):
+    let box = entries[index].box.value()
+    box.rectangle = bounds
+    box.clipping = intersection(bounds, clip)
+    let horizontal = box.axis == Axis.horizontal
+    let inner = Rect(bounds.x + box.padding, bounds.y + box.padding,
+        math.max(0.0, bounds.width - box.padding * 2.0), math.max(0.0, bounds.height - box.padding * 2.0))
+    var child = index + 1
+    var total: f64 = 0.0
+    var length: usize = 0
+    while child < entries[index].end:
+        let item = entries[child].box.value()
+        item.rectangle = Rect(width = item.measured.width, height = item.measured.height)
+        total += along(item.measured, horizontal)
+        length += 1
+        child = entries[child].end
+    let gaps = (f64)(length - 1) * box.spacing if length > 0 else 0.0
+    let available = math.max(0.0, (inner.width if horizontal else inner.height) - gaps)
+    var remaining = available - total
+    # Weighted water filling respects per-child maxima. Shrinking distributes
+    # according to available capacity rather than driving any child below minimum.
+    var pass: usize = 0
+    while box.axis != Axis.overlay and math.abs(remaining) > 0.000001 and pass <= length:
+        var weight: f64 = 0.0
+        child = index + 1
+        while child < entries[index].end:
+            let item = entries[child].box.value()
+            let current = item.rectangle.width if horizontal else item.rectangle.height
+            if remaining > 0.0 and current < along(item.maximum, horizontal):
+                weight += along(item.growth, horizontal)
+            elif remaining < 0.0:
+                weight += math.max(0.0, current - along(item.minimum, horizontal))
+            child = entries[child].end
+        if weight <= 0.0:
+            break
+        var changed: f64 = 0.0
+        child = index + 1
+        while child < entries[index].end:
+            let item = entries[child].box.value()
+            let current = item.rectangle.width if horizontal else item.rectangle.height
+            let capacity = along(item.maximum, horizontal) - current if remaining > 0.0 else current - along(item.minimum, horizontal)
+            let share = along(item.growth, horizontal) if remaining > 0.0 else math.max(0.0, capacity)
+            let delta = math.min(math.max(0.0, capacity), math.abs(remaining) * share / weight) * (1.0 if remaining > 0.0 else -1.0)
+            if horizontal:
+                item.rectangle.width += delta
+            else:
+                item.rectangle.height += delta
+            changed += delta
+            child = entries[child].end
+        remaining -= changed
+        pass += 1
+    var cursor = inner.x if horizontal else inner.y
+    child = index + 1
+    while child < entries[index].end:
+        let item = entries[child].box.value()
+        var rectangle = item.rectangle
+        if box.axis == Axis.overlay:
+            rectangle = Rect(inner.x, inner.y, math.clamp(inner.width, item.minimum.width, item.maximum.width),
+                             math.clamp(inner.height, item.minimum.height, item.maximum.height))
+        else:
+            let cross = inner.height if horizontal else inner.width
+            let desired = rectangle.height if horizontal else rectangle.width
+            let minimum = item.minimum.height if horizontal else item.minimum.width
+            let maximum = item.maximum.height if horizontal else item.maximum.width
+            let placed = math.clamp(cross if box.alignment == Alignment.stretch else math.min(cross, desired), minimum, maximum)
+            let spare = math.max(0.0, cross - placed)
+            let offset = spare * 0.5 if box.alignment == Alignment.center else (spare if box.alignment == Alignment.end else 0.0)
+            if horizontal:
+                rectangle.x = cursor
+                rectangle.y = inner.y + offset
+                rectangle.height = placed
+                cursor += rectangle.width + box.spacing
+            else:
+                rectangle.x = inner.x + offset
+                rectangle.y = cursor
+                rectangle.width = placed
+                cursor += rectangle.height + box.spacing
+        place(entries, child, rectangle, box.clipping)
+        child = entries[child].end
+
+func discard_replacement(entries: Entry[], count: usize*, committed: bool*):
+    if not *committed:
+        release_entries(entries, *count)

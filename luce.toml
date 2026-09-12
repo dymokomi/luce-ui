@@ -1,0 +1,6 @@
+[package]
+name = "luce_ui"
+source = "src"
+
+[exports]
+ui = "luce_ui.ui"

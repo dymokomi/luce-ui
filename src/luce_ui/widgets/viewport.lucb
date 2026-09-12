@@ -1,0 +1,47 @@
+import gpu
+import interop
+import math
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+
+pub struct Viewport: Widget:
+    let box: interop.Reference[Layout]
+    let rendering: interop.Signal[interop.View[gpu.RenderTarget]]
+
+    pub func init(width: f64 = 320.0, height: f64 = 240.0) -> !:
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_limits(Size(width, height), Size(16384.0, 16384.0))
+        try box.value().set_flex()
+        let signal = try interop.Signal[interop.View[gpu.RenderTarget]]()
+        self.rendering = signal
+        self.box = box
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func on_render(callback: interop.Callback[interop.View[gpu.RenderTarget], unit]) -> interop.Reference[interop.Connection]!:
+        return try self.rendering.connect(callback)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return result.success[Size](Size())
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        return self.rendering.emit(target)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.rendering.close()
+        self.rendering.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+        self.rendering.trace(visit, context)
+
+pub let viewport_type: interop.Type[Viewport] = interop.Type[Viewport]("Viewport", Viewport.close, Viewport.trace, closeable = true, main_thread = true)

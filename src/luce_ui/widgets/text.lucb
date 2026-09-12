@@ -1,0 +1,62 @@
+import gpu
+import interop
+import math
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+from luce_ui.font import BitmapFont
+
+pub struct Text: Widget:
+    let box: interop.Reference[Layout]
+    var caption: interop.Owned[str]
+
+    pub func init(text: str) -> !:
+        discard(try BitmapFont().measure(text))
+        let box = try layout.make_layout()
+        errdefer box.release()
+        self.caption = try interop.copy_text(text)
+        self.box = box
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func text() -> interop.Owned[str]:
+        return self.caption.clone()
+
+    pub mutating func set_text(text: str) -> !:
+        discard(try BitmapFont().measure(text))
+        let replacement = try interop.copy_text(text)
+        self.caption.release()
+        self.caption = replacement
+        self.box.value().invalidate()
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let width = BitmapFont().measure(self.caption.value) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        return result.success[Size](Size(width + 0.0, 18.0))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try (try target.get()).size()
+        try painter.text(self.caption.value, 0.0, math.max(0.0, (size.height - 14.0) * 0.5))
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.caption.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+        self.caption.trace(visit, context)
+
+pub let text_type: interop.Type[Text] = interop.Type[Text]("Text", Text.close, Text.trace, closeable = true, main_thread = true)
