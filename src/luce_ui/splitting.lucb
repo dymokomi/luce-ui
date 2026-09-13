@@ -1,0 +1,17 @@
+## Pure splitter sizing. When minima cannot fit, preserve them and let ancestor
+## clipping handle overflow; adjacent panes never overlap or become negative.
+import math
+
+pub struct SplitSizes:
+    pub let first: f64
+    pub let second: f64
+
+pub func distribute(available: f64, fraction: f64, first_min: f64, first_max: f64,
+                    second_min: f64, second_max: f64) -> SplitSizes:
+    let total = math.max(available, first_min + second_min)
+    let low = math.max(first_min, total - second_max)
+    let high = math.min(first_max, total - second_min)
+    if low > high:
+        return SplitSizes(first_max, second_max)
+    let first = math.clamp(total * fraction, low, high)
+    return SplitSizes(first, total - first)

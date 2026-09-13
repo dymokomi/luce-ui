@@ -1,0 +1,130 @@
+from ui import Application, TextEditor, Font, Event, FoldRange
+from input import EventKind, Key, ScrollUnit
+from gpu import Frame
+import window
+
+pub func text_views() -> unit!:
+    scrolling()
+    folding()
+    folded_extents()
+
+func scrolling() -> unit!:
+    let font = Font()
+    var text = ""
+    for index in 0..<160:
+        text += "é"
+    text += "\n\t😀\nend"
+    let editor = TextEditor(text, font = font)
+    let app = Application(editor)
+    app.layout(320.0, 100.0)
+    app.dispatch(Event(kind = EventKind.scroll, x = 100.0, y = 40.0, scroll_x = -40.0, scroll_unit = ScrollUnit.points))
+    assert(editor.scroll_offset().width == 40.0)
+    app.dispatch(Event(kind = EventKind.scroll, x = 100.0, y = 40.0, scroll_x = 10.0, scroll_unit = ScrollUnit.points))
+    assert(editor.scroll_offset().width == 30.0)
+    app.dispatch(Event(kind = EventKind.scroll, x = 100.0, y = 40.0, scroll_x = -100000.0, scroll_y = -100000.0, scroll_unit = ScrollUnit.points))
+    let limit = editor.scroll_offset().width
+    assert(limit > 500.0 and limit < font.advance() * 161.0 and editor.scroll_offset().height == 0.0)
+    app.dispatch(Event(kind = EventKind.scroll, x = 100.0, y = 40.0, scroll_x = -1000.0, scroll_unit = ScrollUnit.points))
+    assert(editor.scroll_offset().width == limit)
+    app.layout(2000.0, 100.0)
+    assert(editor.scroll_offset().width == 0.0)
+    app.layout(320.0, 100.0)
+    editor.set_selection(0, 160)
+    editor.insert("short")
+    assert(editor.scroll_offset().width == 0.0)
+    editor.undo()
+    app.dispatch(Event(kind = EventKind.scroll, x = 100.0, y = 40.0, scroll_x = -2.0, scroll_unit = ScrollUnit.lines))
+    assert(editor.scroll_offset().width > 0.0)
+    editor.set_text("small")
+    assert(editor.scroll_offset().width == 0.0)
+    let frame = Frame(window.Size(320.0, 100.0, 320.0, 100.0, 1.0))
+    app.render(frame.target())
+    frame.close()
+
+func folded_extents() -> unit!:
+    var body = ""
+    for row in 0..<60:
+        body += "    "
+        for column in 0..<120:
+            body += "é"
+        body += "\n"
+    let editor = TextEditor("block:\n" + body + "after")
+    let app = Application(editor)
+    app.layout(320.0, 100.0)
+    assert(editor.set_folds([FoldRange(0, 7 + body.length)], editor.version()))
+    app.dispatch(Event(kind = EventKind.scroll, x = 100.0, y = 40.0, scroll_x = -100000.0, scroll_y = -100000.0, scroll_unit = ScrollUnit.points))
+    assert(editor.scroll_offset().width > 0.0 and editor.scroll_offset().height > 0.0)
+    editor.fold_all()
+    assert(editor.visible_line_count() == 2)
+    assert(editor.scroll_offset().width == 0.0 and editor.scroll_offset().height == 0.0)
+    editor.unfold_all()
+    app.dispatch(Event(kind = EventKind.scroll, x = 100.0, y = 40.0, scroll_x = -100000.0, scroll_y = -100000.0, scroll_unit = ScrollUnit.points))
+    assert(editor.scroll_offset().width > 0.0 and editor.scroll_offset().height > 0.0)
+    editor.set_selection(7, 7 + body.length)
+    editor.insert("")
+    assert(editor.visible_line_count() == 2)
+    assert(editor.scroll_offset().width == 0.0 and editor.scroll_offset().height == 0.0)
+
+func folding() -> unit!:
+    let font = Font()
+    let source = "outer:\n    inner:\n        text\n    last\nafter"
+    let editor = TextEditor(source, font = font)
+    let app = Application(editor)
+    app.layout(400.0, 100.0)
+    app.focus(editor.layout())
+    app.layout(400.0, 100.0)
+    let inner = 7
+    let last = 31
+    let after = 40
+    assert(editor.set_folds([FoldRange(0, after), FoldRange(inner, last)], editor.version()))
+    let revision = editor.version()
+    assert(editor.set_folded(2, true) and editor.visible_line_count() == 4)
+    assert(editor.set_folded(1, true) and editor.visible_line_count() == 2)
+    assert(editor.text() == source and editor.version() == revision)
+    assert(editor.set_folded(1, false) and editor.is_folded(2))
+    assert(editor.visible_line_count() == 4)
+    discard(editor.set_folded(1, true))
+    editor.set_selection(0, 0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.down))
+    assert(editor.line() == 5 and editor.is_folded(1))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.up))
+    assert(editor.line() == 1 and editor.is_folded(1))
+    editor.set_selection(26, 26)
+    assert(not editor.is_folded(1) and not editor.is_folded(2))
+    editor.fold_all()
+    assert(editor.line() == 1 and editor.visible_line_count() == 2)
+    editor.unfold_all()
+    assert(editor.visible_line_count() == 5)
+    # Gutter toggles use the same visible rows as mouse selection and drawing.
+    app.dispatch(Event(kind = EventKind.pointer_down, x = font.advance() * 7.0, y = 8.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = font.advance() * 7.0, y = 8.0))
+    assert(editor.is_folded(1))
+    editor.set_selection(6, 6)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.delete))
+    assert(not editor.is_folded(1) and editor.text() == source)
+    discard(editor.set_folded(1, true))
+    editor.set_selection(after, after)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.backspace))
+    assert(not editor.is_folded(1) and editor.text() == source)
+    discard(editor.set_folded(1, true))
+    editor.set_selection(0, editor.length())
+    assert(editor.selected_text() == source)
+    editor.insert("replacement")
+    assert(editor.text() == "replacement" and editor.visible_line_count() == 1)
+    editor.undo()
+    assert(editor.text() == source and editor.visible_line_count() == 5)
+    var invalid = false
+    let accepted = editor.set_folds([FoldRange(0, last), FoldRange(inner, after)], editor.version()) catch failure:
+        invalid = true
+        recover false
+    assert(invalid and not accepted)
+    assert(not editor.set_folds([FoldRange(-1, 900)], revision))
+    editor.set_text("head:\n    last")
+    discard(editor.set_folds([FoldRange(0, editor.length())], editor.version()))
+    editor.fold_all()
+    editor.set_selection(editor.length(), editor.length())
+    assert(not editor.is_folded(1))
+    let frame = Frame(window.Size(400.0, 100.0, 400.0, 100.0, 1.0))
+    editor.fold_all()
+    app.render(frame.target())
+    frame.close()

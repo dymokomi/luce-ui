@@ -44,3 +44,15 @@ when the popup disappears. A menu only manages action selection and presentation
 Applications compose named views from these controls and keep document state,
 command implementations and lifecycle wiring in separate components. The
 framework does not need to know that a particular view is a code editor.
+
+Pane framing is independent of arrangement. SplitView owns two child interfaces
+and a divider, while Layout performs constrained placement using a pure sizing
+function. The divider holds a weak reference to its parent layout and uses the
+existing focus and pointer-capture machinery. Nested splits build larger layouts
+without editor-specific event handling or platform code.
+
+The text document stores source and history; Folding stores versioned whole-line
+ranges; Projection maps physical lines to visible rows and caches their widths.
+Drawing, hit testing, cursor navigation and scroll extents consume that same map.
+Fold publication does not alter the document. Language-specific range discovery
+belongs alongside the application's incremental lexer.

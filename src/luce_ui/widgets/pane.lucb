@@ -1,0 +1,52 @@
+## A border is independent of pane arrangement. The one-point inset keeps child
+## drawing inside the frame, including nested toolbars and GPU viewports.
+import math
+import gpu
+import interop
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+
+pub struct Pane: Widget:
+    let box: interop.Reference[Layout]
+
+    pub func init(content: interop.Interface[Widget], minimum: Size = Size(120.0, 80.0)) -> !:
+        let box = try layout.make_layout(padding = 1.0)
+        errdefer box.release()
+        try box.value().set_children([content])
+        try box.value().set_limits(minimum, Size(16384.0, 16384.0))
+        try box.value().set_flex()
+        self.box = box
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let size = self.box.value().content_size(available) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        return result.success[Size](size)
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), self.box.value().theme().border)
+        try painter.rectangle(gpu.Rect(1.0, 1.0, math.max(0.0, size.width - 2.0), math.max(0.0, size.height - 2.0)), self.box.value().theme().background)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+
+pub let pane_type: interop.Type[Pane] = interop.Type[Pane]("Pane", Pane.close, Pane.trace, closeable = true, main_thread = true)

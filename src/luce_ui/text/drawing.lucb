@@ -7,43 +7,55 @@ import utf8
 from luce_ui.font import Font
 from luce_ui.painter import Painter
 from luce_ui.text.document import Document
+from luce_ui.text.projection import Projection
+from luce_ui.text.folding import Folding
 from luce_ui.text.style import Highlight, EditorTheme
 
 pub func vertical_padding(font: interop.Reference[Font]) -> f64:
     return (font.value().line_height() - font.value().height()) * 0.5
 
-pub func gutter_width(numbers: bool, font: interop.Reference[Font]) -> f64:
-    return font.value().advance() * 6.0 if numbers else 0.0
+pub func gutter_width(numbers: bool, font: interop.Reference[Font], folding: bool = false) -> f64:
+    return font.value().advance() * ((6.0 if numbers else 0.0) + (2.0 if folding else 0.0))
 
 pub func paint(document: const Document*, painter: Painter*, width: f64, height: f64,
                scroll_x: f64, scroll_y: f64, numbers: bool, focused: bool,
                caret_visible: bool, font: interop.Reference[Font], theme: EditorTheme,
-               highlights: const Highlight[]) -> !:
-    let gutter = gutter_width(numbers, font)
+               highlights: const Highlight[], projection: const Projection*, folds: const Folding*) -> !:
+    let folding = folds.values().length > 0
+    let gutter = gutter_width(numbers, font, folding)
     try painter.rectangle(gpu.Rect(width = width, height = height), theme.background)
-    if numbers:
+    if numbers or folding:
         try painter.rectangle(gpu.Rect(width = gutter, height = height), theme.gutter)
     let first_row = (usize)(scroll_y / font.value().line_height())
-    var offset = document.line_offset(first_row)
+    var offset = projection.line(projection.physical_row(first_row)).start
     var row = first_row
     var y = vertical_padding(font) + (f64)row * font.value().line_height() - scroll_y
-    let current = document.line_number(document.caret())
+    let current = projection.visual_row(document.caret())
     var style: usize = 0
     while style < highlights.length and highlights[style].end <= (i64)offset:
         style += 1
-    let rows = document.line_count()
+    let rows = projection.visible_count()
     while y < height and row < rows:
-        let end = document.line_end(offset)
+        let physical = projection.physical_row(row)
+        let line = projection.line(physical)
+        offset = line.start
+        let end = line.end
         if focused and row == current:
             try painter.rectangle(gpu.Rect(gutter, y - 3.0, math.max(0.0, width - gutter), font.value().line_height()), theme.current_line)
         if numbers:
             var label: u8[32]
-            let text = try format(label, f"{row + 1}")
+            let text = try format(label, f"{physical + 1}")
             let extent = try font.value().measure(text)
-            try painter.text(text, gutter - extent - font.value().advance(), y, theme.line_number, font)
+            try painter.text(text, gutter - extent - font.value().advance() * (3.0 if folding else 1.0), y, theme.line_number, font)
         try paint_line(document, painter, offset, end, y, width, scroll_x, gutter,
             focused, caret_visible, font, theme, highlights, &style)
-        offset = end + 1
+        if let index = folds.at(offset):
+            let fold = folds.values()[index]
+            try painter.text("+" if fold.collapsed else "-", gutter - font.value().advance() * 1.5, y, theme.line_number, font)
+            if fold.collapsed:
+                let x = gutter + font.value().advance() * (f64)(line.columns + 2) - scroll_x
+                if x >= gutter and x < width - 8.0:
+                    try painter.text("...", x, y, theme.line_number, font)
         row += 1
         y += font.value().line_height()
     let total = (f64)rows * font.value().line_height() + vertical_padding(font) * 2.0

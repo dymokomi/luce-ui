@@ -1,0 +1,125 @@
+import memory
+from luce_ui.text.document import Document
+from luce_ui.text.folding import FoldRange, Folding
+from luce_ui.text.projection import Projection
+
+struct Tracker: memory.Allocator:
+    var upstream: memory.Allocator
+    var live: usize
+    var remaining: usize?
+
+    pub mutating func allocate(size: usize, alignment: usize) -> u8[]?:
+        if let remaining = self.remaining:
+            if remaining == 0:
+                return none
+            self.remaining = remaining - 1
+        let block = self.upstream.allocate(size, alignment) else return none
+        self.live += 1
+        return block
+
+    pub mutating func resize(block: u8[], size: usize) -> bool:
+        return self.upstream.resize(block, size)
+
+    pub mutating func release(block: u8[]):
+        assert(self.live > 0)
+        self.live -= 1
+        self.upstream.release(block)
+
+func restore(previous: memory.Allocator):
+    memory.heap = previous
+
+
+## Failed replacement keeps the old fold set and line cache usable. Retry after
+## memory pressure must rebuild the edited projection without leaked buffers.
+func text_allocations(tracker: Tracker*) -> !:
+    var document = try Document("head:\n    body\nafter")
+    defer document.close()
+    var folds = Folding()
+    defer folds.close()
+    try folds.replace([FoldRange(0, 15)], &document)
+    assert(folds.set(0, true))
+    for stage in 0..<2:
+        let baseline = tracker.live
+        tracker.remaining = (usize)stage
+        var refused = false
+        folds.replace([FoldRange(0, (i64)document.length())], &document) catch failure:
+            assert(failure.code == memory.exhausted)
+            refused = true
+        tracker.remaining = none
+        assert(refused and tracker.live == baseline)
+        assert(folds.values().length == 1 and folds.values()[0].end == 15 and folds.values()[0].collapsed)
+    var projection = Projection()
+    defer projection.close()
+    try projection.refresh(&document, &folds)
+    assert(projection.visible_count() == 2)
+    try document.replace(document.length(), document.length(), "\n\t😀")
+    folds.transform(document.last_change())
+    for stage in 0..<2:
+        let baseline = tracker.live
+        tracker.remaining = (usize)stage
+        var refused = false
+        projection.refresh(&document, &folds) catch failure:
+            assert(failure.code == memory.exhausted)
+            refused = true
+        tracker.remaining = none
+        assert(refused and tracker.live == baseline)
+        assert(projection.line_count() == 3 and projection.visible_count() == 2)
+    try projection.refresh(&document, &folds)
+    assert(projection.line_count() == 4 and projection.visible_count() == 3)
+
+func check_projection(document: const Document*, projection: const Projection*):
+    var row: usize = 0
+    var start: usize = 0
+    var columns: usize = 0
+    var widest: usize = 0
+    for offset in 0..<(document.length() + 1):
+        if offset == document.length() or document.scalar(offset) == 10:
+            let line = projection.line(row)
+            assert(line.start == start and line.end == offset and line.columns == columns)
+            assert(projection.row_at(start) == row and projection.physical_row(row) == row)
+            if columns > widest:
+                widest = columns
+            start = offset + 1
+            row += 1
+            columns = 0
+        else:
+            columns += 4 - columns % 4 if document.scalar(offset) == 9 else 1
+    assert(projection.line_count() == row and projection.visible_count() == row)
+    assert(projection.maximum_columns() == widest)
+
+func projection_edits() -> !:
+    var document = try Document("α\n\t😀\nlast")
+    defer document.close()
+    var folds = Folding()
+    defer folds.close()
+    var projection = Projection()
+    defer projection.close()
+    let replacements: str[5] = ["\né\n", "", "\t😀", "longer", "\n\n"]
+    try projection.refresh(&document, &folds)
+    check_projection(&document, &projection)
+    for turn in 0..<300:
+        let start = (usize)(turn * 17) % (document.length() + 1)
+        let proposed = start + (usize)(turn % 7)
+        let finish = proposed if proposed < document.length() else document.length()
+        try document.replace(start, finish, replacements[(usize)turn % replacements.length])
+        try projection.refresh(&document, &folds)
+        check_projection(&document, &projection)
+        if turn % 3 == 0:
+            assert(try document.undo())
+            try projection.refresh(&document, &folds)
+            check_projection(&document, &projection)
+            assert(try document.redo())
+            try projection.refresh(&document, &folds)
+            check_projection(&document, &projection)
+
+test "fold and projection allocation failures preserve usable storage":
+    var tracker = Tracker(upstream = memory.heap)
+    let previous = memory.heap
+    memory.heap = &tracker
+    defer restore(previous)
+    with tracker:
+        try text_allocations(&tracker)
+        assert(tracker.live == 0)
+
+test "incremental line projection matches complete scans through Unicode edits and history":
+    try projection_edits()

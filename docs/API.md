@@ -12,6 +12,8 @@ All objects and callbacks belong to the main thread.
 | `Text` | `Text(text)`, `text`, `set_text`, `layout` |
 | `Spacer` | `Spacer(weight=1)`, `layout` |
 | `VStack`, `HStack` | Heterogeneous children, spacing, padding, alignment; `set_children`, `layout` |
+| `Pane` | `Pane(content, minimum=Size(120, 80))`; themed border and one-point content inset |
+| `SplitView` | Two widgets, `axis`, preferred `fraction`, `handle_width`; `fraction`, `set_fraction`, `layout` |
 | `Viewport` | Preferred minimum width/height; `on_render`, `layout` |
 | `Application` | Content, title and dimensions; `run`, `stop`, `close`, `on_frame`, `layout`, `dispatch`, `render` |
 | `Painter` | Checked GPU target; `rectangle`, `text`, `target` |
@@ -107,3 +109,28 @@ content, and modal input. `set_visible(false)` removes it from traversal without
 releasing its parent ownership. This is the menu's reusable foundation. An
 application root must remain visible. This initial popup API does not provide
 nested menus, OS-native menu bars or cross-window presentation.
+
+## Panes and split views
+
+`Pane(content, minimum=Size(...))` draws the inherited border color and reserves
+one logical point on each edge. Content may be any Widget, including a composed
+toolbar, text control, or GPU viewport. Borders do not imply a particular layout.
+
+`SplitView(first, second, axis=Axis.horizontal, fraction=0.5, handle_width=5.0)`
+shares space between two children. Nest vertical and horizontal splits to build
+a workspace. Fractions must be finite in 0..1; the handle accepts 3..32 logical
+points. The fraction describes the preferred share after subtracting the handle.
+Placement enforces both children's minimum and maximum dimensions. A window too
+small for the minima clips the remaining overflow. If both maxima leave spare
+space, it remains empty after the second pane.
+
+The divider resizes live with normal pointer capture. Focus it with Tab; matching
+arrow keys move it eight points, Shift+arrow moves 32, and Home/End move to the
+allowed limits. Focus loss cancels dragging. `fraction()` returns the preference,
+which survives window resizing; inspect child bounds for the constrained sizes.
+`Layout.minimum_size()` and `maximum_size()` expose configured constraints.
+
+The split's Layout owns three visible ordinary children: first pane, divider,
+second pane. Changing this shape or hiding a direct child is rejected. To hide
+content while retaining its pane, change the content inside the Pane. This first
+splitter provides no docking, collapsible panes, or saved session geometry.

@@ -70,3 +70,13 @@ pub let toolbar_type = toolbar.toolbar_type
 import luce_ui.widgets.menu as menu
 pub type Menu = menu.Menu
 pub let menu_type = menu.menu_type
+
+import luce_ui.widgets.pane as pane
+pub type Pane = pane.Pane
+pub let pane_type = pane.pane_type
+import luce_ui.widgets.split_view as split_view
+pub type SplitView = split_view.SplitView
+pub let split_view_type = split_view.split_view_type
+
+import luce_ui.text.folding as folding
+pub type FoldRange = folding.FoldRange

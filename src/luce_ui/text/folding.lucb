@@ -1,0 +1,143 @@
+## Language-neutral, whole-line fold ranges. Headers remain visible; nested
+## collapse state survives parent toggles and edits outside the header.
+import memory
+import luce_ui.result as result
+from luce_ui.text.document import Document, TextChange
+
+pub struct FoldRange:
+    pub let start: i64
+    pub let end: i64
+
+pub struct Fold:
+    pub let header: usize
+    pub let hidden: usize
+    pub let end: usize
+    pub var collapsed: bool
+
+pub struct Folding:
+    var items: Fold[]
+    var count: usize
+    var revision: u64
+
+    pub func init():
+        var empty: Fold[]
+        self.items = empty
+        self.count = 0
+        self.revision = 0
+
+    pub func version() -> u64:
+        return self.revision
+
+    pub func values() -> const Fold[]:
+        return self.items[..<self.count]
+
+    pub func at(header: usize) -> usize?:
+        var low: usize = 0
+        var high = self.count
+        while low < high:
+            let middle = (low + high) // 2
+            if self.items[middle].header < header:
+                low = middle + 1
+            else:
+                high = middle
+        return low if low < self.count and self.items[low].header == header else none
+
+    pub mutating func replace(ranges: const FoldRange[], document: const Document*) -> !:
+        if ranges.length > 65536:
+            error(result.limit, "an editor supports at most 65536 fold ranges")
+        var copied: Fold[]
+        var stack: usize[]
+        if ranges.length > 0:
+            copied = try alloc Fold[ranges.length] in memory.heap
+            errdefer free(copied) in memory.heap
+            stack = try alloc usize[ranges.length] in memory.heap
+        defer release_stack(stack)
+        var published = false
+        defer discard_copy(copied, &published)
+        var depth: usize = 0
+        var previous: i64 = -1
+        for index in 0..<ranges.length:
+            let range = ranges[index]
+            if range.start <= previous or range.start < 0 or range.end <= range.start or range.end > (i64)document.length():
+                error(result.invalid, "folds need ordered distinct headers and valid scalar ranges")
+            let start = (usize)range.start
+            let end = (usize)range.end
+            if (start > 0 and document.scalar(start - 1) != 10) or (end < document.length() and document.scalar(end - 1) != 10):
+                error(result.invalid, "fold boundaries must be whole document lines")
+            let hidden = document.line_end(start) + 1
+            if hidden >= end:
+                error(result.invalid, "a fold needs a header and at least one following line")
+            while depth > 0 and start >= copied[stack[depth - 1]].end:
+                depth -= 1
+            if depth > 0 and end > copied[stack[depth - 1]].end:
+                error(result.invalid, "folds must be disjoint or nested, never crossing")
+            var collapsed = false
+            if let prior = self.at(start):
+                collapsed = self.items[prior].collapsed
+            copied[index] = Fold(start, hidden, end, collapsed)
+            stack[depth] = index
+            depth += 1
+            previous = range.start
+        self.close()
+        self.items = copied
+        self.count = ranges.length
+        self.revision += 1
+        published = true
+
+    pub mutating func set(header: usize, collapsed: bool) -> bool:
+        let index = self.at(header) else return false
+        self.items[index].collapsed = collapsed
+        self.revision += 1
+        return true
+
+    pub mutating func set_all(collapsed: bool):
+        for index in 0..<self.count:
+            self.items[index].collapsed = collapsed
+        self.revision += 1
+
+    pub mutating func reveal(offset: usize, include_end: bool = false):
+        for index in 0..<self.count:
+            let fold = &self.items[index]
+            if fold.collapsed and offset >= fold.hidden and (offset < fold.end or (include_end and offset == fold.end)):
+                fold.collapsed = false
+                self.revision += 1
+
+    ## Header edits invalidate a fold. Other edits transform its bounds before
+    ## the language service publishes the next validated range set.
+    pub mutating func transform(change: TextChange):
+        var count: usize = 0
+        let delta = change.new_end - change.old_end
+        for fold in self.values():
+            if change.start < (i64)fold.hidden and change.old_end > (i64)fold.header:
+                continue
+            if change.start == (i64)fold.header:
+                continue
+            var header = (i64)fold.header
+            var hidden = (i64)fold.hidden
+            var end = (i64)fold.end
+            if change.old_end <= header:
+                header += delta
+                hidden += delta
+                end += delta
+            elif change.start < end:
+                end = end + delta if change.old_end < end else change.new_end
+            if hidden < end:
+                self.items[count] = Fold((usize)header, (usize)hidden, (usize)end, fold.collapsed)
+                count += 1
+        self.count = count
+        self.revision += 1
+
+    pub mutating func close():
+        if self.items.length > 0:
+            free(self.items) in memory.heap
+        var empty: Fold[]
+        self.items = empty
+        self.count = 0
+
+func release_stack(stack: usize[]):
+    if stack.length > 0:
+        free(stack) in memory.heap
+
+func discard_copy(copy: Fold[], published: const bool*):
+    if not *published and copy.length > 0:
+        free(copy) in memory.heap

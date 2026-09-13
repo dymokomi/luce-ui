@@ -57,3 +57,42 @@ this for Luce's multiline strings, keeping token categories separate from their
 colors. Revision checks make the same publication API usable by a future worker.
 The current document and decoration arrays still move suffix storage after edits;
 incremental tokenization is not a rope or an asynchronous language server.
+
+## Folding and viewport bounds
+
+`set_folds(ranges, version)` accepts up to 65536 language-neutral
+`FoldRange(start, end)` values in zero-based Unicode scalar offsets. The start
+names a header line; its following lines are hidden when collapsed. The end is
+the start of the first line outside the fold, or the document's length. Headers
+must be distinct and increasing; ranges may nest or be disjoint, but cannot
+cross or end halfway through a line. Every range must hide at least one line.
+Obsolete versions return false before validation. Invalid ranges and allocation
+failure preserve the previous range set.
+
+`set_folded(line, collapsed)` and `toggle_fold(line)` use one-based physical line
+numbers. They return false when that line has no fold. `is_folded(line)` reports
+the state. `fold_all()` and `unfold_all()` operate on the full set, including
+nested folds; `visible_line_count()` reports the resulting rows. Click `−` or `+`
+in the gutter to toggle a header. A collapsed header also displays an ellipsis.
+The application supplies menu actions and shortcuts.
+
+Folding changes neither source text, document revision, nor undo history. Nested
+collapse state survives toggling its parent. Edits transform fold coordinates;
+editing a header invalidates that fold until analysis publishes another set.
+Unrelated edits preserve collapse state. A caret inside newly hidden text moves
+to its visible header. Navigation skips hidden rows, while explicitly selecting
+a hidden caret offset reveals its enclosing folds. Delete/Backspace at a folded
+boundary expands it first. Explicit selections spanning folded text still include
+that text for copying and replacement.
+
+Painting, hit testing, navigation and scroll limits use one shared line
+projection. Line metadata is updated from the changed text interval; unchanged
+suffix entries move with the edit. Folding rebuilds visible row indices without
+rereading source. Metadata arrays still take linear time to copy or traverse.
+
+Scroll events describe content displacement, so viewport offsets subtract both
+axes. Both offsets clamp to visible content after edits, folding and resizing.
+Horizontal extent includes tab expansion, the longest visible line and room for
+the caret; vertical extent uses visible rows. `scroll_offset()` returns the
+clamped offsets as `Size(width=x, height=y)`. The output viewer uses this same
+behavior through `read_only=true`.

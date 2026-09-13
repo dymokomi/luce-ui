@@ -1,4 +1,5 @@
 from luce_ui.theme import Theme
+import luce_ui.splitting as splitting
 import gpu
 import input
 import interop
@@ -78,6 +79,7 @@ pub struct Layout:
     var maximum: Size
     var growth: Size
     var shrink: Size
+    var split: f64?
     var measured: Size
     var local_theme: Theme?
     var appearance: Theme
@@ -112,6 +114,7 @@ pub struct Layout:
         self.maximum = Size(16384.0, 16384.0)
         self.growth = Size()
         self.shrink = Size(1.0, 1.0)
+        self.split = none
         self.measured = Size()
         self.local_theme = none
         self.appearance = Theme()
@@ -219,6 +222,25 @@ pub struct Layout:
         self.growth = Size(horizontal, vertical)
         self.invalidate()
 
+    pub func minimum_size() -> Size:
+        return self.minimum
+
+    pub func maximum_size() -> Size:
+        return self.maximum
+
+    ## Split layouts contain first pane, divider and second pane, in that order.
+    ## The fraction is a preference; placement enforces the children's limits.
+    pub mutating func set_split(fraction: f64) -> !:
+        if self.axis == Axis.overlay or not math.is_finite(fraction) or fraction < 0.0 or fraction > 1.0:
+            error(result.invalid, "a split needs a horizontal/vertical axis and a fraction in 0..1")
+        if self.items.length != 3:
+            error(result.invalid, "a split needs two panes and one divider")
+        self.split = fraction
+        self.invalidate()
+
+    pub func split_fraction() -> f64:
+        return self.split else 0.5
+
     pub func child_count() -> i64:
         return (i64)self.items.length
 
@@ -231,6 +253,8 @@ pub struct Layout:
     pub mutating func set_children(children: const interop.Interface[Widget][]) -> !:
         if self.editing:
             error(result.busy, "child replacement cannot reenter the same layout")
+        if self.split != none and children.length != 3:
+            error(result.invalid, "a split needs two panes and one divider")
         self.editing = true
         defer self.finish_edit()
         if children.length > 1024:
@@ -774,6 +798,11 @@ func gather(widget: interop.Interface[Widget], entries: Entry[], count: usize*, 
     while child_index < length:
         let child = try state.child(child_index)
         defer child.release()
+        if state.split != none:
+            let child_box = try widget_layout(child)
+            defer child_box.release()
+            if not child_box.value().visible or child_box.value().popup:
+                error(result.invalid, "split panes and dividers must be visible ordinary children")
         try gather(child, entries, count, (i64)index, depth + 1, application)
         child_index += 1
     entries[index].end = *count
@@ -798,6 +827,9 @@ func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect):
     let horizontal = box.axis == Axis.horizontal
     let inner = Rect(bounds.x + box.padding, bounds.y + box.padding,
         math.max(0.0, bounds.width - box.padding * 2.0), math.max(0.0, bounds.height - box.padding * 2.0))
+    if let fraction = box.split:
+        place_split(entries, index, inner, box.clipping, fraction)
+        return
     var child = index + 1
     var total: f64 = 0.0
     var length: usize = 0
@@ -906,3 +938,30 @@ func in_popup(entries: const Entry[], index: usize) -> bool:
             return true
         cursor = entries[(usize)cursor].parent
     return false
+
+func place_split(entries: Entry[], index: usize, bounds: Rect, clip: Rect, fraction: f64):
+    let first = index + 1
+    if first >= entries[index].end:
+        return
+    let divider = entries[first].end
+    if divider >= entries[index].end:
+        return
+    let second = entries[divider].end
+    if second >= entries[index].end:
+        return
+    let horizontal = entries[index].box.value().axis == Axis.horizontal
+    let leading = entries[first].box.value()
+    let trailing = entries[second].box.value()
+    let handle = entries[divider].box.value()
+    let gap = along(handle.measured, horizontal)
+    let available = math.max(0.0, (bounds.width if horizontal else bounds.height) - gap)
+    let sizes = splitting.distribute(available, fraction, along(leading.minimum, horizontal),
+        along(leading.maximum, horizontal), along(trailing.minimum, horizontal), along(trailing.maximum, horizontal))
+    if horizontal:
+        place(entries, first, Rect(bounds.x, bounds.y, sizes.first, math.clamp(bounds.height, leading.minimum.height, leading.maximum.height)), clip)
+        place(entries, divider, Rect(bounds.x + sizes.first, bounds.y, gap, bounds.height), clip)
+        place(entries, second, Rect(bounds.x + sizes.first + gap, bounds.y, sizes.second, math.clamp(bounds.height, trailing.minimum.height, trailing.maximum.height)), clip)
+    else:
+        place(entries, first, Rect(bounds.x, bounds.y, math.clamp(bounds.width, leading.minimum.width, leading.maximum.width), sizes.first), clip)
+        place(entries, divider, Rect(bounds.x, bounds.y + sizes.first, bounds.width, gap), clip)
+        place(entries, second, Rect(bounds.x, bounds.y + sizes.first + gap, math.clamp(bounds.width, trailing.minimum.width, trailing.maximum.width), sizes.second), clip)

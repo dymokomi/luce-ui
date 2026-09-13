@@ -12,6 +12,8 @@ import luce_ui.result as result
 import luce_ui.text.drawing as drawing
 import luce_ui.text.editing as editing
 from luce_ui.text.decorations import Decorations
+from luce_ui.text.folding import FoldRange, Folding
+from luce_ui.text.projection import Projection
 from luce_ui.font import Font, selected_font
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
@@ -29,6 +31,8 @@ pub struct TextEditor: Widget:
     let font: interop.Reference[Font]
     let theme: EditorTheme?
     var highlights: Decorations
+    var folds: Folding
+    var projection: Projection
     var scroll_x: f64
     var scroll_y: f64
     var dragging: bool
@@ -54,6 +58,10 @@ pub struct TextEditor: Widget:
         let changed = try interop.Signal[unit]()
         errdefer changed.release()
         let highlights = Decorations()
+        var folds = Folding()
+        var projection = Projection()
+        try projection.refresh(&document, &folds)
+        errdefer projection.close()
         self.box = box
         self.document = document
         self.changed = changed
@@ -62,6 +70,8 @@ pub struct TextEditor: Widget:
         self.font = selected
         self.theme = theme
         self.highlights = highlights
+        self.folds = folds
+        self.projection = projection
         self.scroll_x = 0.0
         self.scroll_y = 0.0
         self.dragging = false
@@ -111,7 +121,7 @@ pub struct TextEditor: Widget:
         if anchor < 0 or caret < 0:
             error(result.invalid, "selection offsets must be nonnegative")
         try self.document.select((usize)anchor, (usize)caret)
-        self.reveal_caret()
+        try self.reveal_caret()
         self.box.value().invalidate()
 
     ## Replace a complete decoration set, or publish a bounded analysis result.
@@ -175,6 +185,60 @@ pub struct TextEditor: Widget:
             return result.failure[unit](failure.code, failure.message)
         return self.notify_changed() if changed else result.success[unit](())
 
+    ## Fold headers and endpoints are scalar offsets; user-facing line numbers
+    ## are one-based, matching line(). Collapsing never edits source or history.
+    pub mutating func set_folds(ranges: const FoldRange[], version: i64) -> bool!:
+        if version != self.version():
+            return false
+        try self.folds.replace(ranges, &self.document)
+        try self.finish_folding()
+        return true
+
+    pub mutating func set_folded(line: i64, collapsed: bool) -> bool!:
+        try self.refresh_view()
+        if line < 1 or line > (i64)self.projection.line_count():
+            error(result.invalid, "fold line is outside the document")
+        let changed = self.folds.set(self.projection.line((usize)(line - 1)).start, collapsed)
+        if changed:
+            try self.finish_folding()
+        return changed
+
+    pub mutating func toggle_fold(line: i64) -> bool!:
+        return try self.set_folded(line, not self.is_folded(line))
+
+    pub func is_folded(line: i64) -> bool:
+        if line < 1 or line > (i64)self.projection.line_count():
+            return false
+        let index = self.folds.at(self.projection.line((usize)(line - 1)).start) else return false
+        return self.folds.values()[index].collapsed
+
+    pub mutating func fold_all() -> !:
+        self.folds.set_all(true)
+        try self.finish_folding()
+
+    pub mutating func unfold_all() -> !:
+        self.folds.set_all(false)
+        try self.finish_folding()
+
+    pub func visible_line_count() -> i64:
+        return (i64)self.projection.visible_count()
+
+    pub func scroll_offset() -> Size:
+        return Size(math.clamp(self.scroll_x, 0.0, self.maximum_scroll_x()), math.clamp(self.scroll_y, 0.0, self.maximum_scroll()))
+
+    mutating func refresh_view() -> !:
+        try self.projection.refresh(&self.document, &self.folds)
+        self.clamp_scroll()
+
+    mutating func finish_folding() -> !:
+        try self.refresh_view()
+        if self.projection.is_hidden(self.document.caret()):
+            let row = self.projection.physical_row(self.projection.visual_row(self.document.caret()))
+            let offset = self.projection.line(row).end
+            try self.document.select(offset, offset)
+        self.clamp_scroll()
+        self.box.value().invalidate()
+
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(640.0, 360.0))
 
@@ -183,13 +247,14 @@ pub struct TextEditor: Widget:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
-    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+    mutating func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        try self.refresh_view()
         var painter = try Painter(target)
         defer painter.close()
         let size = try target.get().size()
         try drawing.paint(&self.document, &painter, size.width, size.height, self.scroll_x, self.scroll_y,
             self.line_numbers, self.box.value().is_focused(), time.since(self.active_since) % 1000000000 < 600000000,
-            self.font, (self.theme else self.box.value().theme().editor()), self.highlights.values())
+            self.font, (self.theme else self.box.value().theme().editor()), self.highlights.values(), &self.projection, &self.folds)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         let before = self.document.version()
@@ -201,16 +266,26 @@ pub struct TextEditor: Widget:
         return result.success[unit](())
 
     mutating func handle(event: Event) -> !:
+        try self.refresh_view()
         if event.cancelled:
             self.dragging = false
             self.dragging_scroll = false
             return
         if event.kind == input.EventKind.scroll:
-            let multiplier = self.font.value().line_height() * 3.0 if event.scroll_unit == input.ScrollUnit.lines else 1.0
-            self.scroll_y = math.clamp(self.scroll_y - event.scroll_y * multiplier, 0.0, self.maximum_scroll())
-            self.scroll_x = math.max(0.0, self.scroll_x + event.scroll_x * multiplier)
+            if not math.is_finite(event.scroll_x) or not math.is_finite(event.scroll_y):
+                error(result.invalid, "scroll deltas must be finite")
+            let x_scale = self.font.value().advance() * 3.0 if event.scroll_unit == input.ScrollUnit.lines else 1.0
+            let y_scale = self.font.value().line_height() * 3.0 if event.scroll_unit == input.ScrollUnit.lines else 1.0
+            self.scroll_y -= event.scroll_y * y_scale
+            self.scroll_x -= event.scroll_x * x_scale
+            self.clamp_scroll()
             return
         if event.kind == input.EventKind.pointer_down and event.button == 0:
+            if self.folds.values().length > 0 and event.x >= self.gutter_width() - self.font.value().advance() * 2.0 and event.x < self.gutter_width():
+                let visible = (usize)(math.max(0.0, event.y - drawing.vertical_padding(self.font) + self.scroll_y) / self.font.value().line_height())
+                if visible < self.projection.visible_count():
+                    discard(try self.toggle_fold((i64)self.projection.physical_row(visible) + 1))
+                return
             self.dragging_scroll = event.x >= self.box.value().bounds().width - 10.0
             self.dragging = not self.dragging_scroll
             if self.dragging_scroll:
@@ -244,7 +319,7 @@ pub struct TextEditor: Widget:
             return
         try self.key(event)
         self.active_since = time.now()
-        self.reveal_caret()
+        try self.reveal_caret()
 
     mutating func key(event: Event) -> !:
         let command = (event.control and not event.alt) or event.meta
@@ -288,16 +363,22 @@ pub struct TextEditor: Widget:
         elif event.key == input.Key.up or event.key == input.Key.down or event.key == input.Key.page_up or event.key == input.Key.page_down:
             if not self.vertical_move:
                 self.preferred_column = editing.column(&self.document, caret)
-            let row = self.document.line_number(caret)
+            let row = self.projection.visual_row(caret)
             let page = (usize)math.max(1.0, self.box.value().bounds().height / self.font.value().line_height() - 1.0)
             let step = page if event.key == input.Key.page_up or event.key == input.Key.page_down else 1
             let upwards = event.key == input.Key.up or event.key == input.Key.page_up
             let destination = row - step if upwards and row >= step else (0 if upwards else row + step)
-            try editing.move(&self.document, editing.at_column(&self.document, destination, self.preferred_column), extend)
+            try editing.move(&self.document, editing.at_column(&self.document, self.projection.physical_row(destination), self.preferred_column), extend)
             self.vertical_move = true
             return
         elif not self.read_only:
             if event.key == input.Key.backspace or event.key == input.Key.delete:
+                if self.document.first() == self.document.last():
+                    for fold in self.folds.values():
+                        if fold.collapsed and ((event.key == input.Key.delete and caret + 1 == fold.hidden) or (event.key == input.Key.backspace and caret == fold.end)):
+                            discard(self.folds.set(fold.header, false))
+                            try self.finish_folding()
+                            return
                 try editing.erase(&self.document, event.key == input.Key.backspace, command or event.alt)
             elif event.key == input.Key.enter and not command:
                 try editing.newline(&self.document)
@@ -307,19 +388,37 @@ pub struct TextEditor: Widget:
 
     func position_at(x: f64, y: f64) -> usize:
         let row = (usize)(math.max(0.0, y - drawing.vertical_padding(self.font) + self.scroll_y) / self.font.value().line_height())
-        let column = (usize)(math.max(0.0, x - drawing.gutter_width(self.line_numbers, self.font) - self.font.value().advance() + self.scroll_x) / (self.font.value().advance()) + 0.5)
-        return editing.at_column(&self.document, row, column)
+        let column = (usize)(math.max(0.0, x - self.gutter_width() - self.font.value().advance() + self.scroll_x) / (self.font.value().advance()) + 0.5)
+        return editing.at_column(&self.document, self.projection.physical_row(row), column)
 
     func maximum_scroll() -> f64:
-        return math.max(0.0, (f64)self.document.line_count() * self.font.value().line_height() + drawing.vertical_padding(self.font) * 2.0 - self.box.value().bounds().height)
+        return math.max(0.0, (f64)self.projection.visible_count() * self.font.value().line_height() + drawing.vertical_padding(self.font) * 2.0 - self.box.value().bounds().height)
 
     mutating func scroll_to_pointer(y: f64):
         let height = self.box.value().bounds().height
         self.scroll_y = math.clamp(y / math.max(1.0, height), 0.0, 1.0) * self.maximum_scroll()
 
-    mutating func reveal_caret():
+    func gutter_width() -> f64:
+        return drawing.gutter_width(self.line_numbers, self.font, self.folds.values().length > 0)
+
+    func content_width() -> f64:
+        return math.max(1.0, self.box.value().bounds().width - self.gutter_width() - self.font.value().advance() - 8.0)
+
+    func maximum_scroll_x() -> f64:
+        return math.max(0.0, (f64)(self.projection.maximum_columns() + 1) * self.font.value().advance() - self.content_width())
+
+    mutating func clamp_scroll():
+        self.scroll_x = math.clamp(self.scroll_x, 0.0, self.maximum_scroll_x())
+        self.scroll_y = math.clamp(self.scroll_y, 0.0, self.maximum_scroll())
+
+    mutating func reveal_caret() -> !:
+        self.folds.reveal(self.document.caret())
+        try self.refresh_view()
+        if self.projection.is_hidden(self.document.caret()):
+            self.folds.reveal(self.document.caret(), include_end = true)
+            try self.refresh_view()
         let bounds = self.box.value().bounds()
-        let y = (f64)self.document.line_number(self.document.caret()) * self.font.value().line_height()
+        let y = (f64)self.projection.visual_row(self.document.caret()) * self.font.value().line_height()
         let height = math.max(self.font.value().line_height(), bounds.height - drawing.vertical_padding(self.font) * 2.0)
         if y < self.scroll_y:
             self.scroll_y = y
@@ -327,17 +426,20 @@ pub struct TextEditor: Widget:
             self.scroll_y = y + self.font.value().line_height() - height
         self.scroll_y = math.clamp(self.scroll_y, 0.0, self.maximum_scroll())
         let x = (f64)editing.column(&self.document, self.document.caret()) * self.font.value().advance()
-        let width = math.max(18.0, bounds.width - drawing.gutter_width(self.line_numbers, self.font) - self.font.value().advance() * 2.0 - 8.0)
+        let width = self.content_width()
         if x < self.scroll_x:
             self.scroll_x = x
         if x + self.font.value().advance() > self.scroll_x + width:
             self.scroll_x = x + self.font.value().advance() - width
+        self.clamp_scroll()
 
     mutating func notify_changed() -> interop.Outcome[unit]:
         self.highlights.transform(self.document.last_change())
+        self.folds.transform(self.document.last_change())
         self.vertical_move = false
         self.active_since = time.now()
-        self.reveal_caret()
+        self.reveal_caret() catch failure:
+            return result.failure[unit](failure.code, failure.message)
         self.box.value().invalidate()
         return self.changed.emit(())
 
@@ -347,6 +449,8 @@ pub struct TextEditor: Widget:
         self.changed.release()
         self.document.close()
         self.highlights.close()
+        self.folds.close()
+        self.projection.close()
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):

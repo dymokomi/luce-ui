@@ -42,7 +42,8 @@ Test binaries and compiler scratch files are temporary. A specifically requested
 consumer binary can be built with `python3 tools/build.py ENTRY -o OUTPUT`.
 
 This is an early framework with native antialiased fonts, multiline editing, lists,
-menus, toolbars, shared actions and inherited themes. Paragraph shaping,
+menus, toolbars, bordered panes, resizable splits, code folding, shared actions and
+inherited themes. Paragraph shaping,
 accessibility, general scrolling containers and a broad widget catalog remain
 future work. MIT or Apache-2.0, at your option.
 
@@ -87,3 +88,10 @@ See [composition contracts](docs/DESIGN.md), [the API](docs/API.md), and
 [text change/highlight contracts](docs/TEXT-EDITOR.md). The separate
 [luced editor](https://github.com/dymokomi/luced) composes named Luce views from
 these Base controls; its entry point contains no geometry or signal wiring.
+
+`SplitView(Pane(sidebar), SplitView(Pane(editor), Pane(output), axis=Axis.vertical))`
+builds a bordered workspace with draggable dividers. Children supply minimum and
+maximum sizes, and splits can nest. Generic `TextEditor.set_folds` accepts ranges
+from a language service; Luce syntax knowledge stays in luced. See the
+[pane API](docs/API.md#panes-and-split-views) and
+[folding contracts](docs/TEXT-EDITOR.md#folding-and-viewport-bounds).

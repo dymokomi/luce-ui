@@ -5,6 +5,8 @@ import ui
 from interop import Connection
 from input import EventKind, Key
 from ui import Action, Shortcut, Toolbar, Menu, Theme
+from text_views import text_views
+from panes import panes
 
 class Custom: Widget:
     let box: Layout
@@ -69,6 +71,8 @@ pub func main(arguments: list[str]) -> int!:
     widget.draw(target)
     app.render(target)
     frame.close()
+    text_views()
+    panes()
     commands_and_themes()
     cyclic_editor()
     editor_controls()

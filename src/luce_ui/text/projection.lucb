@@ -1,0 +1,160 @@
+## One line index drives painting, hit testing, navigation and scroll extents.
+## Edits rescan only affected line text; unchanged suffix entries are shifted.
+## Folding rebuilds the visible-row map without copying or changing the source.
+import memory
+from luce_ui.text.document import Document
+from luce_ui.text.folding import Folding
+
+pub struct Line:
+    pub let start: usize
+    pub let end: usize
+    pub let columns: usize
+
+pub struct Projection:
+    var lines: Line[]
+    var visible: usize[]
+    var count: usize
+    var widest: usize
+    var text_version: i64
+    var fold_version: i64
+
+    pub func init():
+        var lines: Line[]
+        var visible: usize[]
+        self.lines = lines
+        self.visible = visible
+        self.count = 0
+        self.widest = 0
+        self.text_version = -1
+        self.fold_version = -1
+
+    pub func line_count() -> usize:
+        return self.lines.length
+
+    pub func visible_count() -> usize:
+        return self.count
+
+    pub func maximum_columns() -> usize:
+        return self.widest
+
+    pub func line(index: usize) -> Line:
+        return self.lines[index if index < self.lines.length else self.lines.length - 1]
+
+    pub func physical_row(visible: usize) -> usize:
+        return self.visible[visible if visible < self.count else self.count - 1]
+
+    pub func row_at(offset: usize) -> usize:
+        var low: usize = 0
+        var high = self.lines.length
+        while low < high:
+            let middle = (low + high) // 2
+            if self.lines[middle].start <= offset:
+                low = middle + 1
+            else:
+                high = middle
+        return low - 1 if low > 0 else 0
+
+    pub func visual_row(offset: usize) -> usize:
+        let physical = self.row_at(offset)
+        var low: usize = 0
+        var high = self.count
+        while low < high:
+            let middle = (low + high) // 2
+            if self.visible[middle] <= physical:
+                low = middle + 1
+            else:
+                high = middle
+        return low - 1 if low > 0 else 0
+
+    pub func is_hidden(offset: usize) -> bool:
+        return self.physical_row(self.visual_row(offset)) != self.row_at(offset)
+
+    pub mutating func refresh(document: const Document*, folds: const Folding*) -> !:
+        let revision = (i64)document.version()
+        let edited = self.text_version != revision
+        if edited:
+            try self.update_lines(document)
+        if not edited and self.fold_version == (i64)folds.version():
+            return
+        self.count = 0
+        self.widest = 0
+        var fold_index: usize = 0
+        var hidden_end: usize = 0
+        let ranges = folds.values()
+        for physical in 0..<self.lines.length:
+            let line = self.lines[physical]
+            while fold_index < ranges.length and ranges[fold_index].hidden <= line.start:
+                if ranges[fold_index].collapsed and ranges[fold_index].end > hidden_end:
+                    hidden_end = ranges[fold_index].end
+                fold_index += 1
+            if line.start < hidden_end:
+                continue
+            self.visible[self.count] = physical
+            self.count += 1
+            var columns = line.columns
+            if let index = folds.at(line.start):
+                if ranges[index].collapsed:
+                    columns += 4
+            if columns > self.widest:
+                self.widest = columns
+        self.fold_version = (i64)folds.version()
+
+    mutating func update_lines(document: const Document*) -> !:
+        let change = document.last_change()
+        let incremental = self.text_version >= 0 and change.version == self.text_version + 1
+        let first = self.row_at((usize)change.start) if incremental else 0
+        var suffix = first
+        if incremental:
+            while suffix < self.lines.length and self.lines[suffix].start <= (usize)change.old_end:
+                suffix += 1
+        else:
+            suffix = self.lines.length
+        let delta = change.new_end - change.old_end
+        let start = self.lines[first].start if incremental else 0
+        let end = (usize)((i64)self.lines[suffix].start + delta) if suffix < self.lines.length else document.length()
+        var changed: usize = 1 if suffix == self.lines.length else 0
+        for index in start..<end:
+            if document.scalar(index) == 10:
+                changed += 1
+        let count = first + changed + self.lines.length - suffix
+        let lines = try alloc Line[count] in memory.heap
+        errdefer free(lines) in memory.heap
+        let visible = try alloc usize[count] in memory.heap
+        for index in 0..<first:
+            lines[index] = self.lines[index]
+        var row = first
+        var offset = start
+        var columns: usize = 0
+        for index in start..<end:
+            let scalar = document.scalar(index)
+            if scalar == 10:
+                lines[row] = Line(offset, index, columns)
+                row += 1
+                offset = index + 1
+                columns = 0
+            else:
+                columns += 4 - columns % 4 if scalar == 9 else 1
+        if suffix == self.lines.length:
+            lines[row] = Line(offset, end, columns)
+            row += 1
+        for index in suffix..<self.lines.length:
+            let line = self.lines[index]
+            lines[row] = Line((usize)((i64)line.start + delta), (usize)((i64)line.end + delta), line.columns)
+            row += 1
+        self.close()
+        self.lines = lines
+        self.visible = visible
+        self.text_version = (i64)document.version()
+
+    pub mutating func close():
+        if self.lines.length > 0:
+            free(self.lines) in memory.heap
+            free(self.visible) in memory.heap
+        var lines: Line[]
+        var visible: usize[]
+        self.lines = lines
+        self.visible = visible
+        self.count = 0
+        self.widest = 0
+        self.text_version = -1
+        self.fold_version = -1

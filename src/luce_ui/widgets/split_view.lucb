@@ -1,0 +1,153 @@
+## A two-pane splitter nests to build larger workspaces. Its divider participates
+## in normal pointer capture and keyboard focus, and holds only a weak parent.
+import gpu
+import input
+import interop
+import math
+import memory
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event, Axis
+from luce_ui.painter import Painter
+
+struct Divider: Widget:
+    let box: interop.Reference[Layout]
+    let parent: interop.WeakReference[Layout]
+    let horizontal: bool
+    let thickness: f64
+    var dragging: bool
+    var grab: f64
+
+    pub func init(parent: interop.Reference[Layout], horizontal: bool, thickness: f64) -> !:
+        let box = try layout.make_layout()
+        box.value().set_focusable(true)
+        self.box = box
+        self.parent = interop.WeakReference[Layout](parent)
+        self.horizontal = horizontal
+        self.thickness = thickness
+        self.dragging = false
+        self.grab = 0.0
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return result.success[Size](Size(self.thickness, self.thickness))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.background)
+        let color = theme.accent if self.dragging or self.box.value().is_focused() else theme.border
+        let line = gpu.Rect(x = (size.width - 1.0) * 0.5, width = 1.0, height = size.height) if self.horizontal else gpu.Rect(y = (size.height - 1.0) * 0.5, width = size.width, height = 1.0)
+        try painter.rectangle(line, color)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        self.handle(event) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    mutating func handle(event: Event) -> !:
+        if event.cancelled:
+            self.dragging = false
+            self.box.value().invalidate()
+            return
+        let parent = self.parent.get() else return
+        defer parent.release()
+        let bounds = parent.value().bounds()
+        let own = self.box.value().bounds()
+        let available = math.max(0.0, (bounds.width if self.horizontal else bounds.height) - self.thickness)
+        if available == 0.0:
+            return
+        let position = own.x - bounds.x if self.horizontal else own.y - bounds.y
+        if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
+            self.dragging = true
+            self.grab = event.x if self.horizontal else event.y
+            self.box.value().invalidate()
+        elif event.kind == input.EventKind.pointer_moved and self.dragging:
+            let coordinate = event.x if self.horizontal else event.y
+            try parent.value().set_split(math.clamp((position + coordinate - self.grab) / available, 0.0, 1.0))
+        elif event.kind == input.EventKind.pointer_up and event.button == 0:
+            self.dragging = false
+            self.box.value().invalidate()
+        elif event.kind == input.EventKind.key_down:
+            let backward = event.key == input.Key.left if self.horizontal else event.key == input.Key.up
+            let forward = event.key == input.Key.right if self.horizontal else event.key == input.Key.down
+            if backward or forward:
+                let step = 32.0 if event.shift else 8.0
+                try parent.value().set_split(math.clamp((position + (step if forward else -step)) / available, 0.0, 1.0))
+            elif event.key == input.Key.home:
+                try parent.value().set_split(0.0)
+            elif event.key == input.Key.end:
+                try parent.value().set_split(1.0)
+
+    pub mutating func close():
+        self.parent.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+
+let divider_type: interop.Type[Divider] = interop.Type[Divider]("Split divider", Divider.close, Divider.trace, closeable = true, main_thread = true)
+
+pub struct SplitView: Widget:
+    let box: interop.Reference[Layout]
+
+    pub func init(first: interop.Interface[Widget], second: interop.Interface[Widget],
+                  axis: Axis = Axis.horizontal, fraction: f64 = 0.5, handle_width: f64 = 5.0) -> !:
+        if not math.is_finite(handle_width) or handle_width < 3.0 or handle_width > 32.0:
+            error(result.invalid, "split handle width must be in 3..32")
+        let box = try layout.make_layout(axis)
+        errdefer box.release()
+        try box.value().set_flex()
+        let divider = try interop.Reference[Divider].adopt(new Divider(box, axis == Axis.horizontal, handle_width) in memory.heap, divider_type, memory.heap)
+        defer divider.release()
+        let widget = divider.as_interface[Widget](divider.value())
+        defer widget.release()
+        try box.value().set_children([first, widget, second])
+        try box.value().set_split(fraction)
+        let leading = try layout.widget_layout(first)
+        defer leading.release()
+        let trailing = try layout.widget_layout(second)
+        defer trailing.release()
+        let a = leading.value().minimum_size()
+        let b = trailing.value().minimum_size()
+        let minimum = Size(a.width + b.width + handle_width, math.max(a.height, b.height)) if axis == Axis.horizontal else Size(math.max(a.width, b.width), a.height + b.height + handle_width)
+        try box.value().set_limits(minimum, Size(16384.0, 16384.0))
+        self.box = box
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func fraction() -> f64:
+        return self.box.value().split_fraction()
+
+    pub mutating func set_fraction(fraction: f64) -> !:
+        try self.box.value().set_split(fraction)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let size = self.box.value().content_size(available) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        return result.success[Size](size)
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+
+pub let split_view_type: interop.Type[SplitView] = interop.Type[SplitView]("SplitView", SplitView.close, SplitView.trace, closeable = true, main_thread = true)

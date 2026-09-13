@@ -1,0 +1,58 @@
+from ui import Application, Pane, SplitView, Text, Size, Event, Axis
+from input import EventKind, Key
+
+pub func panes() -> unit!:
+    let left = Pane(Text("Explorer"), minimum = Size(100.0, 80.0))
+    let right = Pane(Text("Editor"), minimum = Size(150.0, 80.0))
+    let split = SplitView(left, right, fraction = 0.4)
+    let app = Application(split)
+    app.layout(505.0, 300.0)
+    let divider = split.layout().child(1).layout()
+    assert(left.layout().bounds().width == 200.0 and right.layout().bounds().width == 300.0)
+    let interior = left.layout().child(0).layout().bounds()
+    assert(interior.x == 1.0 and interior.width == 198.0)
+    app.dispatch(Event(kind = EventKind.pointer_down, x = 202.0, y = 120.0))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = 252.0, y = 120.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = 252.0, y = 120.0))
+    assert(left.layout().bounds().width == 250.0 and divider.is_focused())
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.right))
+    assert(left.layout().bounds().width == 258.0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.home))
+    assert(left.layout().bounds().width == 100.0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.end))
+    assert(right.layout().bounds().width == 150.0)
+    app.dispatch(Event(kind = EventKind.pointer_down, x = 352.0, y = 100.0))
+    app.dispatch(Event(cancelled = true))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = 180.0, y = 100.0))
+    assert(left.layout().bounds().width == 350.0)
+    split.set_fraction(0.5)
+    app.layout(805.0, 300.0)
+    assert(left.layout().bounds().width == 400.0 and right.layout().bounds().width == 400.0)
+    app.layout(200.0, 100.0)
+    assert(left.layout().bounds().width >= 100.0 and right.layout().bounds().width >= 150.0)
+    assert(right.layout().bounds().x >= left.layout().bounds().width + 5.0)
+    left.layout().set_limits(Size(100.0, 80.0), Size(180.0, 100.0))
+    right.layout().set_limits(Size(150.0, 80.0), Size(250.0, 200.0))
+    app.layout(805.0, 300.0)
+    assert(left.layout().bounds().width == 180.0 and right.layout().bounds().width == 250.0)
+    assert(left.layout().bounds().height == 100.0 and right.layout().bounds().height == 200.0)
+    var rejected = false
+    split.layout().set_children([left, right]) catch failure:
+        rejected = true
+    assert(rejected and split.layout().child_count() == 3)
+    left.layout().set_visible(false)
+    rejected = false
+    app.layout(805.0, 300.0) catch failure:
+        rejected = true
+    assert(rejected)
+    left.layout().set_visible(true)
+    app.layout(805.0, 300.0)
+    let top = Pane(Text("Code"), minimum = Size(100.0, 100.0))
+    let bottom = Pane(Text("Output"), minimum = Size(100.0, 60.0))
+    let vertical = SplitView(top, bottom, axis = Axis.vertical, fraction = 0.5)
+    let second = Application(vertical)
+    second.layout(400.0, 305.0)
+    second.dispatch(Event(kind = EventKind.pointer_down, x = 200.0, y = 152.0))
+    second.dispatch(Event(kind = EventKind.pointer_moved, x = 200.0, y = 192.0))
+    second.dispatch(Event(kind = EventKind.pointer_up, x = 200.0, y = 192.0))
+    assert(top.layout().bounds().height == 190.0 and bottom.layout().bounds().height == 110.0)
