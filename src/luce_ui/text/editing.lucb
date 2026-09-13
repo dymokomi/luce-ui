@@ -1,0 +1,182 @@
+## Editing commands operate on scalar offsets. Pixel coordinates, key bindings and
+## focus are deliberately absent, so the same commands work in other text controls.
+import interop
+import memory
+import strings
+from luce_ui.text.document import Document
+
+pub func move(document: Document*, position: usize, extend: bool) -> !:
+    try document.select(document.anchor() if extend else position, position)
+
+pub func word_left(document: const Document*, position: usize) -> usize:
+    var index = position
+    while index > 0 and whitespace(document.scalar(index - 1)):
+        index -= 1
+    if index == 0:
+        return 0
+    let letters = word_character(document.scalar(index - 1))
+    while index > 0 and not whitespace(document.scalar(index - 1)) and word_character(document.scalar(index - 1)) == letters:
+        index -= 1
+    return index
+
+pub func word_right(document: const Document*, position: usize) -> usize:
+    var index = position
+    if index < document.length():
+        let letters = word_character(document.scalar(index))
+        while index < document.length() and not whitespace(document.scalar(index)) and word_character(document.scalar(index)) == letters:
+            index += 1
+    while index < document.length() and whitespace(document.scalar(index)):
+        index += 1
+    return index
+
+pub func erase(document: Document*, backwards: bool, word: bool = false) -> !:
+    if document.first() == document.last():
+        let caret = document.caret()
+        if backwards:
+            if caret == 0:
+                return
+            try document.replace(word_left(document, caret) if word else caret - 1, caret, "")
+        else:
+            if caret == document.length():
+                return
+            try document.replace(caret, word_right(document, caret) if word else caret + 1, "")
+    else:
+        try document.insert("")
+
+pub func newline(document: Document*) -> !:
+    let position = document.first()
+    let start = document.line_start(position)
+    var end = start
+    while end < position and (document.scalar(end) == 32 or document.scalar(end) == 9):
+        end += 1
+    let indentation = try document.text(start, end)
+    defer indentation.release()
+    with memory.heap:
+        var value = try strings.Builder.create()
+        defer value.destroy()
+        try value.put("\n")
+        try value.put(indentation.value)
+        if position > start and document.scalar(position - 1) == 58:
+            try value.put("    ")
+        try document.insert(value.view())
+
+pub func indent(document: Document*, backwards: bool) -> !:
+    let selected = document.first() != document.last()
+    if not selected and not backwards:
+        let width = 4 - column(document, document.caret()) % 4
+        let spaces = "    "
+        try document.insert((str)spaces.bytes[..<width])
+        return
+    let start = document.line_start(document.first())
+    var end = document.line_end(document.last())
+    if selected and document.last() > start and document.line_start(document.last()) == document.last():
+        end = document.last() - 1
+    let original_anchor = document.anchor()
+    let original_caret = document.caret()
+    with memory.heap:
+        var value = try strings.Builder.create()
+        defer value.destroy()
+        var row = start
+        var first_removed: usize = 0
+        while row <= end:
+            let finish = document.line_end(row)
+            var content = row
+            if backwards:
+                if content < finish and document.scalar(content) == 9:
+                    content += 1
+                else:
+                    while content < finish and content - row < 4 and document.scalar(content) == 32:
+                        content += 1
+                if row == start:
+                    first_removed = content - row
+            else:
+                try value.put("    ")
+            let line = try document.text(content, finish)
+            defer line.release()
+            try value.put(line.value)
+            if finish >= end:
+                break
+            try value.put("\n")
+            row = finish + 1
+        try document.replace(start, end, value.view())
+        let replacement_end = document.caret()
+        if selected:
+            try document.complete_selection(start, replacement_end)
+        else:
+            let anchor = original_anchor - first_removed if original_anchor >= start + first_removed else start
+            let caret = original_caret - first_removed if original_caret >= start + first_removed else start
+            try document.complete_selection(anchor, caret)
+
+pub func column(document: const Document*, position: usize) -> usize:
+    var width: usize = 0
+    for index in document.line_start(position)..<position:
+        width += 4 - width % 4 if document.scalar(index) == 9 else 1
+    return width
+
+pub func at_column(document: const Document*, row: usize, requested: usize) -> usize:
+    var index = document.line_offset(row)
+    var width: usize = 0
+    while index < document.length() and document.scalar(index) != 10:
+        let next = width + (4 - width % 4 if document.scalar(index) == 9 else 1)
+        if next > requested:
+            break
+        width = next
+        index += 1
+    return index
+
+pub func normalize_lines(text: str) -> interop.Owned[str]!:
+    with memory.heap:
+        var value = try strings.Builder.create(text.length)
+        defer value.destroy()
+        var index: usize = 0
+        while index < text.length:
+            if text.bytes[index] == 13:
+                try value.put("\n")
+                if index + 1 < text.length and text.bytes[index + 1] == 10:
+                    index += 1
+            else:
+                discard(try value.write(text.bytes[index..<index + 1]))
+            index += 1
+        return try interop.copy_text(value.view())
+
+func whitespace(scalar: u32) -> bool:
+    return scalar == 32 or scalar == 9 or scalar == 10 or scalar == 13
+
+func word_character(scalar: u32) -> bool:
+    return ((scalar >= 65 and scalar <= 90) or (scalar >= 97 and scalar <= 122) or
+        (scalar >= 48 and scalar <= 57) or scalar == 95 or scalar >= 128)
+
+test "indentation and deletion restore selections on undo":
+    var document = try Document("alpha\n    beta\ngamma")
+    defer document.close()
+    try document.select(0, 15)
+    try indent(&document, false)
+    let indented = try document.text()
+    defer indented.release()
+    assert(indented.value == "    alpha\n        beta\ngamma")
+    assert(try document.undo())
+    assert(document.anchor() == 0 and document.caret() == 15)
+    assert(try document.redo())
+    try indent(&document, true)
+    let restored = try document.text()
+    defer restored.release()
+    assert(restored.value == "alpha\n    beta\ngamma")
+    try document.select(1, 1)
+    try erase(&document, true)
+    assert(try document.undo())
+    assert(document.anchor() == 1 and document.caret() == 1)
+
+test "newline and Unicode word commands preserve scalar boundaries":
+    var document = try Document("    if ready:")
+    defer document.close()
+    try document.select(document.length(), document.length())
+    try newline(&document)
+    let text = try document.text()
+    defer text.release()
+    assert(text.value == "    if ready:\n        ")
+    try document.set_text("héllo 世界")
+    assert(word_left(&document, document.length()) == 6)
+    assert(word_right(&document, 0) == 6)
+    let normalized = try normalize_lines("one\r\ntwo\rthree\n")
+    defer normalized.release()
+    assert(normalized.value == "one\ntwo\nthree\n")

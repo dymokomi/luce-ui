@@ -91,5 +91,31 @@ pub struct BitmapFont:
             '+': return 139432064
             '/': return 1143087376
             '?': return 4299440686
+            '!': return 4299296900
+            '"': return 10570
+            '#': return 368389098
+            '$': return 4819720132
+            '%': return 27684643443
+            '&': return 23946401062
+            '\'': return 2180
+            '(': return 8726317192
+            ')': return 2290360450
+            '*': return 720353952
+            ',': return 2287992832
+            ';': return 2287992960
+            '<': return 17452568848
+            '=': return 32537600
+            '>': return 1145311297
+            '@': return 32276936238
+            '[': return 15101659214
+            '\\': return 17456826433
+            ']': return 15309480206
+            '^': return 17732
+            '_': return 33285996544
+            '`': return 8322
+            '{': return 12954142796
+            '|': return 4433514628
+            '}': return 6719807750
+            '~': return 9078784
             ' ': return 0
             _: return 0x42100462e

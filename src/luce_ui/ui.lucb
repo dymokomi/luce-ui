@@ -40,3 +40,14 @@ pub let hstack_type = hstack.hstack_type
 pub let application_type = application.application_type
 pub let painter_type = painter.painter_type
 pub let layout_type = layout.layout_type
+
+import luce_ui.widgets.text_editor as text_editor
+import luce_ui.text.style as style
+pub type TextEditor = text_editor.TextEditor
+pub type Highlight = style.Highlight
+pub type EditorTheme = style.EditorTheme
+pub let text_editor_type = text_editor.text_editor_type
+
+import luce_ui.widgets.list_view as list_view
+pub type ListView = list_view.ListView
+pub let list_view_type = list_view.list_view_type

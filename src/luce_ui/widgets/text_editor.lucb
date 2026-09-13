@@ -1,0 +1,358 @@
+import clipboard
+import gpu
+import input
+import interop
+import math
+import memory
+import ownership
+import time
+import utf8
+import luce_ui.layout as layout
+import luce_ui.result as result
+import luce_ui.text.drawing as drawing
+import luce_ui.text.editing as editing
+from luce_ui.font import BitmapFont
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+from luce_ui.text.document import Document
+from luce_ui.text.style import Highlight, EditorTheme
+
+## A reusable multiline editor. Its document owns text and history; the widget
+## owns focus, selection gestures, scrolling, drawing and application signals.
+pub struct TextEditor: Widget:
+    let box: interop.Reference[Layout]
+    var document: Document
+    let changed: interop.Signal[unit]
+    let commands: interop.Signal[str]
+    let read_only: bool
+    let line_numbers: bool
+    let font: BitmapFont
+    let theme: EditorTheme
+    var highlights: Highlight[]
+    var scroll_x: f64
+    var scroll_y: f64
+    var dragging: bool
+    var dragging_scroll: bool
+    var preferred_column: usize
+    var vertical_move: bool
+    var active_since: u64
+
+    pub func init(text: str = "", read_only: bool = false, line_numbers: bool = true,
+                  font: BitmapFont = BitmapFont(pixel_size = 1.5), theme: EditorTheme = EditorTheme()) -> !:
+        discard(try font.measure(""))
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_limits(Size(120.0, 60.0), Size(16384.0, 16384.0))
+        try box.value().set_flex()
+        box.value().set_focusable(true)
+        box.value().set_text_input(not read_only, tabs = not read_only)
+        let normalized = try editing.normalize_lines(text)
+        defer normalized.release()
+        var document = try Document(normalized.value)
+        errdefer document.close()
+        let changed = try interop.Signal[unit]()
+        errdefer changed.release()
+        let commands = try interop.Signal[str]()
+        var highlights: Highlight[]
+        self.box = box
+        self.document = document
+        self.changed = changed
+        self.commands = commands
+        self.read_only = read_only
+        self.line_numbers = line_numbers
+        self.font = font
+        self.theme = theme
+        self.highlights = highlights
+        self.scroll_x = 0.0
+        self.scroll_y = 0.0
+        self.dragging = false
+        self.dragging_scroll = false
+        self.preferred_column = 0
+        self.vertical_move = false
+        self.active_since = time.now()
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func text() -> interop.Owned[str]!:
+        return try self.document.text()
+
+    pub func selected_text() -> interop.Owned[str]!:
+        return try self.document.text(self.document.first(), self.document.last())
+
+    pub func version() -> i64:
+        return (i64)self.document.version()
+
+    pub func length() -> i64:
+        return (i64)self.document.length()
+
+    pub func caret() -> i64:
+        return (i64)self.document.caret()
+
+    pub func line() -> i64:
+        return (i64)self.document.line_number(self.document.caret()) + 1
+
+    pub func column() -> i64:
+        return (i64)editing.column(&self.document, self.document.caret()) + 1
+
+    pub func on_change(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.changed.connect(callback)
+
+    ## Unhandled application actions: save, build and run. Their implementation
+    ## belongs to the application, while standard editing shortcuts stay here.
+    pub func on_command(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.commands.connect(callback)
+
+    pub mutating func set_text(text: str) -> interop.Outcome[unit]:
+        let normalized = editing.normalize_lines(text) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer normalized.release()
+        self.document.set_text(normalized.value) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        self.scroll_x = 0.0
+        self.scroll_y = 0.0
+        return self.notify_changed()
+
+    pub mutating func set_selection(anchor: i64, caret: i64) -> !:
+        if anchor < 0 or caret < 0:
+            error(result.invalid, "selection offsets must be nonnegative")
+        try self.document.select((usize)anchor, (usize)caret)
+        self.reveal_caret()
+        self.box.value().invalidate()
+
+    pub mutating func set_highlights(highlights: const Highlight[]) -> !:
+        if highlights.length > 131072:
+            error(result.limit, "an editor supports at most 131072 highlight ranges")
+        var previous: i64 = 0
+        for highlight in highlights:
+            if highlight.start < previous or highlight.end < highlight.start or highlight.end > (i64)self.document.length():
+                error(result.invalid, "highlights must be ordered, disjoint scalar ranges within the document")
+            previous = highlight.end
+        var copied: Highlight[]
+        if highlights.length > 0:
+            copied = try alloc Highlight[highlights.length] in memory.heap
+            for index in 0..<highlights.length:
+                copied[index] = highlights[index]
+        self.clear_highlights()
+        self.highlights = copied
+        self.box.value().invalidate()
+
+    pub mutating func insert(text: str) -> interop.Outcome[unit]:
+        if self.read_only:
+            return result.failure[unit](result.invalid, "the text editor is read only")
+        let normalized = editing.normalize_lines(text) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer normalized.release()
+        self.document.insert(normalized.value) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return self.notify_changed()
+
+    pub mutating func undo() -> interop.Outcome[unit]:
+        if self.read_only:
+            return result.success[unit](())
+        let changed = self.document.undo() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return self.notify_changed() if changed else result.success[unit](())
+
+    pub mutating func redo() -> interop.Outcome[unit]:
+        if self.read_only:
+            return result.success[unit](())
+        let changed = self.document.redo() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return self.notify_changed() if changed else result.success[unit](())
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return result.success[Size](Size(640.0, 360.0))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        try drawing.paint(&self.document, &painter, size.width, size.height, self.scroll_x, self.scroll_y,
+            self.line_numbers, self.box.value().is_focused(), time.since(self.active_since) % 1000000000 < 600000000,
+            self.font, self.theme, self.highlights)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        let before = self.document.version()
+        self.handle(event) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        self.box.value().invalidate()
+        if self.document.version() != before:
+            return self.notify_changed()
+        if event.kind == input.EventKind.key_down:
+            let command = (event.control and not event.alt) or event.meta
+            if command and event.key == input.Key.s:
+                return self.commands.emit("save")
+            if command and event.key == input.Key.b:
+                return self.commands.emit("build")
+            if event.key == input.Key.f5 or (command and event.key == input.Key.enter):
+                return self.commands.emit("run")
+        return result.success[unit](())
+
+    mutating func handle(event: Event) -> !:
+        if event.cancelled:
+            self.dragging = false
+            self.dragging_scroll = false
+            return
+        if event.kind == input.EventKind.scroll:
+            let multiplier = drawing.line_height * 3.0 if event.scroll_unit == input.ScrollUnit.lines else 1.0
+            self.scroll_y = math.clamp(self.scroll_y - event.scroll_y * multiplier, 0.0, self.maximum_scroll())
+            self.scroll_x = math.max(0.0, self.scroll_x + event.scroll_x * multiplier)
+            return
+        if event.kind == input.EventKind.pointer_down and event.button == 0:
+            self.dragging_scroll = event.x >= self.box.value().bounds().width - 10.0
+            self.dragging = not self.dragging_scroll
+            if self.dragging_scroll:
+                self.scroll_to_pointer(event.y)
+            else:
+                let position = self.position_at(event.x, event.y)
+                try self.document.select(self.document.anchor() if event.shift else position, position)
+                self.active_since = time.now()
+            self.vertical_move = false
+            return
+        if event.kind == input.EventKind.pointer_moved:
+            if self.dragging_scroll:
+                self.scroll_to_pointer(event.y)
+            elif self.dragging:
+                if event.y < 0.0:
+                    self.scroll_y = math.max(0.0, self.scroll_y - drawing.line_height)
+                if event.y > self.box.value().bounds().height:
+                    self.scroll_y = math.min(self.maximum_scroll(), self.scroll_y + drawing.line_height)
+                try self.document.select(self.document.anchor(), self.position_at(event.x, event.y))
+            return
+        if event.kind == input.EventKind.pointer_up and event.button == 0:
+            self.dragging = false
+            self.dragging_scroll = false
+            return
+        if event.kind == input.EventKind.text_input and not self.read_only:
+            var bytes: u8[4]
+            let count = utf8.encode((u32)event.codepoint, bytes) else error(result.invalid, "text input is not a Unicode scalar")
+            try self.document.insert((str)bytes[..<count])
+            return
+        if event.kind != input.EventKind.key_down:
+            return
+        try self.key(event)
+        self.active_since = time.now()
+        self.reveal_caret()
+
+    mutating func key(event: Event) -> !:
+        let command = (event.control and not event.alt) or event.meta
+        if command:
+            if event.key == input.Key.a:
+                try self.document.select(0, self.document.length())
+                return
+            if event.key == input.Key.c or (event.key == input.Key.x and not self.read_only):
+                if self.document.first() != self.document.last():
+                    let text = try self.selected_text()
+                    defer text.release()
+                    try clipboard.write_text(text.value)
+                    if event.key == input.Key.x:
+                        try self.document.insert("")
+                return
+            if event.key == input.Key.v and not self.read_only:
+                let text = try clipboard.read_text()
+                defer text.release()
+                let normalized = try editing.normalize_lines(text.value)
+                defer normalized.release()
+                try self.document.insert(normalized.value)
+                return
+            if event.key == input.Key.z and not self.read_only:
+                discard(try self.document.redo() if event.shift else try self.document.undo())
+                return
+            if event.key == input.Key.y and not self.read_only:
+                discard(try self.document.redo())
+                return
+        let caret = self.document.caret()
+        let extend = event.shift
+        if event.key == input.Key.left:
+            let next = self.document.line_start(caret) if event.meta else (editing.word_left(&self.document, caret) if command or event.alt else (caret - 1 if caret > 0 else 0))
+            try editing.move(&self.document, self.document.first() if not extend and self.document.first() != self.document.last() else next, extend)
+        elif event.key == input.Key.right:
+            let next = self.document.line_end(caret) if event.meta else (editing.word_right(&self.document, caret) if command or event.alt else (caret + 1 if caret < self.document.length() else caret))
+            try editing.move(&self.document, self.document.last() if not extend and self.document.first() != self.document.last() else next, extend)
+        elif event.key == input.Key.home:
+            try editing.move(&self.document, 0 if command else self.document.line_start(caret), extend)
+        elif event.key == input.Key.end:
+            try editing.move(&self.document, self.document.length() if command else self.document.line_end(caret), extend)
+        elif event.key == input.Key.up or event.key == input.Key.down or event.key == input.Key.page_up or event.key == input.Key.page_down:
+            if not self.vertical_move:
+                self.preferred_column = editing.column(&self.document, caret)
+            let row = self.document.line_number(caret)
+            let page = (usize)math.max(1.0, self.box.value().bounds().height / drawing.line_height - 1.0)
+            let step = page if event.key == input.Key.page_up or event.key == input.Key.page_down else 1
+            let upwards = event.key == input.Key.up or event.key == input.Key.page_up
+            let destination = row - step if upwards and row >= step else (0 if upwards else row + step)
+            try editing.move(&self.document, editing.at_column(&self.document, destination, self.preferred_column), extend)
+            self.vertical_move = true
+            return
+        elif not self.read_only:
+            if event.key == input.Key.backspace or event.key == input.Key.delete:
+                try editing.erase(&self.document, event.key == input.Key.backspace, command or event.alt)
+            elif event.key == input.Key.enter and not command:
+                try editing.newline(&self.document)
+            elif event.key == input.Key.tab:
+                try editing.indent(&self.document, event.shift)
+        self.vertical_move = false
+
+    func position_at(x: f64, y: f64) -> usize:
+        let row = (usize)(math.max(0.0, y - drawing.vertical_padding + self.scroll_y) / drawing.line_height)
+        let column = (usize)(math.max(0.0, x - drawing.gutter_width(self.line_numbers) - 12.0 + self.scroll_x) / (self.font.pixel_size * 6.0) + 0.5)
+        return editing.at_column(&self.document, row, column)
+
+    func maximum_scroll() -> f64:
+        return math.max(0.0, (f64)self.document.line_count() * drawing.line_height + drawing.vertical_padding * 2.0 - self.box.value().bounds().height)
+
+    mutating func scroll_to_pointer(y: f64):
+        let height = self.box.value().bounds().height
+        self.scroll_y = math.clamp(y / math.max(1.0, height), 0.0, 1.0) * self.maximum_scroll()
+
+    mutating func reveal_caret():
+        let bounds = self.box.value().bounds()
+        let y = (f64)self.document.line_number(self.document.caret()) * drawing.line_height
+        let height = math.max(drawing.line_height, bounds.height - drawing.vertical_padding * 2.0)
+        if y < self.scroll_y:
+            self.scroll_y = y
+        if y + drawing.line_height > self.scroll_y + height:
+            self.scroll_y = y + drawing.line_height - height
+        self.scroll_y = math.clamp(self.scroll_y, 0.0, self.maximum_scroll())
+        let x = (f64)editing.column(&self.document, self.document.caret()) * self.font.pixel_size * 6.0
+        let width = math.max(18.0, bounds.width - drawing.gutter_width(self.line_numbers) - 30.0)
+        if x < self.scroll_x:
+            self.scroll_x = x
+        if x + self.font.pixel_size * 6.0 > self.scroll_x + width:
+            self.scroll_x = x + self.font.pixel_size * 6.0 - width
+
+    mutating func notify_changed() -> interop.Outcome[unit]:
+        self.clear_highlights()
+        self.vertical_move = false
+        self.active_since = time.now()
+        self.reveal_caret()
+        self.box.value().invalidate()
+        return self.changed.emit(())
+
+    mutating func clear_highlights():
+        if self.highlights.length > 0:
+            free(self.highlights) in memory.heap
+        var empty: Highlight[]
+        self.highlights = empty
+
+    pub mutating func close():
+        self.changed.close()
+        self.changed.release()
+        self.commands.close()
+        self.commands.release()
+        self.document.close()
+        self.clear_highlights()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+        self.changed.trace(visit, context)
+        self.commands.trace(visit, context)
+
+pub let text_editor_type: interop.Type[TextEditor] = interop.Type[TextEditor]("Text editor", TextEditor.close, TextEditor.trace, closeable = true, main_thread = true)

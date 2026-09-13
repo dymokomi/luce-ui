@@ -7,6 +7,7 @@ import time
 import utf8
 import window
 import luce_ui.result as result
+import luce_ui.layout as layout
 from luce_ui.layout import Widget, Tree, Event
 
 ## Construction is platform-independent. run acquires native resources and owns
@@ -15,6 +16,8 @@ pub struct Application:
     let title: interop.Owned[str]
     var tree: Tree
     let frames: interop.Signal[f64]
+    var close_handler: interop.Callback[unit, bool]?
+    var error_handler: interop.Callback[str, unit]?
     let width: i64
     let height: i64
     var running: bool
@@ -34,6 +37,8 @@ pub struct Application:
         self.title = copied
         self.tree = tree
         self.frames = frames
+        self.close_handler = none
+        self.error_handler = none
         self.width = width
         self.height = height
         self.running = false
@@ -58,6 +63,28 @@ pub struct Application:
         try self.check()
         return try self.frames.connect(callback)
 
+    ## Returning false keeps the native window open, for example while unsaved
+    ## documents await an explicit Save or Discard action in the application.
+    pub mutating func set_close_handler(callback: interop.Callback[unit, bool]) -> !:
+        try self.check()
+        let replacement = callback.clone()
+        if let previous = self.close_handler:
+            previous.release()
+        self.close_handler = replacement
+
+    ## Recoverable input errors can be reported without discarding an editing
+    ## session. Without a handler, run preserves its normal failure behavior.
+    pub mutating func set_error_handler(callback: interop.Callback[str, unit]) -> !:
+        try self.check()
+        let replacement = callback.clone()
+        if let previous = self.error_handler:
+            previous.release()
+        self.error_handler = replacement
+
+    pub mutating func focus(target: interop.Reference[layout.Layout]) -> !:
+        try self.check()
+        self.tree.focus_layout(target)
+
     pub mutating func layout(width: f64, height: f64) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -73,9 +100,13 @@ pub struct Application:
             return self.tree.dispatch(input.Event(kind = input.EventKind.focus_lost))
         if event.button < 0 or event.button > 31:
             return result.failure[unit](result.invalid, "a pointer button must be in 0..31")
+        if event.codepoint < 0 or event.codepoint > 0x10FFFF or (event.codepoint >= 0xD800 and event.codepoint <= 0xDFFF):
+            return result.failure[unit](result.invalid, "text input requires a Unicode scalar")
         return self.tree.dispatch(input.Event(kind = event.kind, key = event.key,
             x = event.x, y = event.y, button = (u32)event.button,
-            repeated = event.repeated, modifiers = input.Modifiers(shift = event.shift), scroll_x = event.scroll_x, scroll_y = event.scroll_y))
+            repeated = event.repeated, modifiers = input.Modifiers(shift = event.shift,
+                control = event.control, alt = event.alt, super = event.meta), codepoint = (u32)event.codepoint,
+            scroll_x = event.scroll_x, scroll_y = event.scroll_y, scroll_unit = event.scroll_unit))
 
     mutating func dispatch_native(event: input.Event) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:
@@ -128,11 +159,21 @@ pub struct Application:
             arranged.release()
             var events: usize = 0
             while events < 512 and self.running:
+                host.set_text_input(self.tree.wants_text_input()) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
                 let polled = host.poll() catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 let event = polled else break
                 if event.kind == input.EventKind.close_requested:
-                    self.stop()
+                    if let handler = self.close_handler:
+                        let permission = handler.invoke(())
+                        defer permission.release()
+                        let allowed = permission.get() catch failure:
+                            return result.failure[unit](failure.code, failure.message)
+                        if allowed:
+                            self.stop()
+                    else:
+                        self.stop()
                 elif event.kind == input.EventKind.resized:
                     let resized = host.size() catch failure:
                         return result.failure[unit](failure.code, failure.message)
@@ -143,8 +184,17 @@ pub struct Application:
                 else:
                     let dispatched = self.dispatch_native(event)
                     if not dispatched.is_success():
-                        return dispatched
-                    dispatched.release()
+                        if let handler = self.error_handler:
+                            # Copy the message into the handler before releasing its owner.
+                            let notified = self.report_input_failure(dispatched, handler)
+                            dispatched.release()
+                            if not notified.is_success():
+                                return notified
+                            notified.release()
+                        else:
+                            return dispatched
+                    else:
+                        dispatched.release()
                 events += 1
             if not self.running:
                 break
@@ -177,6 +227,11 @@ pub struct Application:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
+    func report_input_failure(outcome: interop.Outcome[unit], handler: interop.Callback[str, unit]) -> interop.Outcome[unit]:
+        discard(outcome.get() catch failure:
+            return handler.invoke(failure.message))
+        return result.success[unit](())
+
     pub mutating func stop():
         self.running = false
 
@@ -188,12 +243,22 @@ pub struct Application:
 
     mutating func dispose():
         self.close()
+        if let handler = self.close_handler:
+            self.close_handler = none
+            handler.release()
+        if let handler = self.error_handler:
+            self.error_handler = none
+            handler.release()
         self.frames.close()
         self.frames.release()
         self.tree.close()
         self.title.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        if let handler = self.close_handler:
+            handler.trace(visit, context)
+        if let handler = self.error_handler:
+            handler.trace(visit, context)
         self.frames.trace(visit, context)
         self.tree.trace(visit, context)
         self.title.trace(visit, context)

@@ -1,0 +1,324 @@
+## Editable Unicode scalar storage. History records changed ranges, so typing a
+## character does not retain another complete copy of the document. All indices
+## are scalar offsets, matching Luce strings; visual columns belong to the widget.
+import interop
+import memory
+import utf8
+import luce_ui.result as result
+
+let maximum_scalars: usize = 1048576
+let history_limit: usize = 128
+let history_bytes: usize = 16777216
+
+struct Edit:
+    let offset: usize
+    let removed: u32[]
+    let inserted: u32[]
+    let anchor: usize
+    let caret: usize
+    var after_anchor: usize
+    var after_caret: usize
+
+pub struct Document:
+    var characters: u32[]
+    var count: usize
+    var selection_anchor: usize
+    var selection_caret: usize
+    var edits: Edit[]
+    var edit_count: usize
+    var edit_position: usize
+    var retained_bytes: usize
+    var revision: u64
+
+    pub func init(text: str = "") -> !:
+        let decoded = try decode(text)
+        errdefer release(decoded)
+        let history = try alloc Edit[history_limit] in memory.heap
+        self.characters = decoded
+        self.count = decoded.length
+        self.selection_anchor = 0
+        self.selection_caret = 0
+        self.edits = history
+        self.edit_count = 0
+        self.edit_position = 0
+        self.retained_bytes = 0
+        self.revision = 0
+
+    pub func length() -> usize:
+        return self.count
+
+    pub func version() -> u64:
+        return self.revision
+
+    pub func caret() -> usize:
+        return self.selection_caret
+
+    pub func anchor() -> usize:
+        return self.selection_anchor
+
+    pub func first() -> usize:
+        return self.selection_anchor if self.selection_anchor < self.selection_caret else self.selection_caret
+
+    pub func last() -> usize:
+        return self.selection_anchor if self.selection_anchor > self.selection_caret else self.selection_caret
+
+    pub func scalar(index: usize) -> u32:
+        assert(index < self.count)
+        return self.characters[index]
+
+    pub mutating func select(anchor: usize, caret: usize) -> !:
+        if anchor > self.count or caret > self.count:
+            error(result.invalid, "selection is outside the document")
+        self.selection_anchor = anchor
+        self.selection_caret = caret
+
+    pub func text(start: usize = 0, end: usize? = none) -> interop.Owned[str]!:
+        let finish = end else self.count
+        if start > finish or finish > self.count:
+            error(result.invalid, "text range is outside the document")
+        if finish == start:
+            return try interop.copy_text("")
+        let bytes = try alloc u8[(finish - start) * 4] in memory.heap
+        defer free(bytes) in memory.heap
+        var used: usize = 0
+        for index in start..<finish:
+            used += utf8.encode(self.characters[index], bytes[used..]) else trap("document contains an invalid scalar")
+        return try interop.copy_text((str)bytes[..<used])
+
+    ## Loading replaces the document and its history only after validation and
+    ## allocation succeed. File newline policy is the application's responsibility.
+    pub mutating func set_text(text: str) -> !:
+        let replacement = try decode(text)
+        self.clear_history()
+        release(self.characters)
+        self.characters = replacement
+        self.count = replacement.length
+        self.selection_anchor = 0
+        self.selection_caret = 0
+        self.revision += 1
+
+    pub mutating func insert(text: str) -> !:
+        try self.replace(self.first(), self.last(), text)
+
+    pub mutating func replace(start: usize, finish: usize, text: str) -> !:
+        if start > finish or finish > self.count:
+            error(result.invalid, "replacement is outside the document")
+        let inserted = try decode(text)
+        errdefer release(inserted)
+        if inserted.length == 0 and start == finish:
+            return
+        let removed = try copy(self.characters[start..<finish])
+        errdefer release(removed)
+        try self.reserve(self.count - removed.length + inserted.length)
+        # Everything that may allocate has succeeded; mutation is now atomic.
+        while self.edit_count > self.edit_position:
+            self.edit_count -= 1
+            self.drop_edit(self.edit_count)
+        let cost = (removed.length + inserted.length) * 4
+        while self.edit_count > 0 and (self.edit_count == self.edits.length or self.retained_bytes + cost > history_bytes):
+            self.drop_edit(0)
+            for index in 1..<self.edit_count:
+                self.edits[index - 1] = self.edits[index]
+            self.edit_count -= 1
+            self.edit_position -= 1
+        self.edits[self.edit_count] = Edit(start, removed, inserted, self.selection_anchor, self.selection_caret,
+            start + inserted.length, start + inserted.length)
+        self.edit_count += 1
+        self.edit_position = self.edit_count
+        self.retained_bytes += cost
+        self.replace_storage(start, removed.length, inserted)
+        self.selection_caret = start + inserted.length
+        self.selection_anchor = self.selection_caret
+        self.revision += 1
+
+    pub mutating func undo() -> bool!:
+        if self.edit_position == 0:
+            return false
+        let edit = self.edits[self.edit_position - 1]
+        try self.reserve(self.count - edit.inserted.length + edit.removed.length)
+        self.replace_storage(edit.offset, edit.inserted.length, edit.removed)
+        self.selection_anchor = edit.anchor
+        self.selection_caret = edit.caret
+        self.edit_position -= 1
+        self.revision += 1
+        return true
+
+    pub mutating func redo() -> bool!:
+        if self.edit_position == self.edit_count:
+            return false
+        let edit = self.edits[self.edit_position]
+        try self.reserve(self.count - edit.removed.length + edit.inserted.length)
+        self.replace_storage(edit.offset, edit.removed.length, edit.inserted)
+        self.selection_anchor = edit.after_anchor
+        self.selection_caret = edit.after_caret
+        self.edit_position += 1
+        self.revision += 1
+        return true
+
+    ## A compound command can retain its final selection in the undo record.
+    ## Ordinary cursor movement uses select and never modifies history.
+    pub mutating func complete_selection(anchor: usize, caret: usize) -> !:
+        try self.select(anchor, caret)
+        if self.edit_position > 0:
+            self.edits[self.edit_position - 1].after_anchor = anchor
+            self.edits[self.edit_position - 1].after_caret = caret
+
+    pub func line_start(position: usize) -> usize:
+        var index = position if position < self.count else self.count
+        while index > 0 and self.characters[index - 1] != 10:
+            index -= 1
+        return index
+
+    pub func line_end(position: usize) -> usize:
+        var index = position if position < self.count else self.count
+        while index < self.count and self.characters[index] != 10:
+            index += 1
+        return index
+
+    pub func line_number(position: usize) -> usize:
+        var row: usize = 0
+        for index in 0..<(position if position < self.count else self.count):
+            if self.characters[index] == 10:
+                row += 1
+        return row
+
+    pub func line_offset(row: usize) -> usize:
+        var remaining = row
+        var index: usize = 0
+        while index < self.count and remaining > 0:
+            if self.characters[index] == 10:
+                remaining -= 1
+            index += 1
+        return index
+
+    pub func line_count() -> usize:
+        return self.line_number(self.count) + 1
+
+    mutating func reserve(required: usize) -> !:
+        if required > maximum_scalars:
+            error(result.limit, "an editor document supports at most 1048576 Unicode scalars")
+        if required <= self.characters.length:
+            return
+        var capacity = self.characters.length * 2
+        if capacity < 64:
+            capacity = 64
+        if capacity < required:
+            capacity = required
+        if capacity > maximum_scalars:
+            capacity = maximum_scalars
+        let replacement = try alloc u32[capacity] in memory.heap
+        for index in 0..<self.count:
+            replacement[index] = self.characters[index]
+        release(self.characters)
+        self.characters = replacement
+
+    mutating func replace_storage(start: usize, removed: usize, inserted: const u32[]):
+        let tail = self.count - start - removed
+        if inserted.length > removed:
+            var index = tail
+            while index > 0:
+                index -= 1
+                self.characters[start + inserted.length + index] = self.characters[start + removed + index]
+        else:
+            for index in 0..<tail:
+                self.characters[start + inserted.length + index] = self.characters[start + removed + index]
+        for index in 0..<inserted.length:
+            self.characters[start + index] = inserted[index]
+        self.count = self.count - removed + inserted.length
+
+    mutating func drop_edit(index: usize):
+        let edit = self.edits[index]
+        self.retained_bytes -= (edit.removed.length + edit.inserted.length) * 4
+        release(edit.removed)
+        release(edit.inserted)
+
+    mutating func clear_history():
+        for index in 0..<self.edit_count:
+            self.drop_edit(index)
+        self.edit_count = 0
+        self.edit_position = 0
+
+    pub mutating func close():
+        self.clear_history()
+        release(self.characters)
+        if self.edits.length > 0:
+            free(self.edits) in memory.heap
+        var characters: u32[]
+        var history: Edit[]
+        self.characters = characters
+        self.edits = history
+        self.count = 0
+
+func release(values: u32[]):
+    if values.length > 0:
+        free(values) in memory.heap
+
+func copy(values: const u32[]) -> u32[]!:
+    var copied: u32[]
+    if values.length > 0:
+        copied = try alloc u32[values.length] in memory.heap
+        for index in 0..<values.length:
+            copied[index] = values[index]
+    return copied
+
+func decode(text: str) -> u32[]!:
+    var count: usize = 0
+    var offset: usize = 0
+    while offset < text.length:
+        let decoded = utf8.decode(text.bytes, offset) else error(result.invalid, "editor text must be valid UTF-8")
+        if decoded.scalar == '\0':
+            error(result.invalid, "editor text cannot contain NUL")
+        count += 1
+        offset += decoded.width
+    if count > maximum_scalars:
+        error(result.limit, "an editor document supports at most 1048576 Unicode scalars")
+    var values: u32[]
+    if count == 0:
+        return values
+    values = try alloc u32[count] in memory.heap
+    offset = 0
+    for index in 0..<count:
+        let decoded = utf8.decode(text.bytes, offset) else trap("validated editor text changed")
+        values[index] = (u32)decoded.scalar
+        offset += decoded.width
+    return values
+
+test "Unicode replacements restore text and selection through undo and redo":
+    var document = try Document("aé😀\nlast")
+    defer document.close()
+    assert(document.length() == 8 and document.line_count() == 2)
+    try document.select(3, 1)
+    try document.insert("XYZ")
+    let changed = try document.text()
+    defer changed.release()
+    assert(changed.value == "aXYZ\nlast" and document.caret() == 4)
+    assert(try document.undo())
+    let original = try document.text()
+    defer original.release()
+    assert(original.value == "aé😀\nlast" and document.anchor() == 3 and document.caret() == 1)
+    assert(try document.redo())
+    assert(document.line_start(8) == 5 and document.line_end(0) == 4)
+    assert(document.line_offset(1) == 5 and document.line_number(5) == 1)
+    assert(try document.undo())
+    try document.insert("new")
+    assert(not try document.redo())
+
+test "invalid text and ranges leave a document unchanged":
+    var document = try Document("keep")
+    defer document.close()
+    try document.select(4, 4)
+    var invalid: u8[1] = [255]
+    var rejected = false
+    document.insert((str)invalid) catch failure:
+        rejected = true
+    assert(rejected and document.length() == 4 and document.caret() == 4)
+    rejected = false
+    document.select(5, 0) catch failure:
+        rejected = true
+    assert(rejected and document.anchor() == 4)
+    for index in 0..<140:
+        try document.insert("x")
+    var undone: usize = 0
+    while try document.undo():
+        undone += 1
+    assert(undone == history_limit and document.length() == 16)

@@ -132,6 +132,8 @@ func drawing() -> !:
     assert(BitmapFont.glyph('a') != BitmapFont.glyph('A'))
     assert(try BitmapFont().measure("aAé") == 36.0)
     assert(BitmapFont.glyph('é') == BitmapFont.glyph('中'))
+    for scalar in 33..<127:
+        assert(BitmapFont.glyph((char)scalar) != BitmapFont.glyph('中'))
     var frame = try gpu.Frame(window.Size(100.0, 80.0, 200.0, 160.0, 2.0))
     let target = try frame.target()
     defer target.release()

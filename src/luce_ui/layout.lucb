@@ -37,10 +37,15 @@ pub struct Event:
     pub var button: i64
     pub var repeated: bool
     pub var shift: bool
+    pub var control: bool
+    pub var alt: bool
+    pub var meta: bool
+    pub var codepoint: i64
     pub var inside: bool
     pub var cancelled: bool
     pub var scroll_x: f64
     pub var scroll_y: f64
+    pub var scroll_unit: input.ScrollUnit
 
 ## layout returns one retained reference to the same Layout for this widget's
 ## lifetime. A measure/draw/event implementation may fail or reenter application
@@ -76,6 +81,8 @@ pub struct Layout:
     var clipping: Rect
     var accepts_focus: bool
     var accepts_pointer: bool
+    var accepts_text: bool
+    var accepts_tab: bool
     var active: bool
     var focused: bool
     var editing: bool
@@ -103,6 +110,8 @@ pub struct Layout:
         self.clipping = Rect()
         self.accepts_focus = false
         self.accepts_pointer = false
+        self.accepts_text = false
+        self.accepts_tab = false
         self.active = true
         self.focused = false
         self.editing = false
@@ -131,6 +140,15 @@ pub struct Layout:
 
     pub mutating func set_interactive(interactive: bool):
         self.accepts_pointer = interactive
+        self.invalidate()
+
+    ## Text controls receive committed Unicode and may reserve Tab for indentation.
+    ## Control-Tab always remains available for moving focus out of an editor.
+    pub mutating func set_text_input(enabled: bool, tabs: bool = false):
+        self.accepts_text = enabled
+        self.accepts_tab = enabled and tabs
+        if enabled:
+            self.set_focusable(true)
         self.invalidate()
 
     pub func invalidate():
@@ -298,6 +316,7 @@ pub struct Tree:
     var height: f64
     var version: u64
     var focus: u64
+    var requested_focus: u64
     var capture: u64
 
     pub func init(content: interop.Interface[Widget]) -> !:
@@ -312,6 +331,7 @@ pub struct Tree:
         self.height = 0.0
         self.version = 0
         self.focus = 0
+        self.requested_focus = 0
         self.capture = 0
 
     pub mutating func arrange(width: f64, height: f64) -> interop.Outcome[unit]:
@@ -365,6 +385,10 @@ pub struct Tree:
                     return focus_cancelled
                 focus_cancelled.release()
             self.focus = 0
+        if self.requested_focus != 0:
+            if eligible(replacement, count, self.requested_focus, true):
+                self.focus = self.requested_focus
+            self.requested_focus = 0
         for entry in self.entries[..<self.count]:
             entry.box.value().application = 0
             entry.box.value().focused = false
@@ -424,7 +448,10 @@ pub struct Tree:
             self.capture = 0
             self.set_focus(0)
             return result.success[unit](())
-        if event.kind == input.EventKind.key_down and event.key == input.Key.tab:
+        var text_tab = false
+        if let focused = self.find(self.focus):
+            text_tab = self.entries[focused].box.value().accepts_tab and not event.modifiers.control
+        if event.kind == input.EventKind.key_down and event.key == input.Key.tab and not text_tab:
             if not event.repeated:
                 let capture_cancelled = self.cancel(self.capture)
                 if not capture_cancelled.is_success():
@@ -462,13 +489,15 @@ pub struct Tree:
             destination = self.capture if self.capture != 0 else self.hit(event.x, event.y)
         elif event.kind == input.EventKind.scroll:
             destination = self.hit(event.x, event.y)
-        elif event.kind == input.EventKind.key_down or event.kind == input.EventKind.key_up:
+        elif event.kind == input.EventKind.key_down or event.kind == input.EventKind.key_up or event.kind == input.EventKind.text_input:
             destination = self.focus
         if let index = self.find(destination):
             let box = self.entries[index].box.value()
             let translated = Event(kind = event.kind, key = event.key,
                 x = event.x - box.rectangle.x, y = event.y - box.rectangle.y,
                 button = (i64)event.button, repeated = event.repeated, shift = event.modifiers.shift,
+                control = event.modifiers.control, alt = event.modifiers.alt, meta = event.modifiers.super,
+                codepoint = (i64)event.codepoint, scroll_unit = event.scroll_unit,
                 inside = inside(box.clipping, event.x, event.y), scroll_x = event.scroll_x, scroll_y = event.scroll_y)
             let delivered = self.send(index, translated)
             if not delivered.is_success():
@@ -479,6 +508,10 @@ pub struct Tree:
             return refreshed
         refreshed.release()
         return result.success[unit](())
+
+    pub func wants_text_input() -> bool:
+        let index = self.find(self.focus) else return false
+        return self.entries[index].box.value().accepts_text
 
     func find(identifier: u64) -> usize?:
         if identifier == 0:
@@ -516,6 +549,12 @@ pub struct Tree:
             cancelled.release()
         return result.success[unit](())
 
+    ## Apply after the next arrangement, including children replaced during an
+    ## input callback. Detached or disabled targets cannot acquire focus.
+    pub mutating func focus_layout(target: interop.Reference[Layout]):
+        self.requested_focus = target.value().id()
+        target.value().invalidate()
+
     mutating func set_focus(identifier: u64):
         self.focus = identifier
         for entry in self.entries[..<self.count]:
@@ -538,8 +577,12 @@ pub struct Tree:
 
     pub mutating func close():
         for entry in self.entries[..<self.count]:
-            entry.box.value().application = 0
-            entry.box.value().focused = false
+            # Cycle collection can finalize a layout before its application.
+            # Closed layouts already released their state; only detach live ones.
+            if not entry.box.is_closed():
+                let box = entry.box.value()
+                box.application = 0
+                box.focused = false
         release_entries(self.entries, self.count)
         self.count = 0
         var empty: Entry[]

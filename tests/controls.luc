@@ -1,4 +1,4 @@
-from ui import Application, Button, Text, VStack, Spacer, Widget, Layout, Size, Constraints, Event, Painter
+from ui import Application, Button, Text, TextEditor, ListView, Highlight, VStack, Spacer, Widget, Layout, Size, Constraints, Event, Painter
 from gpu import Frame, RenderTarget, Rect, Color
 import window
 import ui
@@ -66,6 +66,8 @@ pub func main(arguments: list[str]) -> int!:
     widget.draw(target)
     app.render(target)
     frame.close()
+    cyclic_editor()
+    editor_controls()
     mutations()
     signals()
     print("ok Luce controls and custom widget")
@@ -143,3 +145,51 @@ func signals() -> unit!:
         rejected = true
     assert(rejected)
     failure.disconnect()
+
+func editor_controls() -> unit!:
+    let editor = TextEditor("héllo")
+    let listing = ListView(["first", "second"])
+    let root = VStack([listing, editor])
+    let app = Application(root)
+    app.focus(editor.layout())
+    app.layout(400.0, 300.0)
+    assert(editor.layout().is_focused())
+    editor.set_selection(5, 5)
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 128512))
+    assert(editor.text() == "héllo😀" and editor.caret() == 6)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.backspace))
+    assert(editor.text() == "héllo")
+    editor.undo()
+    assert(editor.text() == "héllo😀")
+    editor.set_highlights([Highlight(0, 5, Color(0.5, 0.2, 0.3))])
+    var invalid = false
+    editor.set_highlights([Highlight(0, 99, Color())]) catch failure:
+        invalid = true
+    assert(invalid)
+    let frame = Frame(window.Size(400.0, 300.0, 400.0, 300.0, 1.0))
+    app.render(frame.target())
+    frame.close()
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.tab))
+    assert(editor.layout().is_focused())
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.tab, control = true))
+    assert(listing.layout().is_focused())
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.down))
+    assert(listing.selected_index() == 0)
+    listing.set_items(["replacement"])
+    assert(listing.selected_index() == -1)
+
+class EditorSession:
+    let app: Application
+    let editor: TextEditor
+    pub func init(self, app: Application, editor: TextEditor):
+        self.app = app
+        self.editor = editor
+    pub func can_close(self) -> bool:
+        return self.editor.length() == 0
+
+func cyclic_editor() -> unit!:
+    let editor = TextEditor("unsaved")
+    let app = Application(editor)
+    let session = EditorSession(app, editor)
+    app.set_close_handler(session.can_close)
+    app.layout(300.0, 200.0)
