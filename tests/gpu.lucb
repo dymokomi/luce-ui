@@ -95,7 +95,7 @@ pub func main(arguments: str[]) -> i32!:
     defer row.release()
     let root = row.as_interface[Widget](row.value())
     defer root.release()
-    let app = try interop.Reference[Application].adopt(new Application(root) in memory.heap, ui.application_type, memory.heap)
+    let app = try interop.Reference[Application].adopt(new Application(root, theme = ui.Theme(button = gpu.Color(0.06, 0.2, 0.43))) in memory.heap, ui.application_type, memory.heap)
     defer app.release()
     var host = try window.Window.open(window.Options(title = "UI pixel contracts", width = 160, height = 100))
     defer host.destroy()

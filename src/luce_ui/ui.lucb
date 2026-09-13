@@ -52,3 +52,21 @@ pub let text_editor_type = text_editor.text_editor_type
 import luce_ui.widgets.list_view as list_view
 pub type ListView = list_view.ListView
 pub let list_view_type = list_view.list_view_type
+
+import luce_ui.text.document as document
+pub type TextChange = document.TextChange
+
+import luce_ui.theme as theme
+pub type Theme = theme.Theme
+
+import luce_ui.action as action
+pub type Action = action.Action
+pub type Shortcut = action.Shortcut
+pub let action_type = action.action_type
+import luce_ui.widgets.toolbar as toolbar
+pub type Toolbar = toolbar.Toolbar
+pub let toolbar_type = toolbar.toolbar_type
+
+import luce_ui.widgets.menu as menu
+pub type Menu = menu.Menu
+pub let menu_type = menu.menu_type

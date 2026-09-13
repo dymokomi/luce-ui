@@ -11,10 +11,11 @@ import luce_ui.layout as layout
 import luce_ui.result as result
 import luce_ui.text.drawing as drawing
 import luce_ui.text.editing as editing
+from luce_ui.text.decorations import Decorations
 from luce_ui.font import Font, selected_font
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
-from luce_ui.text.document import Document
+from luce_ui.text.document import Document, TextChange
 from luce_ui.text.style import Highlight, EditorTheme
 
 ## A reusable multiline editor. Its document owns text and history; the widget
@@ -23,12 +24,11 @@ pub struct TextEditor: Widget:
     let box: interop.Reference[Layout]
     var document: Document
     let changed: interop.Signal[unit]
-    let commands: interop.Signal[str]
     let read_only: bool
     let line_numbers: bool
     let font: interop.Reference[Font]
-    let theme: EditorTheme
-    var highlights: Highlight[]
+    let theme: EditorTheme?
+    var highlights: Decorations
     var scroll_x: f64
     var scroll_y: f64
     var dragging: bool
@@ -38,7 +38,7 @@ pub struct TextEditor: Widget:
     var active_since: u64
 
     pub func init(text: str = "", read_only: bool = false, line_numbers: bool = true,
-                  font: interop.Reference[Font]? = none, theme: EditorTheme = EditorTheme()) -> !:
+                  font: interop.Reference[Font]? = none, theme: EditorTheme? = none) -> !:
         var selected = try selected_font(font)
         errdefer selected.release()
         let box = try layout.make_layout()
@@ -53,12 +53,10 @@ pub struct TextEditor: Widget:
         errdefer document.close()
         let changed = try interop.Signal[unit]()
         errdefer changed.release()
-        let commands = try interop.Signal[str]()
-        var highlights: Highlight[]
+        let highlights = Decorations()
         self.box = box
         self.document = document
         self.changed = changed
-        self.commands = commands
         self.read_only = read_only
         self.line_numbers = line_numbers
         self.font = selected
@@ -99,11 +97,6 @@ pub struct TextEditor: Widget:
     pub func on_change(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
 
-    ## Unhandled application actions: save, build and run. Their implementation
-    ## belongs to the application, while standard editing shortcuts stay here.
-    pub func on_command(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
-        return try self.commands.connect(callback)
-
     pub mutating func set_text(text: str) -> interop.Outcome[unit]:
         let normalized = editing.normalize_lines(text) catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -121,22 +114,41 @@ pub struct TextEditor: Widget:
         self.reveal_caret()
         self.box.value().invalidate()
 
+    ## Replace a complete decoration set, or publish a bounded analysis result.
+    ## Stale results are ignored before validation and cannot recolor newer text.
     pub mutating func set_highlights(highlights: const Highlight[]) -> !:
-        if highlights.length > 131072:
-            error(result.limit, "an editor supports at most 131072 highlight ranges")
-        var previous: i64 = 0
-        for highlight in highlights:
-            if highlight.start < previous or highlight.end < highlight.start or highlight.end > (i64)self.document.length():
-                error(result.invalid, "highlights must be ordered, disjoint scalar ranges within the document")
-            previous = highlight.end
-        var copied: Highlight[]
-        if highlights.length > 0:
-            copied = try alloc Highlight[highlights.length] in memory.heap
-            for index in 0..<highlights.length:
-                copied[index] = highlights[index]
-        self.clear_highlights()
-        self.highlights = copied
+        try self.highlights.replace(0, (i64)self.document.length(), highlights)
         self.box.value().invalidate()
+
+    pub mutating func update_highlights(start: i64, end: i64, highlights: const Highlight[], version: i64) -> bool!:
+        if version != self.version():
+            return false
+        if start < 0 or end < start or end > self.length():
+            error(result.invalid, "highlight interval is outside the document")
+        try self.highlights.replace(start, end, highlights)
+        self.box.value().invalidate()
+        return true
+
+    pub func highlight_at(offset: i64) -> gpu.Color?:
+        return self.highlights.color_at(offset)
+
+    pub func change() -> TextChange:
+        return self.document.last_change()
+
+    pub func text_range(start: i64, end: i64) -> interop.Owned[str]!:
+        if start < 0 or end < start or end > self.length():
+            error(result.invalid, "text interval is outside the document")
+        return try self.document.text((usize)start, (usize)end)
+
+    pub func line_start(offset: i64) -> i64!:
+        if offset < 0 or offset > self.length():
+            error(result.invalid, "line offset is outside the document")
+        return (i64)self.document.line_start((usize)offset)
+
+    pub func line_end(offset: i64) -> i64!:
+        if offset < 0 or offset > self.length():
+            error(result.invalid, "line offset is outside the document")
+        return (i64)self.document.line_end((usize)offset)
 
     pub mutating func insert(text: str) -> interop.Outcome[unit]:
         if self.read_only:
@@ -144,9 +156,10 @@ pub struct TextEditor: Widget:
         let normalized = editing.normalize_lines(text) catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer normalized.release()
+        let before = self.document.version()
         self.document.insert(normalized.value) catch failure:
             return result.failure[unit](failure.code, failure.message)
-        return self.notify_changed()
+        return self.notify_changed() if before != self.document.version() else result.success[unit](())
 
     pub mutating func undo() -> interop.Outcome[unit]:
         if self.read_only:
@@ -176,7 +189,7 @@ pub struct TextEditor: Widget:
         let size = try target.get().size()
         try drawing.paint(&self.document, &painter, size.width, size.height, self.scroll_x, self.scroll_y,
             self.line_numbers, self.box.value().is_focused(), time.since(self.active_since) % 1000000000 < 600000000,
-            self.font, self.theme, self.highlights)
+            self.font, (self.theme else self.box.value().theme().editor()), self.highlights.values())
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         let before = self.document.version()
@@ -185,14 +198,6 @@ pub struct TextEditor: Widget:
         self.box.value().invalidate()
         if self.document.version() != before:
             return self.notify_changed()
-        if event.kind == input.EventKind.key_down:
-            let command = (event.control and not event.alt) or event.meta
-            if command and event.key == input.Key.s:
-                return self.commands.emit("save")
-            if command and event.key == input.Key.b:
-                return self.commands.emit("build")
-            if event.key == input.Key.f5 or (command and event.key == input.Key.enter):
-                return self.commands.emit("run")
         return result.success[unit](())
 
     mutating func handle(event: Event) -> !:
@@ -301,12 +306,12 @@ pub struct TextEditor: Widget:
         self.vertical_move = false
 
     func position_at(x: f64, y: f64) -> usize:
-        let row = (usize)(math.max(0.0, y - drawing.vertical_padding + self.scroll_y) / self.font.value().line_height())
-        let column = (usize)(math.max(0.0, x - drawing.gutter_width(self.line_numbers) - 12.0 + self.scroll_x) / (self.font.value().advance()) + 0.5)
+        let row = (usize)(math.max(0.0, y - drawing.vertical_padding(self.font) + self.scroll_y) / self.font.value().line_height())
+        let column = (usize)(math.max(0.0, x - drawing.gutter_width(self.line_numbers, self.font) - self.font.value().advance() + self.scroll_x) / (self.font.value().advance()) + 0.5)
         return editing.at_column(&self.document, row, column)
 
     func maximum_scroll() -> f64:
-        return math.max(0.0, (f64)self.document.line_count() * self.font.value().line_height() + drawing.vertical_padding * 2.0 - self.box.value().bounds().height)
+        return math.max(0.0, (f64)self.document.line_count() * self.font.value().line_height() + drawing.vertical_padding(self.font) * 2.0 - self.box.value().bounds().height)
 
     mutating func scroll_to_pointer(y: f64):
         let height = self.box.value().bounds().height
@@ -315,47 +320,38 @@ pub struct TextEditor: Widget:
     mutating func reveal_caret():
         let bounds = self.box.value().bounds()
         let y = (f64)self.document.line_number(self.document.caret()) * self.font.value().line_height()
-        let height = math.max(self.font.value().line_height(), bounds.height - drawing.vertical_padding * 2.0)
+        let height = math.max(self.font.value().line_height(), bounds.height - drawing.vertical_padding(self.font) * 2.0)
         if y < self.scroll_y:
             self.scroll_y = y
         if y + self.font.value().line_height() > self.scroll_y + height:
             self.scroll_y = y + self.font.value().line_height() - height
         self.scroll_y = math.clamp(self.scroll_y, 0.0, self.maximum_scroll())
         let x = (f64)editing.column(&self.document, self.document.caret()) * self.font.value().advance()
-        let width = math.max(18.0, bounds.width - drawing.gutter_width(self.line_numbers) - 30.0)
+        let width = math.max(18.0, bounds.width - drawing.gutter_width(self.line_numbers, self.font) - self.font.value().advance() * 2.0 - 8.0)
         if x < self.scroll_x:
             self.scroll_x = x
         if x + self.font.value().advance() > self.scroll_x + width:
             self.scroll_x = x + self.font.value().advance() - width
 
     mutating func notify_changed() -> interop.Outcome[unit]:
-        self.clear_highlights()
+        self.highlights.transform(self.document.last_change())
         self.vertical_move = false
         self.active_since = time.now()
         self.reveal_caret()
         self.box.value().invalidate()
         return self.changed.emit(())
 
-    mutating func clear_highlights():
-        if self.highlights.length > 0:
-            free(self.highlights) in memory.heap
-        var empty: Highlight[]
-        self.highlights = empty
-
     pub mutating func close():
         self.font.release()
         self.changed.close()
         self.changed.release()
-        self.commands.close()
-        self.commands.release()
         self.document.close()
-        self.clear_highlights()
+        self.highlights.close()
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
         self.font.trace(visit, context)
         self.box.trace(visit, context)
         self.changed.trace(visit, context)
-        self.commands.trace(visit, context)
 
 pub let text_editor_type: interop.Type[TextEditor] = interop.Type[TextEditor]("Text editor", TextEditor.close, TextEditor.trace, closeable = true, main_thread = true)

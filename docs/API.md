@@ -8,14 +8,20 @@ All objects and callbacks belong to the main thread.
 
 | Object | Construction and operations |
 | --- | --- |
-| `Button` | `Button(text)`, `text`, `set_text`, `on_click`, `click`, `layout` |
+| `Button` | `Button(text)` or `Button(action = action)`, `text`, `set_text`, `on_click`, `click`, `layout` |
 | `Text` | `Text(text)`, `text`, `set_text`, `layout` |
 | `Spacer` | `Spacer(weight=1)`, `layout` |
 | `VStack`, `HStack` | Heterogeneous children, spacing, padding, alignment; `set_children`, `layout` |
 | `Viewport` | Preferred minimum width/height; `on_render`, `layout` |
 | `Application` | Content, title and dimensions; `run`, `stop`, `close`, `on_frame`, `layout`, `dispatch`, `render` |
 | `Painter` | Checked GPU target; `rectangle`, `text`, `target` |
-| `BitmapFont` | Bitmap pixel size, `measure`, `glyph` |
+| `Font` | Installed monospace family and size; `measure`, `advance`, `height`, `line_height` |
+| `Action` | Label and `Shortcut`; `on_trigger`, `trigger`, `set_enabled` |
+| `Toolbar` | Heterogeneous children and shared font; compact row, `set_children` |
+| `Menu` | Label, actions and shared font; `open`, `is_open`, `layout` |
+| `Theme` | Semantic colors, `control_lines`, `inset_cells`, `row_height`, `inset` |
+| `TextEditor` | Unicode text, selection, history and decorations; see [text controls](TEXT-EDITOR.md) |
+| `ListView` | Items and optional row height/font; `select`, `set_items`, `on_activate` |
 
 Constructors that allocate are fallible. Luce propagates automatically inside a
 function declared `-> T!`: `let button = Button("Pause")`. Base uses one explicit
@@ -29,7 +35,7 @@ dynamic message survive native cleanup. Native and managed cycles use the shared
 collector; no pending-event counters or polling are involved.
 
 `Layout` stores constraints and child ownership independently of control state.
-Use `set_size`, `set_limits`, `set_flex`, `set_enabled`, `set_focusable`,
+Use `set_size`, `set_limits`, `set_flex`, `set_shrink`, `set_enabled`, `set_focusable`,
 `set_interactive` and `invalidate`. `bounds` reports absolute logical points;
 `child` returns a retained interface. A layout accepts at most 1024 children;
 a mounted tree accepts at most 1024 widgets and 64 levels. Dimensions, spacing,
@@ -39,8 +45,9 @@ changing the tree. Widgets return one stable, distinct Layout for their lifetime
 
 Stacks measure children before their parent. Flex distributes surplus using
 weights, stops at maximum dimensions and redistributes the remainder. When space
-is short, children shrink toward their minimum; ancestor clipping handles any
-remaining overflow. Cross-axis alignment supports start, center, end and stretch.
+is short, shrink weights distribute reduction toward each minimum; ancestor clipping handles any
+remaining overflow. Toolbars and text controls preserve vertical line height with
+zero vertical shrink weight. Cross-axis alignment supports start, center, end and stretch.
 Disabled ancestors disable descendant input. Pointer capture follows the pressed
 control until release; release outside does not activate a button. Tab/Shift-Tab
 move focus; Space/Enter activate on the matching release. Focus loss, queue
@@ -63,9 +70,40 @@ tests. `on_frame` supplies elapsed seconds for animation. `run(frame_limit=0)`
 continues until stop/close or a native close request. `close` requests shutdown
 without destroying storage beneath an active callback; subsequent calls fail.
 
-The bitmap font has distinct upper/lowercase ASCII letters, digits and a small
-punctuation set. Unsupported scalars, including unsupported punctuation and
-control characters, produce one visible replacement glyph. It validates UTF-8;
-labels are bounded to 4096 bytes and 1024 scalars. Default glyphs occupy 10×14
-points with a 12-point advance. This is single-line bitmap drawing, with no silent
-case conversion, font discovery, text shaping or text input composition.
+`Font` uses installed native monospace faces and caches antialiased coverage at
+backing scale. The default is 14 points on every control. Share a Font explicitly
+for consistent typography; logical metrics drive drawing and hit testing.
+Single-line labels are limited to 4096 bytes and 1024 Unicode scalars. Font shaping,
+bidi, grapheme navigation and arbitrary font-file loading are not yet provided.
+
+## Themes, actions and popups
+
+`Application(content, theme=Theme())` establishes the root theme. `set_theme`
+changes that application's inherited values. A layout's `set_theme` overrides
+its subtree; `inherit_theme` removes the override. Values resolve parent-first
+before measurement, including newly inserted children. Colors are semantic:
+background, panel, foreground, muted, selection, accent, button, pressed, border.
+`control_lines` accepts 1..4 and `inset_cells` accepts 0..4; all values must be finite.
+Defaults give controls one text line vertically and one glyph advance of inset.
+`TextEditor(theme=EditorTheme(...))` can override editor-specific colors.
+
+An `Action(text, shortcut=Shortcut())` owns its label, enabled state and signal.
+A button may own its text or reference an action. `click` and `on_click` on an
+action button use that action's signal. `set_actions` copies the application's
+shortcut collection. A disabled action never invokes its callback, and matching
+repeated key-down events are consumed without repeating invocation. Editing
+shortcuts stay with TextEditor; application shortcuts run before focused-widget
+input. Action collections are bounded to 128 entries.
+
+`Menu(text, actions, font=...)` needs at least one action. Pointer release opens
+it; Enter, Space or Down opens a focused menu. Up/Down and Tab/Shift-Tab move its
+selection, skipping disabled actions. Enter/Space activates; Escape, focus loss
+or a click outside closes it. Outside clicks are consumed. The menu closes before
+invoking callbacks, and the previous focus is restored. A short window clips the
+menu to its bounds; keyboard and wheel movement reveal the selected row.
+
+`Layout.set_popup(true)` opts a subtree into window clipping, drawing after normal
+content, and modal input. `set_visible(false)` removes it from traversal without
+releasing its parent ownership. This is the menu's reusable foundation. An
+application root must remain visible. This initial popup API does not provide
+nested menus, OS-native menu bars or cross-window presentation.

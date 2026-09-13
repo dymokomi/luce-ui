@@ -1,0 +1,38 @@
+## Semantic colors and font-relative metrics. Themes are values, inherited by
+## layouts; a subtree may override one without mutating another application.
+import gpu
+import interop
+import math
+from luce_ui.font import Font
+from luce_ui.text.style import EditorTheme
+import luce_ui.result as result
+
+pub struct Theme:
+    pub var background: gpu.Color = gpu.Color(0.012, 0.017, 0.027)
+    pub var panel: gpu.Color = gpu.Color(0.021, 0.028, 0.041)
+    pub var foreground: gpu.Color = gpu.Color(0.68, 0.73, 0.82)
+    pub var muted: gpu.Color = gpu.Color(0.26, 0.34, 0.45)
+    pub var selection: gpu.Color = gpu.Color(0.035, 0.11, 0.22)
+    pub var accent: gpu.Color = gpu.Color(0.2, 0.66, 0.92)
+    pub var button: gpu.Color = gpu.Color(0.032, 0.044, 0.064)
+    pub var pressed: gpu.Color = gpu.Color(0.055, 0.1, 0.16)
+    pub var border: gpu.Color = gpu.Color(0.06, 0.085, 0.12)
+    pub var control_lines: f64 = 1.0
+    pub var inset_cells: f64 = 1.0
+
+    pub func validate() -> !:
+        if not math.is_finite(self.control_lines) or self.control_lines < 1.0 or self.control_lines > 4.0:
+            error(result.invalid, "control height must be in 1..4 text lines")
+        if not math.is_finite(self.inset_cells) or self.inset_cells < 0.0 or self.inset_cells > 4.0:
+            error(result.invalid, "control inset must be in 0..4 character cells")
+
+    pub func row_height(font: interop.Reference[Font]) -> f64:
+        return math.ceil(font.value().line_height() * self.control_lines)
+
+    pub func inset(font: interop.Reference[Font]) -> f64:
+        return math.ceil(font.value().advance() * self.inset_cells)
+
+    pub func editor() -> EditorTheme:
+        return EditorTheme(background = self.background, foreground = self.foreground,
+            gutter = self.background, line_number = self.muted, current_line = self.panel,
+            selection = self.selection, caret = self.accent, scrollbar = self.border)

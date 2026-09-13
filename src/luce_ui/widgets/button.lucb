@@ -8,21 +8,26 @@ from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 import input
 from luce_ui.font import Font, selected_font
+from luce_ui.action import Action
 
 pub struct Button: Widget:
     let box: interop.Reference[Layout]
     var caption: interop.Owned[str]
     let font: interop.Reference[Font]
     let clicked: interop.Signal[unit]
+    let action: interop.Reference[Action]?
     var pressed: bool
     var pressed_key: input.Key
 
-    pub func init(text: str, font: interop.Reference[Font]? = none) -> !:
+    pub func init(text: str = "", font: interop.Reference[Font]? = none, action: interop.Reference[Action]? = none) -> !:
+        if action != none and text != "":
+            error(result.invalid, "a button takes either text or an action")
         var selected = try selected_font(font)
         errdefer selected.release()
         discard(try selected.value().measure(text))
         let box = try layout.make_layout()
         errdefer box.release()
+        try box.value().set_shrink(vertical = 0.0)
         box.value().set_focusable(true)
         let signal = try interop.Signal[unit]()
         errdefer signal.release()
@@ -32,14 +37,21 @@ pub struct Button: Widget:
         self.pressed_key = input.Key.unknown
         self.box = box
         self.font = selected
+        self.action = action
+        if let command = action:
+            discard(command.clone())
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
     pub func text() -> interop.Owned[str]:
+        if let action = self.action:
+            return action.value().text()
         return self.caption.clone()
 
     pub mutating func set_text(text: str) -> !:
+        if self.action != none:
+            error(result.invalid, "an action button takes its label from the action")
         discard(try self.font.value().measure(text))
         let replacement = try interop.copy_text(text)
         self.caption.release()
@@ -47,17 +59,27 @@ pub struct Button: Widget:
         self.box.value().invalidate()
 
     pub func on_click(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        if let action = self.action:
+            return try action.value().on_trigger(callback)
         return try self.clicked.connect(callback)
 
     pub func click() -> interop.Outcome[unit]:
-        if not self.box.value().is_enabled():
+        if not self.is_enabled():
             return result.success[unit](())
+        if let action = self.action:
+            return action.value().trigger()
         return self.clicked.emit(())
 
+    func is_enabled() -> bool:
+        let action = self.action else return self.box.value().is_enabled()
+        return self.box.value().is_enabled() and action.value().is_enabled()
+
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
-        let width = self.font.value().measure(self.caption.value) catch failure:
+        let caption = self.text()
+        defer caption.release()
+        let width = self.font.value().measure(caption.value) catch failure:
             return result.failure[Size](failure.code, failure.message)
-        return result.success[Size](Size(width + 32.0, 40.0))
+        return result.success[Size](Size(width + self.box.value().theme().inset(self.font) * 2.0, self.box.value().theme().row_height(self.font)))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
@@ -68,11 +90,14 @@ pub struct Button: Widget:
         var painter = try Painter(target)
         defer painter.close()
         let size = try target.get().size()
-        let color = gpu.Color(red = 0.025, green = 0.1, blue = 0.26) if self.pressed else gpu.Color(red = 0.06, green = 0.2, blue = 0.43)
+        let theme = self.box.value().theme()
+        let color = theme.pressed if self.pressed else theme.button
         try painter.rectangle(gpu.Rect(width = size.width, height = size.height), color)
         if self.box.value().is_focused():
-            try painter.rectangle(gpu.Rect(width = size.width, height = 2.0), gpu.Color(red = 0.3, green = 0.75, blue = 1.0))
-        try painter.text(self.caption.value, 16.0, math.max(0.0, (size.height - self.font.value().height()) * 0.5), font = self.font)
+            try painter.rectangle(gpu.Rect(width = size.width, height = 2.0), theme.accent)
+        let caption = self.text()
+        defer caption.release()
+        try painter.text(caption.value, theme.inset(self.font), math.max(0.0, (size.height - self.font.value().height()) * 0.5), color = theme.foreground if self.is_enabled() else theme.muted, font = self.font)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled:
@@ -103,6 +128,8 @@ pub struct Button: Widget:
         return result.success[unit](())
 
     pub mutating func close():
+        if let action = self.action:
+            action.release()
         self.font.release()
         self.clicked.close()
         self.clicked.release()
@@ -110,6 +137,8 @@ pub struct Button: Widget:
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        if let action = self.action:
+            action.trace(visit, context)
         self.font.trace(visit, context)
         self.box.trace(visit, context)
         self.caption.trace(visit, context)

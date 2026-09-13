@@ -3,7 +3,8 @@
 A UI framework written in Luce Base, consumed through ordinary Base structs or
 Luce objects. Controls implement `Widget`; an `Application` owns the native event
 loop, layout, input routing and presentation. The package uses standard `gpu` and
-`window`, which currently provide Metal on ARM64 macOS. Vulkan remains unimplemented.
+`window`: Metal on ARM64 macOS and Vulkan on Windows x64. Linux supports the
+portable tests and font backend; native window presentation is still pending.
 
 A Luce application uses public imports and normal construction:
 
@@ -40,9 +41,10 @@ and verifies Metal pixels, clipping, resize and expired viewport references.
 Test binaries and compiler scratch files are temporary. A specifically requested
 consumer binary can be built with `python3 tools/build.py ENTRY -o OUTPUT`.
 
-This is an early framework with native antialiased text and a small control set. It does not
-yet provide editable text, shaping, accessibility, scrolling containers or a broad
-widget catalog. MIT or Apache-2.0, at your option.
+This is an early framework with native antialiased fonts, multiline editing, lists,
+menus, toolbars, shared actions and inherited themes. Paragraph shaping,
+accessibility, general scrolling containers and a broad widget catalog remain
+future work. MIT or Apache-2.0, at your option.
 
 ## Windows x64
 
@@ -67,3 +69,21 @@ This first font API loads installed families, not arbitrary font files. Text is
 laid out on the editor's scalar grid; paragraph shaping, bidi, grapheme-aware
 editing, color emoji, and a font picker remain future work. Windows substitutes
 a replacement glyph for supplementary-plane scalars in this initial GDI adapter.
+
+## Compact application composition
+
+`Toolbar([Menu("File", [save]), Spacer(), Button(action = save)])` presents the
+same `Action` through two controls. Register it with `Application.set_actions`
+for window shortcuts. `Shortcut(Key.s, primary = true)` uses Ctrl or Command;
+matching repeated key-down events do not invoke an action repeatedly.
+
+`Application(content, theme = Theme())` supplies inherited semantic colors and
+metrics. `Theme(control_lines = 2.0)` gives controls more vertical room. The default
+is one font line with one character cell of horizontal inset. A subtree can use
+`layout().set_theme(...)`, then `inherit_theme()` to return to its parent's theme.
+Typography remains explicit: pass one shared `Font` through your view components.
+
+See [composition contracts](docs/DESIGN.md), [the API](docs/API.md), and
+[text change/highlight contracts](docs/TEXT-EDITOR.md). The separate
+[luced editor](https://github.com/dymokomi/luced) composes named Luce views from
+these Base controls; its entry point contains no geometry or signal wiring.

@@ -1,3 +1,4 @@
+from luce_ui.theme import Theme
 import gpu
 import input
 import interop
@@ -76,9 +77,14 @@ pub struct Layout:
     var minimum: Size
     var maximum: Size
     var growth: Size
+    var shrink: Size
     var measured: Size
+    var local_theme: Theme?
+    var appearance: Theme
     var rectangle: Rect
     var clipping: Rect
+    var visible: bool
+    var popup: bool
     var accepts_focus: bool
     var accepts_pointer: bool
     var accepts_text: bool
@@ -105,9 +111,14 @@ pub struct Layout:
         self.minimum = Size()
         self.maximum = Size(16384.0, 16384.0)
         self.growth = Size()
+        self.shrink = Size(1.0, 1.0)
         self.measured = Size()
+        self.local_theme = none
+        self.appearance = Theme()
         self.rectangle = Rect()
         self.clipping = Rect()
+        self.visible = true
+        self.popup = false
         self.accepts_focus = false
         self.accepts_pointer = false
         self.accepts_text = false
@@ -115,6 +126,32 @@ pub struct Layout:
         self.active = true
         self.focused = false
         self.editing = false
+
+    pub func is_visible() -> bool:
+        return self.visible
+
+    pub mutating func set_visible(visible: bool):
+        self.visible = visible
+        self.invalidate()
+
+    ## A popup is measured normally, placed beside its parent and clipped to
+    ## the window. Its subtree is drawn last and receives modal input.
+    pub mutating func set_popup(popup: bool):
+        self.popup = popup
+        self.invalidate()
+
+    pub func theme() -> Theme:
+        return self.appearance
+
+    pub mutating func set_theme(theme: Theme) -> !:
+        try theme.validate()
+        self.local_theme = theme
+        self.appearance = theme
+        self.invalidate()
+
+    pub mutating func inherit_theme():
+        self.local_theme = none
+        self.invalidate()
 
     pub func id() -> u64:
         return self.identifier
@@ -167,6 +204,14 @@ pub struct Layout:
 
     pub mutating func set_size(width: f64, height: f64) -> !:
         try self.set_limits(Size(width, height), Size(width, height))
+
+    ## Shrink weights are independent of growth. Fixed-height chrome can keep
+    ## its line while flexible content absorbs a smaller window.
+    pub mutating func set_shrink(horizontal: f64 = 1.0, vertical: f64 = 1.0) -> !:
+        try extent(horizontal)
+        try extent(vertical)
+        self.shrink = Size(horizontal, vertical)
+        self.invalidate()
 
     pub mutating func set_flex(horizontal: f64 = 1.0, vertical: f64 = 1.0) -> !:
         try extent(horizontal)
@@ -226,9 +271,13 @@ pub struct Layout:
 
     pub func content_size(available: Constraints) -> Size!:
         var size = Size()
+        var count: usize = 0
         for child in self.items:
             let layout = try widget_layout(child)
             defer layout.release()
+            if not layout.value().visible or layout.value().popup:
+                continue
+            count += 1
             let measured = layout.value().measured
             if self.axis == Axis.horizontal:
                 size.width += measured.width
@@ -239,7 +288,7 @@ pub struct Layout:
             else:
                 size.width = math.max(size.width, measured.width)
                 size.height = math.max(size.height, measured.height)
-        let gaps = (f64)(self.items.length - 1) * self.spacing if self.items.length > 0 else 0.0
+        let gaps = (f64)(count - 1) * self.spacing if count > 0 else 0.0
         size.width += self.padding * 2.0 + (gaps if self.axis == Axis.horizontal else 0.0)
         size.height += self.padding * 2.0 + (gaps if self.axis == Axis.vertical else 0.0)
         return Size(math.min(size.width, available.width), math.min(size.height, available.height))
@@ -318,9 +367,12 @@ pub struct Tree:
     var focus: u64
     var requested_focus: u64
     var capture: u64
+    var return_focus: u64
+    var appearance: Theme
 
-    pub func init(content: interop.Interface[Widget]) -> !:
+    pub func init(content: interop.Interface[Widget], theme: Theme = Theme()) -> !:
         try require_main_thread()
+        try theme.validate()
         serial = serial +? 1 else error(result.limit, "UI identities exhausted")
         self.identifier = serial
         self.root = content.clone()
@@ -333,6 +385,19 @@ pub struct Tree:
         self.focus = 0
         self.requested_focus = 0
         self.capture = 0
+        self.return_focus = 0
+        self.appearance = theme
+
+    pub func theme() -> Theme:
+        return self.appearance
+
+    pub mutating func set_theme(theme: Theme) -> !:
+        try theme.validate()
+        self.appearance = theme
+        revision = revision +? 1 else trap("UI revision exhausted")
+
+    pub mutating func refresh() -> interop.Outcome[unit]:
+        return self.arrange(self.width, self.height)
 
     pub mutating func arrange(width: f64, height: f64) -> interop.Outcome[unit]:
         extent(width) catch failure:
@@ -349,6 +414,12 @@ pub struct Tree:
         let started = epoch()
         gather(self.root, replacement, &count, -1, 0, self.identifier) catch failure:
             return result.failure[unit](failure.code, failure.message)
+        # Resolve parent context before measuring descendants. Values avoid
+        # shared mutable theme state and require no work in widget draw paths.
+        for position in 0..<count:
+            let entry = &replacement[position]
+            let inherited = replacement[(usize)entry.parent].box.value().appearance if entry.parent >= 0 else self.appearance
+            entry.box.value().appearance = entry.box.value().local_theme else inherited
         var index = count
         while index > 0:
             index -= 1
@@ -371,6 +442,23 @@ pub struct Tree:
             return result.failure[unit](result.busy, "a widget changed the tree during measurement")
         let bounds = Rect(width = width, height = height)
         place(replacement, 0, bounds, bounds)
+        var popup: u64 = 0
+        for entry in replacement[..<count]:
+            let box = entry.box.value()
+            if box.popup and entry.parent >= 0:
+                let anchor = replacement[(usize)entry.parent].box.value().rectangle
+                let popup_width = math.min(box.measured.width, bounds.width)
+                let popup_height = math.min(box.measured.height, bounds.height)
+                let x = math.clamp(anchor.x, 0.0, bounds.width - popup_width)
+                let below = anchor.y + anchor.height
+                let y = below if below + popup_height <= bounds.height else math.max(0.0, anchor.y - popup_height)
+                let position = find_entry(replacement, count, box.identifier) else trap("popup missing from tree")
+                place(replacement, position, Rect(x, y, popup_width, popup_height), bounds)
+                popup = box.identifier
+        if popup != 0 and popup != self.focus:
+            if self.return_focus == 0:
+                self.return_focus = self.focus
+            self.focus = popup
         # Cancel against the old retained snapshot before its edges are released.
         if self.capture != 0 and not eligible(replacement, count, self.capture, false):
             let capture_cancelled = self.cancel(self.capture)
@@ -385,7 +473,11 @@ pub struct Tree:
                     return focus_cancelled
                 focus_cancelled.release()
             self.focus = 0
-        if self.requested_focus != 0:
+        if popup == 0 and self.return_focus != 0:
+            if eligible(replacement, count, self.return_focus, true):
+                self.focus = self.return_focus
+            self.return_focus = 0
+        if self.requested_focus != 0 and popup == 0:
             if eligible(replacement, count, self.requested_focus, true):
                 self.focus = self.requested_focus
             self.requested_focus = 0
@@ -406,28 +498,32 @@ pub struct Tree:
         return result.success[unit](())
 
     pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
-        for entry in self.entries[..<self.count]:
-            let box = entry.box.value()
-            if box.clipping.width <= 0.0 or box.clipping.height <= 0.0:
-                continue
-            let native_target = target.get() catch failure:
-                return result.failure[unit](failure.code, failure.message)
-            let clipped = native_target.clipped(box.clipping) catch failure:
-                return result.failure[unit](failure.code, failure.message)
-            defer clipped.release()
-            let native_clipped = clipped.get() catch failure:
-                return result.failure[unit](failure.code, failure.message)
-            let region = native_clipped.region(box.rectangle) catch failure:
-                return result.failure[unit](failure.code, failure.message)
-            defer region.release()
-            entry.widget.enter() catch failure:
-                return result.failure[unit](failure.code, failure.message)
-            defer entry.widget.leave()
-            var widget = entry.widget.value()
-            let drawn = widget.draw(region)
-            if not drawn.is_success():
-                return drawn
-            drawn.release()
+        for pass in 0..<2:
+            for index in 0..<self.count:
+                if in_popup(self.entries, index) != (pass == 1):
+                    continue
+                let entry = self.entries[index]
+                let box = entry.box.value()
+                if box.clipping.width <= 0.0 or box.clipping.height <= 0.0:
+                    continue
+                let native_target = target.get() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                let clipped = native_target.clipped(box.clipping) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                defer clipped.release()
+                let native_clipped = clipped.get() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                let region = native_clipped.region(box.rectangle) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                defer region.release()
+                entry.widget.enter() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                defer entry.widget.leave()
+                var widget = entry.widget.value()
+                let drawn = widget.draw(region)
+                if not drawn.is_success():
+                    return drawn
+                drawn.release()
         return result.success[unit](())
 
     pub mutating func dispatch(event: input.Event) -> interop.Outcome[unit]:
@@ -448,6 +544,24 @@ pub struct Tree:
             self.capture = 0
             self.set_focus(0)
             return result.success[unit](())
+        if let popup = self.popup_index():
+            let box = self.entries[popup].box.value()
+            if event.kind == input.EventKind.pointer_down and not inside(box.clipping, event.x, event.y):
+                let cancelled = self.cancel(box.identifier)
+                if not cancelled.is_success():
+                    return cancelled
+                cancelled.release()
+                self.capture = 0
+                return self.arrange(self.width, self.height)
+            # Tab stays within the popup; its widget chooses how to navigate.
+            if event.kind == input.EventKind.key_down or event.kind == input.EventKind.key_up or event.kind == input.EventKind.text_input:
+                let delivered = self.send(popup, Event(kind = event.kind, key = event.key,
+                    repeated = event.repeated, shift = event.modifiers.shift,
+                    control = event.modifiers.control, alt = event.modifiers.alt, meta = event.modifiers.super))
+                if not delivered.is_success():
+                    return delivered
+                delivered.release()
+                return self.arrange(self.width, self.height)
         var text_tab = false
         if let focused = self.find(self.focus):
             text_tab = self.entries[focused].box.value().accepts_tab and not event.modifiers.control
@@ -509,6 +623,18 @@ pub struct Tree:
         refreshed.release()
         return result.success[unit](())
 
+    func popup_index() -> usize?:
+        var index = self.count
+        while index > 0:
+            index -= 1
+            let box = self.entries[index].box.value()
+            if box.popup and box.visible:
+                return index
+        return none
+
+    pub func has_popup() -> bool:
+        return self.popup_index() != none
+
     pub func wants_text_input() -> bool:
         let index = self.find(self.focus) else return false
         return self.entries[index].box.value().accepts_text
@@ -524,11 +650,12 @@ pub struct Tree:
         return none
 
     func hit(x: f64, y: f64) -> u64:
+        let modal = self.has_popup()
         var index = self.count
         while index > 0:
             index -= 1
             let box = self.entries[index].box.value()
-            if path_enabled(self.entries, index) and box.accepts_pointer and inside(box.clipping, x, y):
+            if (not modal or in_popup(self.entries, index)) and path_enabled(self.entries, index) and box.accepts_pointer and inside(box.clipping, x, y):
                 return box.identifier
         return 0
 
@@ -627,6 +754,11 @@ func gather(widget: interop.Interface[Widget], entries: Entry[], count: usize*, 
     let box = try widget_layout(widget)
     errdefer box.release()
     let state = try box.get()
+    if not state.visible:
+        if parent == -1:
+            error(result.invalid, "an application root must be visible")
+        box.release()
+        return
     if state.application != 0 and state.application != application:
         error(result.busy, "a widget already belongs to another application")
     if parent == -1 and state.parent != 0:
@@ -671,6 +803,9 @@ func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect):
     var length: usize = 0
     while child < entries[index].end:
         let item = entries[child].box.value()
+        if item.popup:
+            child = entries[child].end
+            continue
         item.rectangle = Rect(width = item.measured.width, height = item.measured.height)
         total += along(item.measured, horizontal)
         length += 1
@@ -686,11 +821,14 @@ func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect):
         child = index + 1
         while child < entries[index].end:
             let item = entries[child].box.value()
+            if item.popup:
+                child = entries[child].end
+                continue
             let current = item.rectangle.width if horizontal else item.rectangle.height
             if remaining > 0.0 and current < along(item.maximum, horizontal):
                 weight += along(item.growth, horizontal)
             elif remaining < 0.0:
-                weight += math.max(0.0, current - along(item.minimum, horizontal))
+                weight += math.max(0.0, current - along(item.minimum, horizontal)) * along(item.shrink, horizontal)
             child = entries[child].end
         if weight <= 0.0:
             break
@@ -698,9 +836,12 @@ func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect):
         child = index + 1
         while child < entries[index].end:
             let item = entries[child].box.value()
+            if item.popup:
+                child = entries[child].end
+                continue
             let current = item.rectangle.width if horizontal else item.rectangle.height
             let capacity = along(item.maximum, horizontal) - current if remaining > 0.0 else current - along(item.minimum, horizontal)
-            let share = along(item.growth, horizontal) if remaining > 0.0 else math.max(0.0, capacity)
+            let share = along(item.growth, horizontal) if remaining > 0.0 else math.max(0.0, capacity) * along(item.shrink, horizontal)
             let delta = math.min(math.max(0.0, capacity), math.abs(remaining) * share / weight) * (1.0 if remaining > 0.0 else -1.0)
             if horizontal:
                 item.rectangle.width += delta
@@ -714,6 +855,9 @@ func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect):
     child = index + 1
     while child < entries[index].end:
         let item = entries[child].box.value()
+        if item.popup:
+            child = entries[child].end
+            continue
         var rectangle = item.rectangle
         if box.axis == Axis.overlay:
             rectangle = Rect(inner.x, inner.y, math.clamp(inner.width, item.minimum.width, item.maximum.width),
@@ -748,3 +892,17 @@ func discard_replacement(entries: Entry[], count: usize*, committed: bool*):
 func require_main_thread() -> !:
     if not thread.is_main():
         error(interop.wrong_thread, "UI layout requires the main thread")
+
+func find_entry(entries: const Entry[], count: usize, identifier: u64) -> usize?:
+    for index in 0..<count:
+        if entries[index].box.value().identifier == identifier:
+            return index
+    return none
+
+func in_popup(entries: const Entry[], index: usize) -> bool:
+    var cursor = (i64)index
+    while cursor >= 0:
+        if entries[(usize)cursor].box.value().popup:
+            return true
+        cursor = entries[(usize)cursor].parent
+    return false

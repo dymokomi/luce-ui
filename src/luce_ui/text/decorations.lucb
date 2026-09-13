@@ -1,0 +1,92 @@
+## Range storage is independent of the language service and renderer. Edits
+## transform the old set without allocation; publication replaces one interval
+## transactionally, preserving decorations outside it.
+import gpu
+import memory
+import luce_ui.result as result
+from luce_ui.text.document import TextChange
+from luce_ui.text.style import Highlight
+
+pub struct Decorations:
+    var spans: Highlight[]
+    var count: usize
+
+    pub func init():
+        var empty: Highlight[]
+        self.spans = empty
+        self.count = 0
+
+    pub func values() -> const Highlight[]:
+        return self.spans[..<self.count]
+
+    pub func color_at(offset: i64) -> gpu.Color?:
+        var low: usize = 0
+        var high = self.count
+        while low < high:
+            let middle = (low + high) // 2
+            if self.spans[middle].end <= offset:
+                low = middle + 1
+            else:
+                high = middle
+        if low < self.count and self.spans[low].start <= offset:
+            return self.spans[low].color
+        return none
+
+    pub mutating func transform(change: TextChange):
+        var count: usize = 0
+        let delta = change.new_end - change.old_end
+        for span in self.spans[..<self.count]:
+            var start = span.start
+            var end = span.end
+            if start >= change.old_end:
+                start += delta
+            elif start >= change.start:
+                start = change.new_end
+            if end > change.old_end:
+                end += delta
+            elif end > change.start:
+                end = change.new_end
+            if end > start:
+                self.spans[count] = Highlight(start, end, span.color)
+                count += 1
+        self.count = count
+
+    pub mutating func replace(start: i64, end: i64, replacement: const Highlight[]) -> !:
+        var previous = start
+        for span in replacement:
+            if span.start < previous or span.end < span.start or span.end > end:
+                error(result.invalid, "highlights must be ordered, disjoint ranges within the replaced interval")
+            previous = span.end
+        var count = replacement.length
+        for span in self.values():
+            if span.start < start:
+                count += 1
+            if span.end > end:
+                count += 1
+        if count > 131072:
+            error(result.limit, "an editor supports at most 131072 highlight ranges")
+        var copied: Highlight[]
+        if count > 0:
+            copied = try alloc Highlight[count] in memory.heap
+        var index: usize = 0
+        for span in self.values():
+            if span.start < start:
+                copied[index] = Highlight(span.start, span.end if span.end < start else start, span.color)
+                index += 1
+        for span in replacement:
+            copied[index] = span
+            index += 1
+        for span in self.values():
+            if span.end > end:
+                copied[index] = Highlight(span.start if span.start > end else end, span.end, span.color)
+                index += 1
+        self.close()
+        self.spans = copied
+        self.count = count
+
+    pub mutating func close():
+        if self.spans.length > 0:
+            free(self.spans) in memory.heap
+        var empty: Highlight[]
+        self.spans = empty
+        self.count = 0

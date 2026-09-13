@@ -9,12 +9,15 @@ import window
 import luce_ui.result as result
 import luce_ui.layout as layout
 from luce_ui.layout import Widget, Tree, Event
+from luce_ui.theme import Theme
+from luce_ui.action import Action, Actions
 
 ## Construction is platform-independent. run acquires native resources and owns
 ## their complete lifetime, including error unwinding and callback-driven stop.
 pub struct Application:
     let title: interop.Owned[str]
     var tree: Tree
+    var actions: Actions
     let frames: interop.Signal[f64]
     var close_handler: interop.Callback[unit, bool]?
     var error_handler: interop.Callback[str, unit]?
@@ -24,18 +27,20 @@ pub struct Application:
     var operating: bool
     var closed: bool
 
-    pub func init(content: interop.Interface[Widget], title: str = "Luce", width: i64 = 800, height: i64 = 600) -> !:
+    pub func init(content: interop.Interface[Widget], title: str = "Luce", width: i64 = 800, height: i64 = 600, theme: Theme = Theme()) -> !:
         if not thread.is_main():
             error(interop.wrong_thread, "UI applications require the main thread")
         if width < 1 or width > 10000 or height < 1 or height > 10000 or not utf8.valid(title.bytes):
             error(result.invalid, "a window needs valid UTF-8 and dimensions in 1..10000")
+        try theme.validate()
         let copied = try interop.copy_text(title)
         errdefer copied.release()
-        var tree = try Tree(content)
+        var tree = try Tree(content, theme)
         errdefer tree.close()
         let frames = try interop.Signal[f64]()
         self.title = copied
         self.tree = tree
+        self.actions = Actions()
         self.frames = frames
         self.close_handler = none
         self.error_handler = none
@@ -81,6 +86,14 @@ pub struct Application:
             previous.release()
         self.error_handler = replacement
 
+    pub mutating func set_actions(actions: const interop.Reference[Action][]) -> !:
+        try self.check()
+        try self.actions.set(actions)
+
+    pub mutating func set_theme(theme: Theme) -> !:
+        try self.check()
+        try self.tree.set_theme(theme)
+
     pub mutating func focus(target: interop.Reference[layout.Layout]) -> !:
         try self.check()
         self.tree.focus_layout(target)
@@ -102,7 +115,7 @@ pub struct Application:
             return result.failure[unit](result.invalid, "a pointer button must be in 0..31")
         if event.codepoint < 0 or event.codepoint > 0x10FFFF or (event.codepoint >= 0xD800 and event.codepoint <= 0xDFFF):
             return result.failure[unit](result.invalid, "text input requires a Unicode scalar")
-        return self.tree.dispatch(input.Event(kind = event.kind, key = event.key,
+        return self.route(input.Event(kind = event.kind, key = event.key,
             x = event.x, y = event.y, button = (u32)event.button,
             repeated = event.repeated, modifiers = input.Modifiers(shift = event.shift,
                 control = event.control, alt = event.alt, super = event.meta), codepoint = (u32)event.codepoint,
@@ -112,6 +125,20 @@ pub struct Application:
         self.begin_operation() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer self.end_operation()
+        return self.route(event)
+
+    mutating func route(event: input.Event) -> interop.Outcome[unit]:
+        let arranged = self.tree.refresh()
+        if not arranged.is_success():
+            return arranged
+        arranged.release()
+        if not self.tree.has_popup():
+            let action = self.actions.dispatch(event)
+            defer action.release()
+            let handled = action.get() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            if handled:
+                return result.success[unit](())
         return self.tree.dispatch(event)
 
     pub mutating func render(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
@@ -217,7 +244,7 @@ pub struct Application:
             if not rendered.is_success():
                 return rendered
             rendered.release()
-            discard(frame.value().present(gpu.Color(red = 0.016, green = 0.022, blue = 0.04)) catch failure:
+            discard(frame.value().present(self.tree.theme().background) catch failure:
                 return result.failure[unit](failure.code, failure.message))
             count += 1
             if frame_limit > 0 and count >= frame_limit:
@@ -249,6 +276,7 @@ pub struct Application:
         if let handler = self.error_handler:
             self.error_handler = none
             handler.release()
+        self.actions.close()
         self.frames.close()
         self.frames.release()
         self.tree.close()
@@ -259,6 +287,7 @@ pub struct Application:
             handler.trace(visit, context)
         if let handler = self.error_handler:
             handler.trace(visit, context)
+        self.actions.trace(visit, context)
         self.frames.trace(visit, context)
         self.tree.trace(visit, context)
         self.title.trace(visit, context)

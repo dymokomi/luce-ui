@@ -1,0 +1,110 @@
+## Application intent shared by toolbars, menus and window shortcuts. Actions
+## know nothing about files or editors; the connected callback supplies behavior.
+import input
+import interop
+import ownership
+import memory
+import luce_ui.result as result
+
+pub struct Shortcut:
+    pub let key: input.Key = input.Key.unknown
+    pub let primary: bool = false
+    pub let shift: bool = false
+    pub let alt: bool = false
+
+    func matches(event: input.Event) -> bool:
+        return self.key != input.Key.unknown and event.kind == input.EventKind.key_down and event.key == self.key and (event.modifiers.control or event.modifiers.super) == self.primary and event.modifiers.shift == self.shift and event.modifiers.alt == self.alt
+
+pub struct Action:
+    let caption: interop.Owned[str]
+    let triggered: interop.Signal[unit]
+    let binding: Shortcut
+    var enabled: bool
+
+    pub func init(text: str, shortcut: Shortcut = Shortcut()) -> !:
+        let caption = try interop.copy_text(text)
+        errdefer caption.release()
+        let triggered = try interop.Signal[unit]()
+        self.caption = caption
+        self.triggered = triggered
+        self.binding = shortcut
+        self.enabled = true
+
+    pub func text() -> interop.Owned[str]:
+        return self.caption.clone()
+
+    pub func shortcut() -> Shortcut:
+        return self.binding
+
+    pub func is_enabled() -> bool:
+        return self.enabled
+
+    pub mutating func set_enabled(enabled: bool):
+        self.enabled = enabled
+
+    pub func on_trigger(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.triggered.connect(callback)
+
+    pub func trigger() -> interop.Outcome[unit]:
+        return self.triggered.emit(()) if self.enabled else result.success[unit](())
+
+    pub mutating func close():
+        self.triggered.close()
+        self.triggered.release()
+        self.caption.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.caption.trace(visit, context)
+        self.triggered.trace(visit, context)
+
+pub let action_type: interop.Type[Action] = interop.Type[Action]("Action", Action.close, Action.trace, closeable = true, main_thread = true)
+
+## Owning action collection used by applications and menus. Replacement is
+## atomic and callbacks retain their selected action across reentrant changes.
+pub struct Actions:
+    var items: interop.Reference[Action][]
+
+    pub func init():
+        var empty: interop.Reference[Action][]
+        self.items = empty
+
+    pub func values() -> const interop.Reference[Action][]:
+        return self.items
+
+    pub mutating func set(items: const interop.Reference[Action][]) -> !:
+        if items.length > 128:
+            error(result.invalid, "an action collection supports at most 128 entries")
+        for item in items:
+            discard(try item.get())
+        var copied: interop.Reference[Action][]
+        if items.length > 0:
+            copied = try alloc interop.Reference[Action][items.length] in memory.heap
+            for index in 0..<items.length:
+                copied[index] = items[index].clone()
+        self.close()
+        self.items = copied
+
+    pub func dispatch(event: input.Event) -> interop.Outcome[bool]:
+        for item in self.items:
+            if item.value().shortcut().matches(event):
+                let selected = item.clone()
+                defer selected.release()
+                if not event.repeated:
+                    let invoked = selected.value().trigger()
+                    defer invoked.release()
+                    discard(invoked.get() catch failure:
+                        return result.failure[bool](failure.code, failure.message))
+                return result.success[bool](true)
+        return result.success[bool](false)
+
+    pub mutating func close():
+        for item in self.items:
+            item.release()
+        if self.items.length > 0:
+            free(self.items) in memory.heap
+        var empty: interop.Reference[Action][]
+        self.items = empty
+
+    pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        for item in self.items:
+            item.trace(visit, context)

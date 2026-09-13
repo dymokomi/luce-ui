@@ -9,23 +9,24 @@ from luce_ui.painter import Painter
 from luce_ui.text.document import Document
 from luce_ui.text.style import Highlight, EditorTheme
 
-pub let vertical_padding: f64 = 10.0
+pub func vertical_padding(font: interop.Reference[Font]) -> f64:
+    return (font.value().line_height() - font.value().height()) * 0.5
 
-pub func gutter_width(numbers: bool) -> f64:
-    return 62.0 if numbers else 0.0
+pub func gutter_width(numbers: bool, font: interop.Reference[Font]) -> f64:
+    return font.value().advance() * 6.0 if numbers else 0.0
 
 pub func paint(document: const Document*, painter: Painter*, width: f64, height: f64,
                scroll_x: f64, scroll_y: f64, numbers: bool, focused: bool,
                caret_visible: bool, font: interop.Reference[Font], theme: EditorTheme,
                highlights: const Highlight[]) -> !:
-    let gutter = gutter_width(numbers)
+    let gutter = gutter_width(numbers, font)
     try painter.rectangle(gpu.Rect(width = width, height = height), theme.background)
     if numbers:
         try painter.rectangle(gpu.Rect(width = gutter, height = height), theme.gutter)
     let first_row = (usize)(scroll_y / font.value().line_height())
     var offset = document.line_offset(first_row)
     var row = first_row
-    var y = vertical_padding + (f64)row * font.value().line_height() - scroll_y
+    var y = vertical_padding(font) + (f64)row * font.value().line_height() - scroll_y
     let current = document.line_number(document.caret())
     var style: usize = 0
     while style < highlights.length and highlights[style].end <= (i64)offset:
@@ -39,13 +40,13 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
             var label: u8[32]
             let text = try format(label, f"{row + 1}")
             let extent = try font.value().measure(text)
-            try painter.text(text, gutter - extent - 12.0, y, theme.line_number, font)
+            try painter.text(text, gutter - extent - font.value().advance(), y, theme.line_number, font)
         try paint_line(document, painter, offset, end, y, width, scroll_x, gutter,
             focused, caret_visible, font, theme, highlights, &style)
         offset = end + 1
         row += 1
         y += font.value().line_height()
-    let total = (f64)rows * font.value().line_height() + vertical_padding * 2.0
+    let total = (f64)rows * font.value().line_height() + vertical_padding(font) * 2.0
     if total > height and height > 0.0:
         let thumb = math.max(24.0, height * height / total)
         let position = scroll_y / math.max(1.0, total - height) * math.max(0.0, height - thumb)
@@ -61,11 +62,11 @@ func paint_line(document: const Document*, painter: Painter*, start: usize, end:
     var used: usize = 0
     var run_x: f64 = 0.0
     var run_color = theme.foreground
-    var cursor_x = gutter + 12.0 - scroll_x
+    var cursor_x = gutter + font.value().advance() - scroll_x
     for index in start..<end:
         let scalar = document.scalar(index)
         let cells = 4 - column % 4 if scalar == 9 else 1
-        let x = gutter + 12.0 + (f64)column * advance - scroll_x
+        let x = gutter + font.value().advance() + (f64)column * advance - scroll_x
         let visible = x + (f64)cells * advance > gutter and x < width - 8.0
         if index == document.caret():
             cursor_x = x
@@ -87,11 +88,11 @@ func paint_line(document: const Document*, painter: Painter*, start: usize, end:
             used += utf8.encode(scalar, bytes[used..]) else trap("invalid document scalar")
         column += cells
         if index + 1 == document.caret():
-            cursor_x = gutter + 12.0 + (f64)column * advance - scroll_x
+            cursor_x = gutter + font.value().advance() + (f64)column * advance - scroll_x
     if used > 0:
         try painter.text((str)bytes[..<used], run_x, y, run_color, font)
     if document.last() > end and document.first() <= end:
-        let x = gutter + 12.0 + (f64)column * advance - scroll_x
+        let x = gutter + font.value().advance() + (f64)column * advance - scroll_x
         if x >= gutter and x < width:
             try painter.rectangle(gpu.Rect(x, y - 2.0, advance, font.value().line_height()), theme.selection)
     if focused and caret_visible and document.caret() >= start and document.caret() <= end and cursor_x >= gutter and cursor_x < width - 6.0:

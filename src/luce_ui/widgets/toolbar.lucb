@@ -8,39 +8,32 @@ from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 from luce_ui.font import Font, selected_font
 
-pub struct Text: Widget:
+pub struct Toolbar: Widget:
     let box: interop.Reference[Layout]
-    var caption: interop.Owned[str]
     let font: interop.Reference[Font]
 
-    pub func init(text: str, font: interop.Reference[Font]? = none) -> !:
-        var selected = try selected_font(font)
+    ## Children keep their own intrinsic widths; Spacer consumes remaining room.
+    ## No outer padding is added to the shared one-line control height.
+    pub func init(children: const interop.Interface[Widget][], font: interop.Reference[Font]? = none) -> !:
+        let selected = try selected_font(font)
         errdefer selected.release()
-        discard(try selected.value().measure(text))
-        let box = try layout.make_layout()
+        let box = try layout.make_layout(layout.Axis.horizontal, 0.0, 0.0, layout.Alignment.center)
         errdefer box.release()
         try box.value().set_shrink(vertical = 0.0)
-        self.caption = try interop.copy_text(text)
+        try box.value().set_children(children)
         self.box = box
         self.font = selected
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
-    pub func text() -> interop.Owned[str]:
-        return self.caption.clone()
-
-    pub mutating func set_text(text: str) -> !:
-        discard(try self.font.value().measure(text))
-        let replacement = try interop.copy_text(text)
-        self.caption.release()
-        self.caption = replacement
-        self.box.value().invalidate()
+    pub mutating func set_children(children: const interop.Interface[Widget][]) -> !:
+        try self.box.value().set_children(children)
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
-        let width = self.font.value().measure(self.caption.value) catch failure:
+        let size = self.box.value().content_size(available) catch failure:
             return result.failure[Size](failure.code, failure.message)
-        return result.success[Size](Size(width, self.font.value().line_height()))
+        return result.success[Size](Size(size.width, math.max(size.height, self.box.value().theme().row_height(self.font))))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
@@ -51,19 +44,19 @@ pub struct Text: Widget:
         var painter = try Painter(target)
         defer painter.close()
         let size = try target.get().size()
-        try painter.text(self.caption.value, 0.0, math.max(0.0, (size.height - self.font.value().height()) * 0.5), color = self.box.value().theme().foreground, font = self.font)
+        let theme = self.box.value().theme()
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.panel)
+        try painter.rectangle(gpu.Rect(y = math.max(0.0, size.height - 1.0), width = size.width, height = 1.0), theme.border)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
 
     pub mutating func close():
         self.font.release()
-        self.caption.release()
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
         self.font.trace(visit, context)
         self.box.trace(visit, context)
-        self.caption.trace(visit, context)
 
-pub let text_type: interop.Type[Text] = interop.Type[Text]("Text", Text.close, Text.trace, closeable = true, main_thread = true)
+pub let toolbar_type: interop.Type[Toolbar] = interop.Type[Toolbar]("Toolbar", Toolbar.close, Toolbar.trace, closeable = true, main_thread = true)

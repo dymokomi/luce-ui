@@ -10,6 +10,14 @@ let maximum_scalars: usize = 1048576
 let history_limit: usize = 128
 let history_bytes: usize = 16777216
 
+## The last committed replacement, in scalar offsets. old_end belongs to the
+## preceding version; new_end belongs to version. Undo and load use this too.
+pub struct TextChange:
+    pub let start: i64 = 0
+    pub let old_end: i64 = 0
+    pub let new_end: i64 = 0
+    pub let version: i64 = 0
+
 struct Edit:
     let offset: usize
     let removed: u32[]
@@ -29,6 +37,7 @@ pub struct Document:
     var edit_position: usize
     var retained_bytes: usize
     var revision: u64
+    var change: TextChange
 
     pub func init(text: str = "") -> !:
         let decoded = try decode(text)
@@ -43,12 +52,16 @@ pub struct Document:
         self.edit_position = 0
         self.retained_bytes = 0
         self.revision = 0
+        self.change = TextChange()
 
     pub func length() -> usize:
         return self.count
 
     pub func version() -> u64:
         return self.revision
+
+    pub func last_change() -> TextChange:
+        return self.change
 
     pub func caret() -> usize:
         return self.selection_caret
@@ -89,6 +102,7 @@ pub struct Document:
     ## allocation succeed. File newline policy is the application's responsibility.
     pub mutating func set_text(text: str) -> !:
         let replacement = try decode(text)
+        self.change = TextChange(0, (i64)self.count, (i64)replacement.length, (i64)self.revision + 1)
         self.clear_history()
         release(self.characters)
         self.characters = replacement
@@ -213,6 +227,7 @@ pub struct Document:
         self.characters = replacement
 
     mutating func replace_storage(start: usize, removed: usize, inserted: const u32[]):
+        self.change = TextChange((i64)start, (i64)(start + removed), (i64)(start + inserted.length), (i64)self.revision + 1)
         let tail = self.count - start - removed
         if inserted.length > removed:
             var index = tail

@@ -80,7 +80,7 @@ func ownership_and_layout(tracker: Tracker*) -> !:
     let box = control.value().layout()
     defer box.release()
     let bounds = box.value().bounds()
-    assert(bounds.x == 20.0 and bounds.y == 20.0 and bounds.width > 65.0 and bounds.width < 95.0 and bounds.height == 60.0)
+    assert(bounds.x == 20.0 and bounds.y == 20.0 and bounds.width > 45.0 and bounds.width < 75.0 and bounds.height == 60.0)
     let spacer_box = flexible.value().layout()
     defer spacer_box.release()
     let spare = spacer_box.value().bounds()
@@ -130,7 +130,7 @@ func ownership_and_layout(tracker: Tracker*) -> !:
 
 func shared_font() -> !:
     let font = try interop.Reference[Font].adopt(new Font(size = 18.0) in memory.heap, ui.font_type, memory.heap)
-    let expected_width = try font.value().measure("Save") + 32.0
+    let expected_width = try font.value().measure("Save") + ui.Theme().inset(font) * 2.0
     var control = Button("Save", font = font) catch failure:
         font.release()
         error(failure.code, failure.message)

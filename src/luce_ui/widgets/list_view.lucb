@@ -18,14 +18,15 @@ pub struct ListView: Widget:
     let activated: interop.Signal[i64]
     var selection: i64
     var scroll: f64
-    let row_height: f64
+    let custom_row_height: f64?
     let font: interop.Reference[Font]
 
-    pub func init(items: const str[], row_height: f64 = 30.0, font: interop.Reference[Font]? = none) -> !:
+    pub func init(items: const str[], row_height: f64? = none, font: interop.Reference[Font]? = none) -> !:
         var selected = try selected_font(font)
         errdefer selected.release()
-        if not math.is_finite(row_height) or row_height < 18.0 or row_height > 128.0:
-            error(result.invalid, "list row height must be in 18..128")
+        if let height = row_height:
+            if not math.is_finite(height) or height < selected.value().line_height() or height > 512.0:
+                error(result.invalid, "list row height must fit the font and be at most 512")
         let box = try layout.make_layout()
         errdefer box.release()
         box.value().set_focusable(true)
@@ -39,11 +40,14 @@ pub struct ListView: Widget:
         self.items = copies
         self.selection = -1
         self.scroll = 0.0
-        self.row_height = row_height
+        self.custom_row_height = row_height
         self.font = selected
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
+
+    func row_height() -> f64:
+        return self.custom_row_height else self.box.value().theme().row_height(self.font)
 
     pub func selected_index() -> i64:
         return self.selection
@@ -61,12 +65,12 @@ pub struct ListView: Widget:
             error(result.invalid, "list selection is outside its items")
         self.selection = index
         if index >= 0:
-            let y = (f64)index * self.row_height
+            let y = (f64)index * self.row_height()
             let height = self.box.value().bounds().height
             if y < self.scroll:
                 self.scroll = y
-            elif y + self.row_height > self.scroll + height:
-                self.scroll = math.max(0.0, y + self.row_height - height)
+            elif y + self.row_height() > self.scroll + height:
+                self.scroll = math.max(0.0, y + self.row_height() - height)
         self.box.value().invalidate()
 
     pub func on_activate(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
@@ -84,19 +88,19 @@ pub struct ListView: Widget:
         var painter = try Painter(target)
         defer painter.close()
         let size = try target.get().size()
-        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), gpu.Color(0.015, 0.021, 0.033))
-        var index = (usize)(self.scroll / self.row_height)
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), self.box.value().theme().background)
+        var index = (usize)(self.scroll / self.row_height())
         while index < self.items.length:
-            let y = (f64)index * self.row_height - self.scroll
+            let y = (f64)index * self.row_height() - self.scroll
             if y >= size.height:
                 break
             if (i64)index == self.selection:
-                try painter.rectangle(gpu.Rect(y = y, width = size.width, height = self.row_height), gpu.Color(0.035, 0.075, 0.12))
-                try painter.rectangle(gpu.Rect(y = y, width = 2.0, height = self.row_height), gpu.Color(0.15, 0.6, 0.88))
-            try painter.text(self.items[index].value, 12.0, y + (self.row_height - self.font.value().height()) * 0.5, color = gpu.Color(0.45, 0.54, 0.67), font = self.font)
+                try painter.rectangle(gpu.Rect(y = y, width = size.width, height = self.row_height()), self.box.value().theme().selection)
+                try painter.rectangle(gpu.Rect(y = y, width = 2.0, height = self.row_height()), self.box.value().theme().accent)
+            try painter.text(self.items[index].value, self.box.value().theme().inset(self.font), y + (self.row_height() - self.font.value().height()) * 0.5, color = self.box.value().theme().foreground, font = self.font)
             index += 1
         if self.box.value().is_focused():
-            try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), gpu.Color(0.09, 0.22, 0.4))
+            try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), self.box.value().theme().accent)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         let activate = self.handle(event) catch failure:
@@ -109,12 +113,12 @@ pub struct ListView: Widget:
         if event.cancelled:
             return false
         if event.kind == input.EventKind.scroll:
-            let scale = 1.0 if event.scroll_unit == input.ScrollUnit.points else self.row_height * 3.0
-            let limit = math.max(0.0, (f64)self.items.length * self.row_height - self.box.value().bounds().height)
+            let scale = 1.0 if event.scroll_unit == input.ScrollUnit.points else self.row_height() * 3.0
+            let limit = math.max(0.0, (f64)self.items.length * self.row_height() - self.box.value().bounds().height)
             self.scroll = math.clamp(self.scroll - event.scroll_y * scale, 0.0, limit)
             self.box.value().invalidate()
         elif event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
-            let index = (i64)((event.y + self.scroll) / self.row_height)
+            let index = (i64)((event.y + self.scroll) / self.row_height())
             if index >= 0 and index < (i64)self.items.length:
                 try self.select(index)
                 return true
