@@ -49,6 +49,9 @@ struct MenuPopup: Widget:
         self.first = 0
         self.pressed = -1
         self.move(1)
+        # The initial popup has not been placed yet. Its previous (or zero)
+        # height must not scroll leading disabled entries out of the new menu.
+        self.first = 0
         self.box.value().set_visible(true)
 
     func row_height() -> f64:
