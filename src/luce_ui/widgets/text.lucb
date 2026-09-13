@@ -6,18 +6,22 @@ import luce_ui.layout as layout
 import luce_ui.result as result
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
-from luce_ui.font import BitmapFont
+from luce_ui.font import Font, selected_font
 
 pub struct Text: Widget:
     let box: interop.Reference[Layout]
     var caption: interop.Owned[str]
+    let font: interop.Reference[Font]
 
-    pub func init(text: str) -> !:
-        discard(try BitmapFont().measure(text))
+    pub func init(text: str, font: interop.Reference[Font]? = none) -> !:
+        var selected = try selected_font(font)
+        errdefer selected.release()
+        discard(try selected.value().measure(text))
         let box = try layout.make_layout()
         errdefer box.release()
         self.caption = try interop.copy_text(text)
         self.box = box
+        self.font = selected
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -26,16 +30,16 @@ pub struct Text: Widget:
         return self.caption.clone()
 
     pub mutating func set_text(text: str) -> !:
-        discard(try BitmapFont().measure(text))
+        discard(try self.font.value().measure(text))
         let replacement = try interop.copy_text(text)
         self.caption.release()
         self.caption = replacement
         self.box.value().invalidate()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
-        let width = BitmapFont().measure(self.caption.value) catch failure:
+        let width = self.font.value().measure(self.caption.value) catch failure:
             return result.failure[Size](failure.code, failure.message)
-        return result.success[Size](Size(width + 0.0, 18.0))
+        return result.success[Size](Size(width, self.font.value().line_height()))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
@@ -46,16 +50,18 @@ pub struct Text: Widget:
         var painter = try Painter(target)
         defer painter.close()
         let size = try target.get().size()
-        try painter.text(self.caption.value, 0.0, math.max(0.0, (size.height - 14.0) * 0.5))
+        try painter.text(self.caption.value, 0.0, math.max(0.0, (size.height - self.font.value().height()) * 0.5), font = self.font)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
 
     pub mutating func close():
+        self.font.release()
         self.caption.release()
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.font.trace(visit, context)
         self.box.trace(visit, context)
         self.caption.trace(visit, context)
 

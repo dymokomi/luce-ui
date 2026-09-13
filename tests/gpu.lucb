@@ -21,6 +21,8 @@ struct Paint:
         defer painter.close()
         painter.rectangle(Rect(-50.0, -50.0, 300.0, 300.0), gpu.Color(1.0, 0.0, 0.0)) catch failure:
             return interop.Outcome[unit].failure(failure.code, interop.copy_text(failure.message) catch exhausted: trap(exhausted.message))
+        draw_coverage(target) catch failure:
+            return interop.Outcome[unit].failure(failure.code, interop.copy_text(failure.message) catch exhausted: trap(exhausted.message))
         return interop.Outcome[unit].success(interop.Owned[unit](()))
 
     mutating func close():
@@ -32,6 +34,15 @@ struct Paint:
             saved.trace(visit, context)
 
 let paint_type: interop.Type[Paint] = interop.Type[Paint]("test viewport paint", Paint.close, Paint.trace)
+
+## Known coverage values verify mask upload, tinting and linear-light blending.
+func draw_coverage(target: interop.View[gpu.RenderTarget]) -> !:
+    let white = gpu.Color(1.0, 1.0, 1.0)
+    var partial: u8[1] = [85]
+    try target.get().mask(partial, 1, 1, Rect(8.0, 8.0, 16.0, 8.0), white)
+    partial[0] = 255
+    try target.get().mask([(u8)0], 1, 1, Rect(24.0, 8.0, 8.0, 8.0), white)
+    try target.get().mask([(u8)255], 1, 1, Rect(32.0, 8.0, 8.0, 8.0), white)
 
 func frame(app: interop.Reference[Application], host: window.Window, surface: gpu.Surface) -> !:
     while let event = try host.poll():
@@ -53,6 +64,9 @@ func frame(app: interop.Reference[Application], host: window.Window, surface: gp
     native.pixel((u64)(78.0 * size.scale), (u64)(12.0 * size.scale), 0, 0, 0)
     native.pixel((u64)(146.0 * size.scale), (u64)(12.0 * size.scale), 0, 0, 0)
     native.pixel((u64)(84.0 * size.scale), (u64)(60.0 * size.scale), 0, 0, 0)
+    native.pixel((u64)(100.0 * size.scale), (u64)(20.0 * size.scale), 255, 156, 156)
+    native.pixel((u64)(108.0 * size.scale), (u64)(20.0 * size.scale), 255, 0, 0)
+    native.pixel((u64)(116.0 * size.scale), (u64)(20.0 * size.scale), 255, 255, 255)
 
 pub func main(arguments: str[]) -> i32!:
     let pool = native.pool()

@@ -1,8 +1,7 @@
 import gpu
 import interop
 import ownership
-import utf8
-from luce_ui.font import BitmapFont
+from luce_ui.font import Font, selected_font
 
 ## A convenience painter over a checked target. Retaining the painter does not
 ## extend the target's frame lifetime; every drawing call validates it again.
@@ -37,58 +36,10 @@ pub struct Painter:
 
     pub func text(text: str, x: f64 = 0.0, y: f64 = 0.0,
                   color: gpu.Color = gpu.Color(red = 0.82, green = 0.9, blue = 1.0),
-                  font: BitmapFont = BitmapFont()) -> !:
-        discard(try font.measure(text))
-        let target = try self.target_view.get()
-        let size = try target.size()
-        if size.width <= 0.0 or size.height <= 0.0:
-            return
-        # Merge horizontal pixel runs, then submit bounded triangle batches. A
-        # code line no longer creates a GPU command for every illuminated pixel.
-        var vertices: gpu.Vertex[1536] = ---
-        var used: usize = 0
-        var offset: usize = 0
-        var cursor = x
-        while offset < text.length:
-            let decoded = utf8.decode(text.bytes, offset) else trap("validated text changed")
-            offset += decoded.width
-            let bits = BitmapFont.glyph(decoded.scalar)
-            var row: u64 = 0
-            while row < 7:
-                var column: u64 = 0
-                while column < 5:
-                    if (bits & ((u64)1 << (row * 5 + column))) != 0:
-                        let first = column
-                        while column < 5 and (bits & ((u64)1 << (row * 5 + column))) != 0:
-                            column += 1
-                        if used + 6 > vertices.length:
-                            try target.triangles(vertices[..<used])
-                            used = 0
-                        let left = (f32)((cursor + (f64)first * font.pixel_size) * 2.0 / size.width - 1.0)
-                        let right = (f32)((cursor + (f64)column * font.pixel_size) * 2.0 / size.width - 1.0)
-                        let top = (f32)(1.0 - (y + (f64)row * font.pixel_size) * 2.0 / size.height)
-                        let bottom = (f32)(1.0 - (y + (f64)(row + 1) * font.pixel_size) * 2.0 / size.height)
-                        let a = gpu.Vertex(x = left, y = top, red = (f32)color.red, green = (f32)color.green, blue = (f32)color.blue)
-                        var b = a
-                        var c = a
-                        var d = a
-                        b.x = right
-                        c.x = right
-                        c.y = bottom
-                        d.y = bottom
-                        vertices[used] = a
-                        vertices[used + 1] = b
-                        vertices[used + 2] = c
-                        vertices[used + 3] = a
-                        vertices[used + 4] = c
-                        vertices[used + 5] = d
-                        used += 6
-                    else:
-                        column += 1
-                row += 1
-            cursor += font.pixel_size * 6.0
-        if used > 0:
-            try target.triangles(vertices[..<used])
+                  font: interop.Reference[Font]? = none) -> !:
+        var selected = try selected_font(font)
+        defer selected.release()
+        try selected.value().draw(self.target_view, text, x, y, color)
 
     pub mutating func close():
         self.target_view.release()

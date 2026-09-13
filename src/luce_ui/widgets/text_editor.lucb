@@ -11,7 +11,7 @@ import luce_ui.layout as layout
 import luce_ui.result as result
 import luce_ui.text.drawing as drawing
 import luce_ui.text.editing as editing
-from luce_ui.font import BitmapFont
+from luce_ui.font import Font, selected_font
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 from luce_ui.text.document import Document
@@ -26,7 +26,7 @@ pub struct TextEditor: Widget:
     let commands: interop.Signal[str]
     let read_only: bool
     let line_numbers: bool
-    let font: BitmapFont
+    let font: interop.Reference[Font]
     let theme: EditorTheme
     var highlights: Highlight[]
     var scroll_x: f64
@@ -38,8 +38,9 @@ pub struct TextEditor: Widget:
     var active_since: u64
 
     pub func init(text: str = "", read_only: bool = false, line_numbers: bool = true,
-                  font: BitmapFont = BitmapFont(pixel_size = 1.5), theme: EditorTheme = EditorTheme()) -> !:
-        discard(try font.measure(""))
+                  font: interop.Reference[Font]? = none, theme: EditorTheme = EditorTheme()) -> !:
+        var selected = try selected_font(font)
+        errdefer selected.release()
         let box = try layout.make_layout()
         errdefer box.release()
         try box.value().set_limits(Size(120.0, 60.0), Size(16384.0, 16384.0))
@@ -60,7 +61,7 @@ pub struct TextEditor: Widget:
         self.commands = commands
         self.read_only = read_only
         self.line_numbers = line_numbers
-        self.font = font
+        self.font = selected
         self.theme = theme
         self.highlights = highlights
         self.scroll_x = 0.0
@@ -200,7 +201,7 @@ pub struct TextEditor: Widget:
             self.dragging_scroll = false
             return
         if event.kind == input.EventKind.scroll:
-            let multiplier = drawing.line_height * 3.0 if event.scroll_unit == input.ScrollUnit.lines else 1.0
+            let multiplier = self.font.value().line_height() * 3.0 if event.scroll_unit == input.ScrollUnit.lines else 1.0
             self.scroll_y = math.clamp(self.scroll_y - event.scroll_y * multiplier, 0.0, self.maximum_scroll())
             self.scroll_x = math.max(0.0, self.scroll_x + event.scroll_x * multiplier)
             return
@@ -220,9 +221,9 @@ pub struct TextEditor: Widget:
                 self.scroll_to_pointer(event.y)
             elif self.dragging:
                 if event.y < 0.0:
-                    self.scroll_y = math.max(0.0, self.scroll_y - drawing.line_height)
+                    self.scroll_y = math.max(0.0, self.scroll_y - self.font.value().line_height())
                 if event.y > self.box.value().bounds().height:
-                    self.scroll_y = math.min(self.maximum_scroll(), self.scroll_y + drawing.line_height)
+                    self.scroll_y = math.min(self.maximum_scroll(), self.scroll_y + self.font.value().line_height())
                 try self.document.select(self.document.anchor(), self.position_at(event.x, event.y))
             return
         if event.kind == input.EventKind.pointer_up and event.button == 0:
@@ -283,7 +284,7 @@ pub struct TextEditor: Widget:
             if not self.vertical_move:
                 self.preferred_column = editing.column(&self.document, caret)
             let row = self.document.line_number(caret)
-            let page = (usize)math.max(1.0, self.box.value().bounds().height / drawing.line_height - 1.0)
+            let page = (usize)math.max(1.0, self.box.value().bounds().height / self.font.value().line_height() - 1.0)
             let step = page if event.key == input.Key.page_up or event.key == input.Key.page_down else 1
             let upwards = event.key == input.Key.up or event.key == input.Key.page_up
             let destination = row - step if upwards and row >= step else (0 if upwards else row + step)
@@ -300,12 +301,12 @@ pub struct TextEditor: Widget:
         self.vertical_move = false
 
     func position_at(x: f64, y: f64) -> usize:
-        let row = (usize)(math.max(0.0, y - drawing.vertical_padding + self.scroll_y) / drawing.line_height)
-        let column = (usize)(math.max(0.0, x - drawing.gutter_width(self.line_numbers) - 12.0 + self.scroll_x) / (self.font.pixel_size * 6.0) + 0.5)
+        let row = (usize)(math.max(0.0, y - drawing.vertical_padding + self.scroll_y) / self.font.value().line_height())
+        let column = (usize)(math.max(0.0, x - drawing.gutter_width(self.line_numbers) - 12.0 + self.scroll_x) / (self.font.value().advance()) + 0.5)
         return editing.at_column(&self.document, row, column)
 
     func maximum_scroll() -> f64:
-        return math.max(0.0, (f64)self.document.line_count() * drawing.line_height + drawing.vertical_padding * 2.0 - self.box.value().bounds().height)
+        return math.max(0.0, (f64)self.document.line_count() * self.font.value().line_height() + drawing.vertical_padding * 2.0 - self.box.value().bounds().height)
 
     mutating func scroll_to_pointer(y: f64):
         let height = self.box.value().bounds().height
@@ -313,19 +314,19 @@ pub struct TextEditor: Widget:
 
     mutating func reveal_caret():
         let bounds = self.box.value().bounds()
-        let y = (f64)self.document.line_number(self.document.caret()) * drawing.line_height
-        let height = math.max(drawing.line_height, bounds.height - drawing.vertical_padding * 2.0)
+        let y = (f64)self.document.line_number(self.document.caret()) * self.font.value().line_height()
+        let height = math.max(self.font.value().line_height(), bounds.height - drawing.vertical_padding * 2.0)
         if y < self.scroll_y:
             self.scroll_y = y
-        if y + drawing.line_height > self.scroll_y + height:
-            self.scroll_y = y + drawing.line_height - height
+        if y + self.font.value().line_height() > self.scroll_y + height:
+            self.scroll_y = y + self.font.value().line_height() - height
         self.scroll_y = math.clamp(self.scroll_y, 0.0, self.maximum_scroll())
-        let x = (f64)editing.column(&self.document, self.document.caret()) * self.font.pixel_size * 6.0
+        let x = (f64)editing.column(&self.document, self.document.caret()) * self.font.value().advance()
         let width = math.max(18.0, bounds.width - drawing.gutter_width(self.line_numbers) - 30.0)
         if x < self.scroll_x:
             self.scroll_x = x
-        if x + self.font.pixel_size * 6.0 > self.scroll_x + width:
-            self.scroll_x = x + self.font.pixel_size * 6.0 - width
+        if x + self.font.value().advance() > self.scroll_x + width:
+            self.scroll_x = x + self.font.value().advance() - width
 
     mutating func notify_changed() -> interop.Outcome[unit]:
         self.clear_highlights()
@@ -342,6 +343,7 @@ pub struct TextEditor: Widget:
         self.highlights = empty
 
     pub mutating func close():
+        self.font.release()
         self.changed.close()
         self.changed.release()
         self.commands.close()
@@ -351,6 +353,7 @@ pub struct TextEditor: Widget:
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.font.trace(visit, context)
         self.box.trace(visit, context)
         self.changed.trace(visit, context)
         self.commands.trace(visit, context)

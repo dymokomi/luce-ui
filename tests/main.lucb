@@ -7,7 +7,7 @@ import ownership
 import thread
 import window
 import ui
-from ui import Widget, Button, Spacer, VStack, HStack, Layout, Size, Application, Painter, Rect, Event, BitmapFont
+from ui import Widget, Button, Spacer, VStack, HStack, Layout, Size, Application, Painter, Rect, Event, Font
 
 struct Tracker: memory.Allocator:
     var upstream: memory.Allocator
@@ -80,11 +80,11 @@ func ownership_and_layout(tracker: Tracker*) -> !:
     let box = control.value().layout()
     defer box.release()
     let bounds = box.value().bounds()
-    assert(bounds.x == 20.0 and bounds.y == 20.0 and bounds.width == 92.0 and bounds.height == 60.0)
+    assert(bounds.x == 20.0 and bounds.y == 20.0 and bounds.width > 65.0 and bounds.width < 95.0 and bounds.height == 60.0)
     let spacer_box = flexible.value().layout()
     defer spacer_box.release()
     let spare = spacer_box.value().bounds()
-    assert(spare.x == 122.0 and spare.width == 158.0)
+    assert(spare.x == bounds.x + bounds.width + 10.0 and spare.width == 280.0 - spare.x)
     try spacer_box.value().set_limits(Size(), Size(50.0, 16384.0))
     try expect(app.value().layout(300.0, 100.0))
     assert(spacer_box.value().bounds().width == 50.0)
@@ -128,12 +128,23 @@ func ownership_and_layout(tracker: Tracker*) -> !:
     try row.value().set_children([widget])
     try expect(app.value().layout(300.0, 100.0))
 
+func shared_font() -> !:
+    let font = try interop.Reference[Font].adopt(new Font(size = 18.0) in memory.heap, ui.font_type, memory.heap)
+    let expected_width = try font.value().measure("Save") + 32.0
+    var control = Button("Save", font = font) catch failure:
+        font.release()
+        error(failure.code, failure.message)
+    defer control.close()
+    font.release()
+    let measured = control.measure(ui.Constraints())
+    defer measured.release()
+    assert((try measured.get()).width == expected_width)
+
 func drawing() -> !:
-    assert(BitmapFont.glyph('a') != BitmapFont.glyph('A'))
-    assert(try BitmapFont().measure("aAé") == 36.0)
-    assert(BitmapFont.glyph('é') == BitmapFont.glyph('中'))
-    for scalar in 33..<127:
-        assert(BitmapFont.glyph((char)scalar) != BitmapFont.glyph('中'))
+    var font = try Font()
+    defer font.close()
+    assert(try font.measure("iii") == try font.measure("WWW"))
+    assert(try font.measure("aAé") == 3.0 * font.advance())
     var frame = try gpu.Frame(window.Size(100.0, 80.0, 200.0, 160.0, 2.0))
     let target = try frame.target()
     defer target.release()
@@ -169,6 +180,7 @@ pub func main(arguments: str[]) -> i32!:
         try ownership_and_layout(&tracker)
         assert(ownership.finish_run(0) == 0)
         assert(tracker.live == 0)
+        try shared_font()
         try drawing()
         assert(ownership.finish_run(0) == 0)
         assert(tracker.live == 0)

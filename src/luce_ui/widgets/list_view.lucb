@@ -10,7 +10,7 @@ import luce_ui.layout as layout
 import luce_ui.result as result
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
-from luce_ui.font import BitmapFont
+from luce_ui.font import Font, selected_font
 
 pub struct ListView: Widget:
     let box: interop.Reference[Layout]
@@ -19,9 +19,11 @@ pub struct ListView: Widget:
     var selection: i64
     var scroll: f64
     let row_height: f64
-    let font: BitmapFont
+    let font: interop.Reference[Font]
 
-    pub func init(items: const str[], row_height: f64 = 30.0) -> !:
+    pub func init(items: const str[], row_height: f64 = 30.0, font: interop.Reference[Font]? = none) -> !:
+        var selected = try selected_font(font)
+        errdefer selected.release()
         if not math.is_finite(row_height) or row_height < 18.0 or row_height > 128.0:
             error(result.invalid, "list row height must be in 18..128")
         let box = try layout.make_layout()
@@ -31,14 +33,14 @@ pub struct ListView: Widget:
         try box.value().set_limits(Size(120.0, 60.0), Size(16384.0, 16384.0))
         let signal = try interop.Signal[i64]()
         errdefer signal.release()
-        let copies = try copy_items(items)
+        let copies = try copy_items(items, selected)
         self.box = box
         self.activated = signal
         self.items = copies
         self.selection = -1
         self.scroll = 0.0
         self.row_height = row_height
-        self.font = BitmapFont(1.5)
+        self.font = selected
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -47,7 +49,7 @@ pub struct ListView: Widget:
         return self.selection
 
     pub mutating func set_items(items: const str[]) -> !:
-        let copies = try copy_items(items)
+        let copies = try copy_items(items, self.font)
         release_items(self.items)
         self.items = copies
         self.selection = -1
@@ -91,7 +93,7 @@ pub struct ListView: Widget:
             if (i64)index == self.selection:
                 try painter.rectangle(gpu.Rect(y = y, width = size.width, height = self.row_height), gpu.Color(0.035, 0.075, 0.12))
                 try painter.rectangle(gpu.Rect(y = y, width = 2.0, height = self.row_height), gpu.Color(0.15, 0.6, 0.88))
-            try painter.text(self.items[index].value, 12.0, y + (self.row_height - 10.5) * 0.5, color = gpu.Color(0.45, 0.54, 0.67), font = self.font)
+            try painter.text(self.items[index].value, 12.0, y + (self.row_height - self.font.value().height()) * 0.5, color = gpu.Color(0.45, 0.54, 0.67), font = self.font)
             index += 1
         if self.box.value().is_focused():
             try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), gpu.Color(0.09, 0.22, 0.4))
@@ -132,25 +134,27 @@ pub struct ListView: Widget:
         return false
 
     pub mutating func close():
+        self.font.release()
         self.activated.close()
         self.activated.release()
         release_items(self.items)
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.font.trace(visit, context)
         self.box.trace(visit, context)
         self.activated.trace(visit, context)
         for item in self.items:
             item.trace(visit, context)
 
-func copy_items(items: const str[]) -> interop.Owned[str][]!:
+func copy_items(items: const str[], font: interop.Reference[Font]) -> interop.Owned[str][]!:
     if items.length > 65536:
         error(result.invalid, "a list supports at most 65536 items")
     let copies = try alloc interop.Owned[str][items.length] in memory.heap
     var count: usize = 0
     errdefer release_partial(copies, count)
     for item in items:
-        discard(try BitmapFont().measure(item))
+        discard(try font.value().measure(item))
         copies[count] = try interop.copy_text(item)
         count += 1
     return copies

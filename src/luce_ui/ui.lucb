@@ -29,7 +29,8 @@ import luce_ui.application as application
 pub type Application = application.Application
 
 import luce_ui.font as font
-pub type BitmapFont = font.BitmapFont
+pub type Font = font.Font
+pub let font_type = font.font_type
 pub let busy: ErrorCode = result.busy
 pub let button_type = button.button_type
 pub let text_type = text.text_type

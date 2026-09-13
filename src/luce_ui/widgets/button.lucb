@@ -7,17 +7,20 @@ import luce_ui.result as result
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 import input
-from luce_ui.font import BitmapFont
+from luce_ui.font import Font, selected_font
 
 pub struct Button: Widget:
     let box: interop.Reference[Layout]
     var caption: interop.Owned[str]
+    let font: interop.Reference[Font]
     let clicked: interop.Signal[unit]
     var pressed: bool
     var pressed_key: input.Key
 
-    pub func init(text: str) -> !:
-        discard(try BitmapFont().measure(text))
+    pub func init(text: str, font: interop.Reference[Font]? = none) -> !:
+        var selected = try selected_font(font)
+        errdefer selected.release()
+        discard(try selected.value().measure(text))
         let box = try layout.make_layout()
         errdefer box.release()
         box.value().set_focusable(true)
@@ -28,6 +31,7 @@ pub struct Button: Widget:
         self.pressed = false
         self.pressed_key = input.Key.unknown
         self.box = box
+        self.font = selected
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -36,7 +40,7 @@ pub struct Button: Widget:
         return self.caption.clone()
 
     pub mutating func set_text(text: str) -> !:
-        discard(try BitmapFont().measure(text))
+        discard(try self.font.value().measure(text))
         let replacement = try interop.copy_text(text)
         self.caption.release()
         self.caption = replacement
@@ -51,7 +55,7 @@ pub struct Button: Widget:
         return self.clicked.emit(())
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
-        let width = BitmapFont().measure(self.caption.value) catch failure:
+        let width = self.font.value().measure(self.caption.value) catch failure:
             return result.failure[Size](failure.code, failure.message)
         return result.success[Size](Size(width + 32.0, 40.0))
 
@@ -68,7 +72,7 @@ pub struct Button: Widget:
         try painter.rectangle(gpu.Rect(width = size.width, height = size.height), color)
         if self.box.value().is_focused():
             try painter.rectangle(gpu.Rect(width = size.width, height = 2.0), gpu.Color(red = 0.3, green = 0.75, blue = 1.0))
-        try painter.text(self.caption.value, 16.0, math.max(0.0, (size.height - 14.0) * 0.5))
+        try painter.text(self.caption.value, 16.0, math.max(0.0, (size.height - self.font.value().height()) * 0.5), font = self.font)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled:
@@ -99,12 +103,14 @@ pub struct Button: Widget:
         return result.success[unit](())
 
     pub mutating func close():
+        self.font.release()
         self.clicked.close()
         self.clicked.release()
         self.caption.release()
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.font.trace(visit, context)
         self.box.trace(visit, context)
         self.caption.trace(visit, context)
         self.clicked.trace(visit, context)

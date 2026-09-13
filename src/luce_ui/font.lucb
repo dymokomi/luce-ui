@@ -1,121 +1,139 @@
-## Original fixed 5x7 glyphs. Unsupported scalars use one visible replacement.
-## Measurement and drawing advance 12 points per scalar, preserving letter case.
-import utf8
-import luce_ui.result as result
+## UI typography owns a native face and a bounded cache of grayscale text runs.
+## Font copies borrow; widgets clone the shared reference and release it on close.
+import fonts
+import gpu
+import interop
+import math
+import memory
+import ownership
 
-pub struct BitmapFont:
-    pub let pixel_size: f64 = 2.0
+struct CachedRun:
+    var text: interop.Owned[str]?
+    var bitmap: fonts.Bitmap
+    var scale: f64
+    var used: u64
+
+    mutating func close():
+        if let text = self.text:
+            text.release()
+        self.bitmap.close()
+        self = CachedRun()
+
+struct FontState:
+    var face: fonts.Face
+    var runs: CachedRun[]
+    var clock: u64
+    var bytes: usize
+
+    mutating func close():
+        for index in 0..<self.runs.length:
+            self.runs[index].close()
+        if self.runs.length > 0:
+            free(self.runs) in memory.heap
+        var empty: CachedRun[]
+        self.runs = empty
+        self.face.close()
+
+    pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        for run in self.runs:
+            if let text = run.text:
+                text.trace(visit, context)
+
+    mutating func raster(text: str, scale: f64) -> fonts.Bitmap!:
+        self.clock += 1
+        var oldest: usize = 0
+        for index in 0..<self.runs.length:
+            let run = self.runs[index]
+            if let cached = run.text:
+                if run.scale == scale and cached.value == text:
+                    self.runs[index].used = self.clock
+                    return run.bitmap
+            if run.used < self.runs[oldest].used:
+                oldest = index
+        let bitmap = try self.face.rasterize(text, scale)
+        errdefer close_bitmap(bitmap)
+        let copied = try interop.copy_text(text)
+        errdefer copied.release()
+        # Evict least-recently-used runs before accepting another raster. The
+        # image limit and entry limit bound both pixel storage and string owners.
+        while self.bytes + bitmap.pixels.length > 16777216:
+            self.bytes -= self.runs[oldest].bitmap.pixels.length
+            self.runs[oldest].close()
+            var found = false
+            for index in 0..<self.runs.length:
+                if self.runs[index].text != none:
+                    if not found or self.runs[index].used < self.runs[oldest].used:
+                        oldest = index
+                        found = true
+        self.bytes -= self.runs[oldest].bitmap.pixels.length
+        self.runs[oldest].close()
+        self.runs[oldest] = CachedRun(copied, bitmap, scale, self.clock)
+        self.bytes += bitmap.pixels.length
+        return bitmap
+
+func close_bitmap(bitmap: fonts.Bitmap):
+    var owned = bitmap
+    owned.close()
+
+let font_state_type: interop.Type[FontState] = interop.Type[FontState]("UI font cache", FontState.close, FontState.trace, closeable = true, main_thread = true)
+
+## An installed monospace font. Size is measured in logical points; rasterization
+## follows the target's backing scale, so Retina text retains its intended size.
+## Use one shared Font across controls to keep typography consistent.
+pub struct Font:
+    var state: interop.Reference[FontState]
+
+    pub func init(size: f64 = 14.0, family: str = "") -> !:
+        var reservation = try interop.Reservation[FontState](font_state_type)
+        errdefer reservation.cancel()
+        var face = try fonts.Face(size, family)
+        errdefer face.close()
+        let runs = try new CachedRun[512] in memory.heap
+        errdefer free(runs) in memory.heap
+        let storage = try new FontState(face = face, runs = runs) in memory.heap
+        self.state = reservation.publish(storage, memory.heap)
+
+    pub func size() -> f64:
+        return self.state.value().face.size
+
+    pub func advance() -> f64:
+        return self.state.value().face.advance
+
+    pub func height() -> f64:
+        let face = self.state.value().face
+        return face.ascent + face.descent
+
+    pub func line_height() -> f64:
+        return math.ceil(self.height() + 5.0)
 
     pub func measure(text: str) -> f64!:
-        if not (self.pixel_size >= 0.25 and self.pixel_size <= 64.0):
-            error(result.invalid, "bitmap pixel size must be in 0.25..64 points")
-        if text.length > 4096:
-            error(result.limit, "a bitmap label supports at most 4096 UTF-8 bytes")
-        var offset: usize = 0
-        var count: usize = 0
-        while offset < text.length:
-            let scalar = utf8.decode(text.bytes, offset) else error(result.invalid, "a UI label must be valid UTF-8")
-            offset += scalar.width
-            count += 1
-        if count > 1024:
-            error(result.limit, "a bitmap label supports at most 1024 scalars")
-        return (f64)count * 6.0 * self.pixel_size
+        return try self.state.value().face.measure(text)
 
-    pub static func glyph(code: char) -> u64:
-        match code:
-            'A': return 18842895918
-            'B': return 16694887983
-            'C': return 32246891582
-            'D': return 16694953519
-            'E': return 33321092159
-            'F': return 1108837439
-            'G': return 32801457214
-            'H': return 18842895921
-            'I': return 33424543903
-            'J': return 6754148636
-            'K': return 18560947505
-            'L': return 33320633377
-            'M': return 18842572657
-            'N': return 18842703473
-            'O': return 15621211694
-            'P': return 1108854319
-            'Q': return 23946905134
-            'R': return 18561353263
-            'S': return 16660235326
-            'T': return 4433514655
-            'U': return 15621211697
-            'V': return 4648912433
-            'W': return 19182306865
-            'X': return 18834663985
-            'Y': return 4433521201
-            'Z': return 33321787935
-            'a': return 32814675968
-            'b': return 16694950945
-            'c': return 15067035648
-            'd': return 32801094160
-            'e': return 15099017216
-            'f': return 2216921164
-            'g': return 15601289152
-            'h': return 18842434593
-            'i': return 15170934788
-            'j': return 6753103880
-            'k': return 18563253281
-            'l': return 15170932870
-            'm': return 23275940864
-            'n': return 18842434560
-            'o': return 15621208064
-            'p': return 1123597312
-            'q': return 17748785152
-            'r': return 1108456448
-            's': return 16657741824
-            't': return 13491051586
-            'u': return 24479581184
-            'v': return 4648911872
-            'w': return 11464655872
-            'x': return 18593694720
-            'y': return 15601288192
-            'z': return 33357593600
-            '0': return 15623448110
-            '1': return 15170932932
-            '2': return 33357578798
-            '3': return 16660251151
-            '4': return 8891181448
-            '5': return 16660268095
-            '6': return 15621129262
-            '7': return 2216829471
-            '8': return 15621113390
-            '9': return 15587034670
-            '.': return 4294967296
-            ':': return 4194432
-            '-': return 1015808
-            '+': return 139432064
-            '/': return 1143087376
-            '?': return 4299440686
-            '!': return 4299296900
-            '"': return 10570
-            '#': return 368389098
-            '$': return 4819720132
-            '%': return 27684643443
-            '&': return 23946401062
-            '\'': return 2180
-            '(': return 8726317192
-            ')': return 2290360450
-            '*': return 720353952
-            ',': return 2287992832
-            ';': return 2287992960
-            '<': return 17452568848
-            '=': return 32537600
-            '>': return 1145311297
-            '@': return 32276936238
-            '[': return 15101659214
-            '\\': return 17456826433
-            ']': return 15309480206
-            '^': return 17732
-            '_': return 33285996544
-            '`': return 8322
-            '{': return 12954142796
-            '|': return 4433514628
-            '}': return 6719807750
-            '~': return 9078784
-            ' ': return 0
-            _: return 0x42100462e
+    ## Internal rendering entry: cache-owned pixels are copied into the frame.
+    ## The application never sees native fonts, raster storage or backend objects.
+    pub func draw(target: interop.View[gpu.RenderTarget], text: str, x: f64, y: f64, color: gpu.Color) -> !:
+        discard(try self.measure(text))
+        if text.length == 0:
+            return
+        let destination = try target.get()
+        let size = try destination.size()
+        if size.width <= 0.0 or size.height <= 0.0:
+            return
+        let scale = math.clamp(size.scale, 0.5, 4.0)
+        let bitmap = try self.state.value().raster(text, scale)
+        let rectangle = gpu.Rect(x - bitmap.padding, y - bitmap.padding,
+            (f64)bitmap.width / scale, (f64)bitmap.height / scale)
+        try destination.mask(bitmap.pixels, bitmap.width, bitmap.height, rectangle, color)
+
+    pub mutating func close():
+        self.state.release()
+
+    pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.state.trace(visit, context)
+
+pub let font_type: interop.Type[Font] = interop.Type[Font]("Font", Font.close, Font.trace, closeable = true, main_thread = true)
+
+pub func selected_font(font: interop.Reference[Font]?) -> interop.Reference[Font]!:
+    if let existing = font:
+        return existing.clone()
+    return try interop.Reference[Font].adopt(new Font() in memory.heap, font_type, memory.heap)

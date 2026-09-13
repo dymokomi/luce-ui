@@ -4,12 +4,11 @@ import gpu
 import interop
 import math
 import utf8
-from luce_ui.font import BitmapFont
+from luce_ui.font import Font
 from luce_ui.painter import Painter
 from luce_ui.text.document import Document
 from luce_ui.text.style import Highlight, EditorTheme
 
-pub let line_height: f64 = 22.0
 pub let vertical_padding: f64 = 10.0
 
 pub func gutter_width(numbers: bool) -> f64:
@@ -17,16 +16,16 @@ pub func gutter_width(numbers: bool) -> f64:
 
 pub func paint(document: const Document*, painter: Painter*, width: f64, height: f64,
                scroll_x: f64, scroll_y: f64, numbers: bool, focused: bool,
-               caret_visible: bool, font: BitmapFont, theme: EditorTheme,
+               caret_visible: bool, font: interop.Reference[Font], theme: EditorTheme,
                highlights: const Highlight[]) -> !:
     let gutter = gutter_width(numbers)
     try painter.rectangle(gpu.Rect(width = width, height = height), theme.background)
     if numbers:
         try painter.rectangle(gpu.Rect(width = gutter, height = height), theme.gutter)
-    let first_row = (usize)(scroll_y / line_height)
+    let first_row = (usize)(scroll_y / font.value().line_height())
     var offset = document.line_offset(first_row)
     var row = first_row
-    var y = vertical_padding + (f64)row * line_height - scroll_y
+    var y = vertical_padding + (f64)row * font.value().line_height() - scroll_y
     let current = document.line_number(document.caret())
     var style: usize = 0
     while style < highlights.length and highlights[style].end <= (i64)offset:
@@ -35,18 +34,18 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
     while y < height and row < rows:
         let end = document.line_end(offset)
         if focused and row == current:
-            try painter.rectangle(gpu.Rect(gutter, y - 3.0, math.max(0.0, width - gutter), line_height), theme.current_line)
+            try painter.rectangle(gpu.Rect(gutter, y - 3.0, math.max(0.0, width - gutter), font.value().line_height()), theme.current_line)
         if numbers:
             var label: u8[32]
             let text = try format(label, f"{row + 1}")
-            let extent = try font.measure(text)
+            let extent = try font.value().measure(text)
             try painter.text(text, gutter - extent - 12.0, y, theme.line_number, font)
         try paint_line(document, painter, offset, end, y, width, scroll_x, gutter,
             focused, caret_visible, font, theme, highlights, &style)
         offset = end + 1
         row += 1
-        y += line_height
-    let total = (f64)rows * line_height + vertical_padding * 2.0
+        y += font.value().line_height()
+    let total = (f64)rows * font.value().line_height() + vertical_padding * 2.0
     if total > height and height > 0.0:
         let thumb = math.max(24.0, height * height / total)
         let position = scroll_y / math.max(1.0, total - height) * math.max(0.0, height - thumb)
@@ -54,9 +53,9 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
 
 func paint_line(document: const Document*, painter: Painter*, start: usize, end: usize,
                 y: f64, width: f64, scroll_x: f64, gutter: f64, focused: bool,
-                caret_visible: bool, font: BitmapFont, theme: EditorTheme,
+                caret_visible: bool, font: interop.Reference[Font], theme: EditorTheme,
                 highlights: const Highlight[], style: usize*) -> !:
-    let advance = font.pixel_size * 6.0
+    let advance = font.value().advance()
     var column: usize = 0
     var bytes: u8[2048]
     var used: usize = 0
@@ -72,7 +71,7 @@ func paint_line(document: const Document*, painter: Painter*, start: usize, end:
             cursor_x = x
         if visible and index >= document.first() and index < document.last():
             let left = math.max(gutter, x)
-            try painter.rectangle(gpu.Rect(left, y - 2.0, math.min(width - left, x + (f64)cells * advance - left), line_height), theme.selection)
+            try painter.rectangle(gpu.Rect(left, y - 2.0, math.min(width - left, x + (f64)cells * advance - left), font.value().line_height()), theme.selection)
         while *style < highlights.length and highlights[*style].end <= (i64)index:
             *style += 1
         var color = theme.foreground
@@ -94,9 +93,9 @@ func paint_line(document: const Document*, painter: Painter*, start: usize, end:
     if document.last() > end and document.first() <= end:
         let x = gutter + 12.0 + (f64)column * advance - scroll_x
         if x >= gutter and x < width:
-            try painter.rectangle(gpu.Rect(x, y - 2.0, advance, line_height), theme.selection)
+            try painter.rectangle(gpu.Rect(x, y - 2.0, advance, font.value().line_height()), theme.selection)
     if focused and caret_visible and document.caret() >= start and document.caret() <= end and cursor_x >= gutter and cursor_x < width - 6.0:
-        try painter.rectangle(gpu.Rect(cursor_x, y - 2.0, 1.5, 18.0), theme.caret)
+        try painter.rectangle(gpu.Rect(cursor_x, y - 2.0, 1.0, font.value().height() + 2.0), theme.caret)
 
 func same_color(a: gpu.Color, b: gpu.Color) -> bool:
     return a.red == b.red and a.green == b.green and a.blue == b.blue
