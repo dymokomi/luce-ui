@@ -4,6 +4,7 @@ import ownership
 import math
 import luce_ui.result as result
 from luce_ui.font import Font, selected_font
+from luce_ui.geometry import Point
 
 ## A convenience painter over a checked target. Retaining the painter does not
 ## extend the target's frame lifetime; every drawing call validates it again.
@@ -44,6 +45,35 @@ pub struct Painter:
         var selected = try selected_font(font)
         defer selected.release()
         try selected.value().draw(self.target_view, text, x, y, color)
+
+    ## Vector shapes share the target's logical coordinate system and clipping.
+    pub func triangle(a: Point, b: Point, c: Point, color: gpu.Color) -> !:
+        let target = try self.target_view.get()
+        let size = try target.size()
+        if size.width <= 0.0 or size.height <= 0.0:
+            return
+        var vertices: gpu.Vertex[3] = [gpu.Vertex(), gpu.Vertex(), gpu.Vertex()]
+        var index: usize = 0
+        for point in [a, b, c]:
+            vertices[index] = gpu.Vertex(x = (f32)(point.x * 2.0 / size.width - 1.0),
+                y = (f32)(1.0 - point.y * 2.0 / size.height),
+                red = (f32)color.red, green = (f32)color.green, blue = (f32)color.blue)
+            index += 1
+        try target.triangles(vertices)
+
+    pub func line(a: Point, b: Point, width: f64, color: gpu.Color) -> !:
+        if not math.is_finite(width) or width <= 0.0:
+            error(result.invalid, "line width must be positive and finite")
+        discard(try self.target_view.get().size())
+        let dx = b.x - a.x
+        let dy = b.y - a.y
+        let length = math.sqrt(dx * dx + dy * dy)
+        if length == 0.0:
+            return
+        let x = -dy * width * 0.5 / length
+        let y = dx * width * 0.5 / length
+        try self.triangle(Point(a.x + x, a.y + y), Point(b.x + x, b.y + y), Point(b.x - x, b.y - y), color)
+        try self.triangle(Point(a.x + x, a.y + y), Point(b.x - x, b.y - y), Point(a.x - x, a.y - y), color)
 
     pub mutating func close():
         self.target_view.release()

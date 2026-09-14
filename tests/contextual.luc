@@ -1,5 +1,6 @@
 from ui import Application, Action, CommandPalette, ContextMenu, TextPrompt, TextEditor, ListView, VStack, Pane, Event, Font, Theme
 from input import EventKind, Key
+from ui import ListItem
 
 pub func contextual() -> unit!:
     let font = Font()
@@ -60,7 +61,7 @@ pub func contextual() -> unit!:
     app.layout(640.0, 360.0)
     app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
     assert(submitted == "λ😀")
-    let listing = ListView(["one", "two"], font = font)
+    let listing = ListView([ListItem("one"), ListItem("two")], font = font)
     var activated = -1
     let selected = listing.on_activate(func (index: int): activated = index)
     let list_context = ContextMenu(listing, [Action("Duplicate")], font = font)

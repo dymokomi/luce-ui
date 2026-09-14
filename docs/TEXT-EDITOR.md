@@ -17,7 +17,10 @@ and scrolling. Control-Tab moves focus out; ordinary Tab indents. `line()` and
 `column()` are one-based. Selection and highlight offsets are zero-based.
 
 `ListView(items)` supplies scrollable single selection with keyboard navigation,
-`select`, `set_items` and an `on_activate(index)` signal. It paints visible rows.
+`select`, `set_items` and an `on_activate(index)` signal. Entries are
+`ListItem(text, icon=IconKind.blank)` values; labels are copied when assigned,
+and their icons do not alter indices or activation. It paints visible rows.
+Applications choose symbols; filesystem and file-type policy stay outside UI.
 
 `Application.focus(layout)` applies focus after the next arrangement, allowing
 callbacks to replace a pane then focus its new child. `set_close_handler` installs

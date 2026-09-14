@@ -9,16 +9,12 @@ import memory
 import ownership
 import thread
 import luce_ui.result as result
+import luce_ui.geometry as geometry
 
 pub type Rect = gpu.Rect
 
-pub struct Point:
-    pub var x: f64
-    pub var y: f64
-
-pub struct Size:
-    pub var width: f64
-    pub var height: f64
+pub type Point = geometry.Point
+pub type Size = geometry.Size
 
 pub struct Constraints:
     pub var width: f64 = 16384.0

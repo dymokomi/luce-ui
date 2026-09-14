@@ -1,0 +1,123 @@
+## A compact pane title with a vector badge and arrow ending. Pane paints the
+## shared frame background; this widget owns text, font metrics and presentation.
+import gpu
+import interop
+import math
+import ownership
+import luce_ui.icons as icons
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.icons import IconKind
+from luce_ui.layout import Widget, Layout, Point, Size, Constraints, Event
+from luce_ui.painter import Painter
+from luce_ui.font import Font, selected_font
+
+pub struct PaneHeader: Widget:
+    let box: interop.Reference[Layout]
+    let font: interop.Reference[Font]
+    var caption: interop.Owned[str]
+    var description: interop.Owned[str]
+    var icon: IconKind
+
+    pub func init(text: str, icon: IconKind = IconKind.blank, detail: str = "", font: interop.Reference[Font]? = none) -> !:
+        let selected = try selected_font(font)
+        errdefer selected.release()
+        discard(try selected.value().measure(text))
+        discard(try selected.value().measure(detail))
+        let caption = try interop.copy_text(text)
+        errdefer caption.release()
+        let description = try interop.copy_text(detail)
+        errdefer description.release()
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_shrink(vertical = 0.0)
+        self.box = box
+        self.font = selected
+        self.caption = caption
+        self.description = description
+        self.icon = icon
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func text() -> interop.Owned[str]:
+        return self.caption.clone()
+
+    pub func detail() -> interop.Owned[str]:
+        return self.description.clone()
+
+    pub mutating func set_text(text: str) -> !:
+        if text == self.caption.value:
+            return
+        discard(try self.font.value().measure(text))
+        let replacement = try interop.copy_text(text)
+        self.caption.release()
+        self.caption = replacement
+        self.box.value().invalidate()
+
+    pub mutating func set_detail(detail: str) -> !:
+        if detail == self.description.value:
+            return
+        discard(try self.font.value().measure(detail))
+        let replacement = try interop.copy_text(detail)
+        self.description.release()
+        self.description = replacement
+        self.box.value().invalidate()
+
+    pub mutating func set_icon(icon: IconKind):
+        if icon == self.icon:
+            return
+        self.icon = icon
+        self.box.value().invalidate()
+
+    func inset() -> f64:
+        return math.ceil(self.font.value().advance() * self.box.value().theme().header_inset_cells)
+
+    func title_x(height: f64) -> f64:
+        return self.inset() if self.icon == IconKind.blank else self.inset() * 3.0 + self.font.value().height() + height * 0.5
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let width = self.font.value().measure(self.caption.value) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        let height = self.box.value().theme().row_height(self.font)
+        return result.success[Size](Size(self.title_x(height) + width + self.inset(), height))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        if self.icon != IconKind.blank:
+            let extent = self.font.value().height()
+            let badge = self.inset() * 2.0 + extent
+            try painter.rectangle(gpu.Rect(width = badge, height = size.height), theme.panel)
+            try painter.triangle(Point(badge, 0.0), Point(badge + size.height * 0.5, size.height * 0.5), Point(badge, size.height), theme.panel)
+            try icons.draw(&painter, self.icon, gpu.Rect(self.inset(), (size.height - extent) * 0.5, extent, extent), theme.foreground)
+        let x = self.title_x(size.height)
+        let y = math.max(0.0, (size.height - self.font.value().height()) * 0.5)
+        try painter.text(self.caption.value, x, y, theme.foreground, self.font)
+        let detail_x = x + (try self.font.value().measure(self.caption.value)) + self.inset() * 2.0
+        if detail_x < size.width - self.inset() and self.description.value.length > 0:
+            try painter.text(self.description.value, detail_x, y, theme.muted, self.font)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.description.release()
+        self.caption.release()
+        self.font.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.description.trace(visit, context)
+        self.caption.trace(visit, context)
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+
+pub let pane_header_type: interop.Type[PaneHeader] = interop.Type[PaneHeader]("PaneHeader", PaneHeader.close, PaneHeader.trace, closeable = true, main_thread = true)

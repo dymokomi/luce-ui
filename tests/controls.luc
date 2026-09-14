@@ -9,6 +9,8 @@ from text_views import text_views
 from panes import panes
 from contextual import contextual
 from hover import hover
+from ui import ListItem
+from headers import headers
 
 class Custom: Widget:
     let box: Layout
@@ -36,6 +38,7 @@ class Counter:
 pub func main(arguments: list[str]) -> int!:
     contextual()
     hover()
+    headers()
     let font = Font(size = 14.0)
     assert(font.size() == 14.0 and font.measure("ii") == font.measure("WW"))
     let button = Button("pause", font = font)
@@ -160,7 +163,7 @@ func signals() -> unit!:
 
 func editor_controls() -> unit!:
     let editor = TextEditor("héllo")
-    let listing = ListView(["first", "second"])
+    let listing = ListView([ListItem("first"), ListItem("second")])
     let root = VStack([listing, editor])
     let app = Application(root)
     app.focus(editor.layout())
@@ -187,7 +190,7 @@ func editor_controls() -> unit!:
     assert(listing.layout().is_focused())
     app.dispatch(Event(kind = EventKind.key_down, key = Key.down))
     assert(listing.selected_index() == 0)
-    listing.set_items(["replacement"])
+    listing.set_items([ListItem("replacement")])
     assert(listing.selected_index() == -1)
 
 class EditorSession:

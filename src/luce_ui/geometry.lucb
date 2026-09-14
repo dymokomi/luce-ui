@@ -1,0 +1,8 @@
+## Shared drawing and layout coordinates, in logical display points.
+pub struct Point:
+    pub var x: f64
+    pub var y: f64
+
+pub struct Size:
+    pub var width: f64
+    pub var height: f64

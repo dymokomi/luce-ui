@@ -1,0 +1,37 @@
+from ui import Application, Pane, PaneHeader, Icon, IconKind, ListItem, ListView, Font, Size, Event
+from input import EventKind
+
+pub func headers() -> unit!:
+    let font = Font()
+    let title = PaneHeader("FILES", icon = IconKind.folder_open, detail = "workspace", font = font)
+    let listing = ListView([ListItem("src", IconKind.folder), ListItem("Unicode λ.luc", IconKind.code)], font = font)
+    let pane = Pane(listing, header = title)
+    let app = Application(pane)
+    app.layout(400.0, 240.0)
+    assert(title.text() == "FILES" and title.detail() == "workspace")
+    let top = title.layout().bounds()
+    assert(top.x == 1.0 and top.y == 1.0 and top.width == 398.0)
+    assert(listing.layout().bounds().y == top.y + top.height)
+    assert(top.height >= font.line_height() and top.height < font.line_height() + 1.0)
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = 300.0, y = 10.0))
+    assert(pane.layout().contains_pointer() and not listing.layout().contains_pointer())
+    app.dispatch(Event(kind = EventKind.pointer_down, x = 50.0, y = top.y + top.height + 2.0))
+    assert(listing.selected_index() == 0 and pane.layout().contains_focus())
+    title.set_text("Renamed λ")
+    title.set_detail("new/path")
+    title.set_icon(IconKind.file)
+    assert(title.text() == "Renamed λ" and title.detail() == "new/path")
+    font.configure(18.0)
+    pane.layout().invalidate()
+    app.layout(400.0, 240.0)
+    assert(title.layout().bounds().height > top.height)
+    let icon = Icon(IconKind.terminal, font = font)
+    let symbol = Application(icon)
+    symbol.layout(40.0, 40.0)
+    icon.set_kind(IconKind.settings)
+    assert(icon.layout().bounds().width == 40.0)
+    # A narrow pane clips its content without allowing a large title to consume
+    # the content's minimum height or change row activation coordinates.
+    pane.layout().set_limits(Size(40.0, 40.0), Size(16384.0, 16384.0))
+    app.layout(80.0, 60.0)
+    assert(title.layout().bounds().height >= font.line_height())

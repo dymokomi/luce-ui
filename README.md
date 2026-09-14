@@ -109,3 +109,18 @@ between sibling titles during an open session. Panes, controls, list rows and
 editor gutters use inherited hover colors. Popup shadows are sharp translucent
 rectangles with configurable offset and opacity. See the
 [hover API](docs/API.md#hover-and-menu-sessions).
+
+Pane headers join directly to their frames:
+
+```luce
+let files = ListView([ListItem("src", icon = IconKind.folder)], font = font)
+let header = PaneHeader("FILES", icon = IconKind.folder_open, detail = "project", font = font)
+let sidebar = Pane(files, header = header)
+```
+
+The header shares the border's normal, hover and focus colors, with an arrow-ended
+icon badge and 1.5 character cells of leading inset. `Theme.header_inset_cells`
+adjusts this spacing. Reusable `Icon` widgets, pane badges and list symbols use
+the same vector shapes through standard `gpu`; they scale with the shared font.
+Portable tests cover header layout, resizing, font changes and icon-bearing
+lists. Native Metal readback verifies frame colors, arrow geometry and icon pixels.

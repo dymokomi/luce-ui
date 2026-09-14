@@ -27,8 +27,11 @@ pub struct Theme:
     pub var shadow_opacity: f64 = 0.35
     pub var control_lines: f64 = 1.0
     pub var inset_cells: f64 = 1.0
+    pub var header_inset_cells: f64 = 1.5
 
     pub func validate() -> !:
+        if not math.is_finite(self.header_inset_cells) or self.header_inset_cells < 0.0 or self.header_inset_cells > 4.0:
+            error(result.invalid, "header inset must be in 0..4 character cells")
         if not math.is_finite(self.shadow_offset) or self.shadow_offset < 0.0 or self.shadow_offset > 32.0:
             error(result.invalid, "popup shadow offset must be in 0..32 points")
         if not math.is_finite(self.shadow_opacity) or self.shadow_opacity < 0.0 or self.shadow_opacity > 1.0:

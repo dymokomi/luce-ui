@@ -12,11 +12,13 @@ All objects and callbacks belong to the main thread.
 | `Text` | `Text(text)`, `text`, `set_text`, `layout` |
 | `Spacer` | `Spacer(weight=1)`, `layout` |
 | `VStack`, `HStack` | Heterogeneous children, spacing, padding, alignment; `set_children`, `layout` |
-| `Pane` | `Pane(content, minimum=Size(120, 80))`; themed border and one-point content inset |
+| `Pane` | `Pane(content, minimum=Size(120, 80), header=none)`; shared header/frame color and one-point content inset |
+| `PaneHeader` | Title, optional `icon`, `detail`, shared font; `set_text`, `set_detail`, `set_icon` |
+| `Icon` | `Icon(kind, font=...)`; vector symbol sized to its font, `set_kind`, `layout` |
 | `SplitView` | Two widgets, `axis`, preferred `fraction`, `handle_width`; `fraction`, `set_fraction`, `layout` |
 | `Viewport` | Preferred minimum width/height; `on_render`, `layout` |
 | `Application` | Content, title and dimensions; `run`, `stop`, `close`, `on_frame`, `layout`, `dispatch`, `render` |
-| `Painter` | Checked GPU target; `rectangle(rect, color, opacity=1.0)`, `text`, `target` |
+| `Painter` | Checked GPU target; `rectangle(rect, color, opacity=1.0)`, `triangle(a, b, c, color)`, `line(a, b, width, color)`, `text`, `target` |
 | `Font` | Installed monospace family and size; `measure`, `advance`, `height`, `line_height` |
 | `Action` | Label and `Shortcut`; `on_trigger`, `trigger`, `set_enabled` |
 | `Toolbar` | Heterogeneous children and shared font; compact row, `set_children` |
@@ -24,9 +26,9 @@ All objects and callbacks belong to the main thread.
 | `ContextMenu` | Decorate a widget with actions; `open_at`, `on_open`, `is_open`, `layout` |
 | `CommandPalette` | Searchable actions; `open`, `query`, `result_count`, `is_open`, `layout` |
 | `TextPrompt` | Text entry or confirmation; `open`, `value`, `on_submit`, `is_open`, `layout` |
-| `Theme` | Semantic colors, `control_lines`, `inset_cells`, `row_height`, `inset` |
+| `Theme` | Semantic colors, `control_lines`, `inset_cells`, `header_inset_cells`, `row_height`, `inset` |
 | `TextEditor` | Unicode text, selection, history and decorations; see [text controls](TEXT-EDITOR.md) |
-| `ListView` | Items and optional row height/font; `select`, `set_items`, `on_activate` |
+| `ListView` | `ListItem(text, icon=IconKind.blank)` entries and optional row height/font; `select`, `set_items`, `on_activate` |
 
 Constructors that allocate are fallible. Luce propagates automatically inside a
 function declared `-> T!`: `let button = Button("Pause")`. Base uses one explicit
@@ -118,6 +120,28 @@ nested menus, OS-native menu bars or cross-window presentation.
 `Pane(content, minimum=Size(...))` draws the inherited border color and reserves
 one logical point on each edge. Content may be any Widget, including a composed
 toolbar, text control, or GPU viewport. Borders do not imply a particular layout.
+
+Pass `header=PaneHeader("FILES", icon=IconKind.folder_open, detail="project")`
+to reserve a title row above content. Pane paints the header and border together
+using `border`, `hover_border`, or `active_border`; focus takes precedence over
+hover. The leading badge uses `panel`, with a sharp vector arrow ending. The
+title and optional secondary detail use `foreground` and `muted` respectively.
+Text clips inside the pane; a long detail does not force the pane wider.
+
+`PaneHeader` uses the shared font and `Theme.control_lines` for its row height.
+`header_inset_cells` controls horizontal spacing (default 1.5 character cells,
+finite 0..4). `set_text`, `set_detail` and `set_icon` update presentation without
+replacing the header. Header and content are ordinary children; keep their
+order when changing the pane's layout. A custom header Widget may be supplied
+instead, with its background left transparent to retain the frame color.
+
+`IconKind` supplies `blank`, `folder`, `folder_open`, `file`, `code`, `terminal`
+and `settings`. `Icon(kind, font=font)` is a standalone Widget; ListItem and
+PaneHeader use the same symbols. Shapes are drawn through standard GPU triangles
+in logical coordinates and scale with the shared font. No icon font is required.
+`Painter.triangle` and `Painter.line` accept `Point` values in this same coordinate
+space and obey the target's clipping. Lines have a positive finite width and
+square, unextended ends; a zero-length line draws nothing.
 
 `SplitView(first, second, axis=Axis.horizontal, fraction=0.5, handle_width=5.0)`
 shares space between two children. Nest vertical and horizontal splits to build

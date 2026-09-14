@@ -53,6 +53,7 @@ pub let text_editor_type = text_editor.text_editor_type
 
 import luce_ui.widgets.list_view as list_view
 pub type ListView = list_view.ListView
+pub type ListItem = list_view.ListItem
 pub let list_view_type = list_view.list_view_type
 
 import luce_ui.text.document as document
@@ -92,3 +93,12 @@ pub let command_palette_type = command_palette.command_palette_type
 import luce_ui.widgets.text_prompt as text_prompt
 pub type TextPrompt = text_prompt.TextPrompt
 pub let text_prompt_type = text_prompt.text_prompt_type
+
+import luce_ui.icons as icons
+import luce_ui.widgets.icon as icon
+import luce_ui.widgets.pane_header as pane_header
+pub type IconKind = icons.IconKind
+pub type Icon = icon.Icon
+pub let icon_type = icon.icon_type
+pub type PaneHeader = pane_header.PaneHeader
+pub let pane_header_type = pane_header.pane_header_type

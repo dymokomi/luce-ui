@@ -117,5 +117,6 @@ pub func main(arguments: str[]) -> i32!:
     try host.resize(200, 120)
     try frame(app, host, surface)
     try style_pixels.check(host, surface)
+    try style_pixels.headers(host, surface)
     print("ok UI Metal pixels, ancestor clipping, resize and expired viewport")
     return 0

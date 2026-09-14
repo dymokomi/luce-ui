@@ -3,11 +3,12 @@
 import gpu
 import input
 import interop
+import math
 import memory
 import native
 import ui
 import window
-from ui import Application, Action, Menu, Pane, SplitView, TextEditor, Button, Widget, Event
+from ui import Application, Action, Menu, Pane, PaneHeader, IconKind, SplitView, TextEditor, Button, Widget, Event
 
 func render(app: interop.Reference[Application], host: window.Window, surface: gpu.Surface) -> !:
     while let event = try host.poll(): discard(event)
@@ -97,3 +98,56 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
     # beyond its four-point extent remains white: no blur, spread or hit padding.
     pixel(scale, bounds.x + bounds.width + 2.0, bounds.y + 8.0, 188, 188, 188)
     pixel(scale, bounds.x + bounds.width + 6.0, bounds.y + 8.0, 255, 255, 255)
+
+pub func headers(host: window.Window, surface: gpu.Surface) -> !:
+    try host.resize(205, 120)
+    let font = try interop.Reference[ui.Font].adopt(new ui.Font() in memory.heap, ui.font_type, memory.heap)
+    defer font.release()
+    let title = try interop.Reference[PaneHeader].adopt(new PaneHeader("", icon = IconKind.folder, font = font) in memory.heap, ui.pane_header_type, memory.heap)
+    defer title.release()
+    let header_widget = title.as_interface[Widget](title.value())
+    defer header_widget.release()
+    let editor = try interop.Reference[TextEditor].adopt(new TextEditor("", font = font) in memory.heap, ui.text_editor_type, memory.heap)
+    defer editor.release()
+    let content = editor.as_interface[Widget](editor.value())
+    defer content.release()
+    let pane = try interop.Reference[Pane].adopt(new Pane(content, header = header_widget) in memory.heap, ui.pane_type, memory.heap)
+    defer pane.release()
+    let root = pane.as_interface[Widget](pane.value())
+    defer root.release()
+    let theme = ui.Theme(background = gpu.Color(1.0, 1.0, 1.0), panel = gpu.Color(),
+        foreground = gpu.Color(1.0, 1.0, 1.0), border = gpu.Color(1.0, 0.0, 0.0),
+        hover_border = gpu.Color(0.0, 1.0, 0.0), active_border = gpu.Color(0.0, 0.0, 1.0))
+    let app = try interop.Reference[Application].adopt(new Application(root, theme = theme) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    let scale = (try host.size()).scale
+    let height = theme.row_height(font)
+    let inset = math.ceil(font.value().advance() * theme.header_inset_cells)
+    let badge = inset * 2.0 + font.value().height()
+    for phase in 0..<3:
+        if phase == 1:
+            let moved = app.value().dispatch(Event(kind = input.EventKind.pointer_moved, x = 180.0, y = 4.0))
+            defer moved.release()
+            try moved.get()
+        elif phase == 2:
+            let editor_box = editor.value().layout()
+            defer editor_box.release()
+            try app.value().focus(editor_box)
+        native.begin("UI pixel contracts")
+        defer native.end()
+        try render(app, host, surface)
+        # The header and all frame edges change together, even when focus and
+        # hover are in different descendants. Content keeps its own background.
+        let red: u8 = 255 if phase == 0 else 0
+        let green: u8 = 255 if phase == 1 else 0
+        let blue: u8 = 255 if phase == 2 else 0
+        pixel(scale, 180.0, 4.0, red, green, blue)
+        pixel(scale, 0.0, 80.0, red, green, blue)
+        pixel(scale, 204.0, 80.0, red, green, blue)
+        pixel(scale, 180.0, 119.0, red, green, blue)
+        pixel(scale, 180.0, 90.0, 255, 255, 255)
+        # Sample well inside the triangle and outside its tip: the ending is
+        # actual vector geometry, with no dependence on a font's special glyphs.
+        pixel(scale, 1.0 + badge + 2.0, 1.0 + height * 0.5, 0, 0, 0)
+        pixel(scale, 1.0 + badge + height * 0.5 + 2.0, 1.0 + height * 0.5, red, green, blue)
+        pixel(scale, 1.0 + inset + font.value().height() * 0.5, 1.0 + height * 0.5, 255, 255, 255)
