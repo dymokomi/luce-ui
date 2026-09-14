@@ -33,6 +33,7 @@ pub struct Menu: Widget:
         errdefer box.release()
         try box.value().set_shrink(vertical = 0.0)
         box.value().set_focusable(true)
+        box.value().set_cursor(input.Cursor.pointer)
         box.value().set_menu_trigger(true)
         let popup = try interop.Reference[ActionPopup].adopt(new ActionPopup(actions, selected) in memory.heap, action_popup_type, memory.heap)
         errdefer popup.release()

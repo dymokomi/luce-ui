@@ -6,6 +6,7 @@ from luce_ui.docking.model import Model, Geometry, DockPosition
 from luce_ui.docking.strip import contains
 
 pub struct Drop:
+    pub var accepted: bool
     pub var group: usize
     pub var position: DockPosition
     pub var preview: Rect
@@ -18,7 +19,7 @@ pub func target(model: Model*, geometry: Geometry*, x: f64, y: f64, header: f64)
         if not contains(bounds, x, y): continue
         let content = Rect(bounds.x + 1.0, bounds.y + header + 1.0,
             math.max(0.0, bounds.width - 2.0), math.max(0.0, bounds.height - header - 2.0))
-        var drop = Drop(group = group, preview = bounds)
+        var drop = Drop(accepted = true, group = group, preview = bounds)
         if y < content.y or content.width == 0.0 or content.height == 0.0:
             return drop
         let left = (x - content.x) / content.width

@@ -1,4 +1,8 @@
 import luce_ui.layout as layout
+import input
+import luce_ui.cursor as cursor
+pub type Cursor = input.Cursor
+pub type CursorSource = cursor.CursorSource
 import luce_ui.painter as painter
 import luce_ui.result as result
 import luce_ui.widgets.text as text

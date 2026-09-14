@@ -15,6 +15,7 @@ pub func draw(state: State*, target: interop.View[gpu.RenderTarget]) -> !:
     defer painter.close()
     let size = try target.get().size()
     let geometry = state.geometry(Size(size.width, size.height))
+    let model = state.visible_model()
     let theme = state.theme()
     let box = state.box.get() else return
     defer box.release()
@@ -22,12 +23,12 @@ pub func draw(state: State*, target: interop.View[gpu.RenderTarget]) -> !:
     let hovered = box.value().contains_pointer()
     let focused = box.value().contains_focus()
     let active = state.active()
-    let active_group = state.model.tabs[active].group
+    let active_group = model.tabs[active].group
     try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.background)
-    if state.model.root == 0:
+    if model.root == 0:
         try button(state, &painter, gpu.Rect(math.max(0.0, size.width - state.height()), 0.0, state.height(), state.height()), "+", pointer, hovered)
-    for group in 1..<state.model.nodes.length:
-        let node = state.model.nodes[group]
+    for group in 1..<model.nodes.length:
+        let node = model.nodes[group]
         if not node.used: continue
         if node.first != 0:
             let divider = geometry.dividers[group]
@@ -41,7 +42,7 @@ pub func draw(state: State*, target: interop.View[gpu.RenderTarget]) -> !:
         try painter.rectangle(gpu.Rect(bounds.x + 1.0, bounds.y + state.height() + 1.0, math.max(0.0, bounds.width - 2.0), math.max(0.0, bounds.height - state.height() - 2.0)), theme.background)
         let header = state.strip(group, bounds)
         for order in header.first..<header.first + header.count:
-            let index = state.model.at(group, order)
+            let index = model.at(group, order)
             let rectangle = header.tab(order)
             if rectangle.width == 0.0: continue
             let selected = node.selected == index
@@ -52,7 +53,7 @@ pub func draw(state: State*, target: interop.View[gpu.RenderTarget]) -> !:
         try button(state, &painter, header.next, ">", pointer, hovered)
         try button(state, &painter, header.add, "+", pointer, hovered)
         if header.count == 1:
-            let index = state.model.at(group, header.first)
+            let index = model.at(group, header.first)
             let panel = try state.panel(index)
             defer panel.release()
             let detail = panel.value().detail()
@@ -66,13 +67,13 @@ pub func draw(state: State*, target: interop.View[gpu.RenderTarget]) -> !:
                 defer labels.close()
                 try labels.text(detail.value, x, header.tabs.y + (header.tabs.height - state.font.value().height()) * 0.5, theme.muted, state.font)
 
-func tab(state: State*, target: interop.View[gpu.RenderTarget], index: usize, bounds: gpu.Rect, pointer: Point, hovered: bool) -> !:
+func tab(state: State*, target: interop.View[gpu.RenderTarget], index: usize, bounds: gpu.Rect, pointer: Point, hovered: bool, closing: bool = true) -> !:
     let theme = state.theme()
     let font = state.font
     let panel = try state.panel(index)
     defer panel.release()
     let inset = math.ceil(font.value().advance() * theme.header_inset_cells)
-    let close_width = bounds.height if panel.value().is_closable() else 0.0
+    let close_width = bounds.height if closing and panel.value().is_closable() else 0.0
     let end = math.max(bounds.x, bounds.x + bounds.width - close_width)
     let content = try target.get().clipped(gpu.Rect(bounds.x, bounds.y, end - bounds.x, bounds.height))
     defer content.release()
@@ -107,10 +108,22 @@ func button(state: State*, painter: Painter*, bounds: gpu.Rect, label: str, poin
         bounds.y + (bounds.height - state.font.value().height()) * 0.5, theme.foreground, state.font)
 
 pub func preview(state: State*, target: interop.View[gpu.RenderTarget]) -> !:
-    if not state.dragging or state.drop.group == 0: return
+    if not state.dragging: return
+    let drop = state.current_drop()
+    if drop.accepted: try destination(state, target, drop.preview)
     var painter = try Painter(target)
     defer painter.close()
-    let rectangle = state.drop.preview
+    let bounds = state.drag_bounds()
+    let theme = state.theme()
+    try painter.rectangle(gpu.Rect(bounds.x + 4.0, bounds.y + 4.0, bounds.width, bounds.height), theme.shadow, theme.shadow_opacity)
+    try painter.rectangle(bounds, theme.accent)
+    let title = gpu.Rect(bounds.x + 1.0, bounds.y + 1.0, math.max(0.0, bounds.width - 2.0), math.max(0.0, bounds.height - 2.0))
+    try painter.rectangle(title, theme.active_border)
+    try tab(state, target, state.dragged_tab(), title, Point(), false, closing = false)
+
+func destination(state: State*, target: interop.View[gpu.RenderTarget], rectangle: gpu.Rect) -> !:
+    var painter = try Painter(target)
+    defer painter.close()
     let color = state.theme().accent
     try painter.rectangle(rectangle, color, 0.22)
     try painter.rectangle(gpu.Rect(rectangle.x, rectangle.y, rectangle.width, 2.0), color)

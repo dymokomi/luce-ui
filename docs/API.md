@@ -160,6 +160,7 @@ moved; inactive tabs are hidden from drawing, hit testing and keyboard traversal
 | `set_fraction(panel, fraction)` | Set the nearest split parent's preferred first-child share in 0..1 |
 | `panel_count`, `group_count`, `tab_count(panel)`, `same_group(a, b)` | Inspect membership without exposing mutable topology |
 | `panel_bounds(panel)`, `tab_bounds(panel)`, `add_bounds(panel)` | Inspect geometry local to DStack; an overflowed tab has empty bounds |
+| `drag_bounds()` | Bounds of the floating drag label; empty outside a drag |
 | `active_panel()` | The focused panel, or the most recently selected panel; none when empty |
 
 `DockPosition` is `tab`, `left`, `right`, `top` or `bottom`. Horizontal split
@@ -183,9 +184,16 @@ false or a failure preserves the panel. Without a handler they remove it.
 `Panel(closable=false)` omits the close button. Programmatic `remove` deliberately
 does not ask the handler; the application has already made that decision.
 
-Dragging begins after four logical points of movement. A tab-strip drop stacks
+Dragging begins after four logical points of movement. The source panel leaves
+a temporary layout: its remaining tabs are revealed, or its empty branch
+collapses. Content ownership stays mounted and the original topology is retained
+for cancellation. A labeled preview with a sharp shadow follows the pointer.
+A tab-strip drop stacks
 or reorders tabs. The middle of content stacks; its four outer quarters split.
-The overlay marks the destination while retaining normal pointer capture.
+The overlay marks the actual destination size, including minimum dimensions and
+the divider gap. Placement and drop testing use the detached layout; resizing the
+window updates the preview even without another pointer move. Pointer capture
+keeps a grabbing or forbidden cursor until release.
 Escape, focus loss and outside release cancel a drag. A single panel cannot
 split itself into two copies. Applications create a second content view explicitly
 if they need simultaneous views of one document.
@@ -311,3 +319,23 @@ shadow. The renderer draws one translated rectangle with straight alpha blending
 without blur or extra layout/hit-test space. It is clipped to the window rather
 than the popup's own bounds. `Painter.rectangle` exposes the same optional opacity
 for custom widgets; invalid opacity is an error.
+
+## Pointer cursors
+
+`Layout.set_cursor(Cursor.text)` chooses a static cursor; ordinary controls set
+appropriate defaults. Text editors use an I-beam, actionable controls a pointing
+hand, and dividers the appropriate horizontal/vertical resize shape. DStack
+headers use a grab cursor and a grabbing cursor during valid drags. An invalid
+drop uses `not_allowed`. Disabled layouts and disabled action buttons use arrow.
+
+`Layout.set_cursor_source(policy)` installs a retained `CursorSource` for
+hit-dependent choices, taking precedence over the static cursor. Its total
+`cursor(position: Point, captured: bool) -> Cursor` method receives local
+coordinates and capture state. Queries run under an interface guard and must not
+mutate layout. Capture takes precedence over widgets underneath the pointer;
+popups and ancestor clipping otherwise follow ordinary hit testing.
+
+`Application.cursor()` refreshes layout and returns the resolved shape for
+portable tests or embedding. `run()` applies it through `window.Window` after
+events and rendering. Native handles and platform cursor names never enter UI
+or application code. See [standard window cursors](https://github.com/dymokomi/luce-base/blob/main/docs/CURSORS.md).

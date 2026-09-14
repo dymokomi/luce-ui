@@ -22,6 +22,7 @@ struct Divider: Widget:
     pub func init(parent: interop.Reference[Layout], horizontal: bool, thickness: f64) -> !:
         let box = try layout.make_layout()
         box.value().set_focusable(true)
+        box.value().set_cursor(input.Cursor.resize_horizontal if horizontal else input.Cursor.resize_vertical)
         self.box = box
         self.parent = interop.WeakReference[Layout](parent)
         self.horizontal = horizontal

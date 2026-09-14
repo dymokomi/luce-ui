@@ -11,6 +11,7 @@ import thread
 import luce_ui.result as result
 import luce_ui.geometry as geometry
 from luce_ui.arrangement import Arrangement
+from luce_ui.cursor import CursorSource
 
 pub type Rect = gpu.Rect
 
@@ -90,6 +91,8 @@ pub struct Layout:
     var shrink: Size
     var split: f64?
     var arrangement: interop.Interface[Arrangement]?
+    var cursor_source: interop.Interface[CursorSource]?
+    var pointer_cursor: input.Cursor
     var focus_requested: bool
     var measured: Size
     var local_theme: Theme?
@@ -126,6 +129,8 @@ pub struct Layout:
         var empty: interop.Interface[Widget][]
         self.items = empty
         self.arrangement = none
+        self.cursor_source = none
+        self.pointer_cursor = input.Cursor.arrow
         self.focus_requested = false
         self.axis = axis
         self.spacing = spacing
@@ -240,6 +245,18 @@ pub struct Layout:
     ## Coordinates are local to this layout, valid while contains_pointer is true.
     pub func pointer_position() -> Point:
         return self.pointer
+
+    ## Cursor changes do not invalidate geometry. The application resolves the
+    ## current hit or capture after dispatch and after each layout refresh.
+    pub mutating func set_cursor(cursor: input.Cursor):
+        self.pointer_cursor = cursor
+
+    pub mutating func set_cursor_source(source: interop.Interface[CursorSource]) -> !:
+        try source.enter()
+        defer source.leave()
+        let retained = source.clone()
+        if let previous = self.cursor_source: previous.release()
+        self.cursor_source = retained
 
     pub func is_enabled() -> bool:
         return self.active
@@ -441,11 +458,13 @@ pub struct Layout:
 
     mutating func dispose():
         self.detach()
+        if let source = self.cursor_source: source.release()
         if let arrangement = self.arrangement:
             arrangement.release()
         self.invalidate()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        if let source = self.cursor_source: source.trace(visit, context)
         if let arrangement = self.arrangement:
             arrangement.trace(visit, context)
         for child in self.items:
@@ -943,6 +962,26 @@ pub struct Tree:
     pub func wants_text_input() -> bool:
         let index = self.find(self.focus) else return false
         return self.entries[index].box.value().accepts_text
+
+    pub func cursor() -> input.Cursor!:
+        if not self.pointer_present and self.capture == 0: return input.Cursor.arrow
+        var target = self.capture
+        if target == 0:
+            if let popup = self.popup_index():
+                if let menu = self.menu_at(popup, self.pointer_x, self.pointer_y):
+                    target = self.entries[menu].box.value().identifier
+            if target == 0: target = self.hit(self.pointer_x, self.pointer_y)
+        let index = self.find(target) else return input.Cursor.arrow
+        if not path_enabled(self.entries, index): return input.Cursor.arrow
+        let box = self.entries[index].box.value()
+        if let source = box.cursor_source:
+            try source.enter()
+            defer source.leave()
+            let started = epoch()
+            let cursor = source.value().cursor(Point(self.pointer_x - box.rectangle.x, self.pointer_y - box.rectangle.y), self.capture == target)
+            if epoch() != started: error(result.busy, "a cursor query changed the widget tree")
+            return cursor
+        return box.pointer_cursor
 
     func find(identifier: u64) -> usize?:
         if identifier == 0:

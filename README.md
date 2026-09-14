@@ -137,6 +137,10 @@ workspace.move(source, files, DockPosition.right)
 Every group has a trailing `+` menu. Applications create content in response to
 `on_add`; `set_close_handler` can refuse closing an unsaved document. Header
 dragging moves tabs, center drops stack them and edge drops split the destination.
-Nested dividers resize live, and empty branches collapse. Panels retain their
+The source detaches visually while dragging: neighbors expand and a floating
+caption follows the pointer. Drop previews use that expanded layout and respect
+minimum sizes. Escape restores the original layout. Nested dividers resize live,
+and empty branches collapse. Text, actions, pane headers and dividers select
+semantic system cursors through the standard window API. Panels retain their
 content, focus targets and identity across these operations. See the
 [dynamic workspace API](docs/API.md#dynamic-workspaces) and [design](docs/DSTACK.md).

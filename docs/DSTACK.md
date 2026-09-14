@@ -21,8 +21,11 @@ layout operation.
 Dragging a tab moves that panel. Dragging unused header space moves the group's
 selected panel. Dropping on a tab strip stacks/reorders; dropping over the middle
 of content stacks; its four outer regions split. Preview and release use the same
-hit test. Escape, lost capture and an outside release cancel without changing
-topology. A group that loses its final panel is removed and its sibling expands.
+hit test against that temporary layout. A floating caption follows the pointer
+while the destination overlay shows the final panel rectangle. Escape, lost capture and an outside release cancel without changing
+the committed topology. During the drag a temporary copy omits the dragged panel;
+a group that loses its final panel disappears and its sibling expands. Cancellation
+restores the original split fractions and tab order.
 
 The `+` menu requests Add Tab, Split Vertical (side by side) or Split Horizontal
 (above and below). Luced supplies an empty editor panel ready for a file. Opening
@@ -43,3 +46,13 @@ Metal readback tests pass in all six modes with API and shader validation. They
 check flat tab/frame colors, overlays drawn above panel content, and a release
 whose final position differs from its last drag preview. Luced has separate
 document-tab integration tests and captures real docking frames in macOS CI.
+
+## Drag feedback iteration
+
+- [x] Add native per-window cursor selection through the standard input/window boundary.
+- [x] Resolve static and custom cursors through UI hit testing and capture.
+- [x] Render a floating caption with a sharp shadow while dragging.
+- [x] Arrange and hit-test a temporary topology with the dragged panel removed.
+- [x] Restore topology on cancellation; commit a drop into the expanded neighbors.
+- [x] Keep the destination preview correct when the window resizes mid-drag.
+- [x] Exercise native cursor restoration, document state, empty layouts and GPU output.

@@ -30,6 +30,7 @@ pub struct TextPrompt: Widget:
         box.value().set_popup(true)
         box.value().set_popup_placement(layout.PopupPlacement.window_top)
         box.value().set_text_input(true)
+        box.value().set_cursor(input.Cursor.text)
         box.value().set_visible(false)
         var text = try LineInput()
         errdefer text.close()

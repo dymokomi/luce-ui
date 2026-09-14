@@ -2,6 +2,7 @@ import gpu
 import interop
 import math
 import ownership
+import memory
 import luce_ui.layout as layout
 import luce_ui.result as result
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
@@ -9,6 +10,27 @@ from luce_ui.painter import Painter
 import input
 from luce_ui.font import Font, selected_font
 from luce_ui.action import Action
+from luce_ui.cursor import CursorSource
+from luce_ui.geometry import Point
+
+## Query shared action state without forcing a layout pass when it is enabled
+## or disabled. The layout owns this policy; the action owns no widget edges.
+struct ActionCursor: CursorSource:
+    let action: interop.Reference[Action]
+
+    pub func init(action: interop.Reference[Action]):
+        self.action = action.clone()
+
+    pub func cursor(position: Point, captured: bool) -> input.Cursor:
+        return input.Cursor.pointer if self.action.value().is_enabled() else input.Cursor.arrow
+
+    pub mutating func close():
+        self.action.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.action.trace(visit, context)
+
+let action_cursor_type: interop.Type[ActionCursor] = interop.Type[ActionCursor]("Action cursor", ActionCursor.close, ActionCursor.trace, closeable = true, main_thread = true)
 
 pub struct Button: Widget:
     let box: interop.Reference[Layout]
@@ -29,6 +51,13 @@ pub struct Button: Widget:
         errdefer box.release()
         try box.value().set_shrink(vertical = 0.0)
         box.value().set_focusable(true)
+        box.value().set_cursor(input.Cursor.pointer)
+        if let command = action:
+            let cursor = try interop.Reference[ActionCursor].adopt(new ActionCursor(command) in memory.heap, action_cursor_type, memory.heap)
+            defer cursor.release()
+            let policy = cursor.as_interface[CursorSource](cursor.value())
+            defer policy.release()
+            try box.value().set_cursor_source(policy)
         let signal = try interop.Signal[unit]()
         errdefer signal.release()
         self.caption = try interop.copy_text(text)

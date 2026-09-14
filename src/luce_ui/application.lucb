@@ -98,6 +98,17 @@ pub struct Application:
         try self.check()
         self.tree.focus_layout(target)
 
+    pub mutating func cursor() -> input.Cursor!:
+        try self.begin_operation()
+        defer self.end_operation()
+        let refreshed = self.tree.refresh()
+        defer refreshed.release()
+        try refreshed.get()
+        return try self.tree.cursor()
+
+    mutating func update_cursor(host: window.Window) -> !:
+        try host.set_cursor(try self.cursor())
+
     pub mutating func layout(width: f64, height: f64) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -186,6 +197,8 @@ pub struct Application:
             arranged.release()
             var events: usize = 0
             while events < 512 and self.running:
+                self.update_cursor(host) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
                 host.set_text_input(self.tree.wants_text_input()) catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 let polled = host.poll() catch failure:
@@ -244,6 +257,8 @@ pub struct Application:
             if not rendered.is_success():
                 return rendered
             rendered.release()
+            self.update_cursor(host) catch failure:
+                return result.failure[unit](failure.code, failure.message)
             discard(frame.value().present(self.tree.theme().background) catch failure:
                 return result.failure[unit](failure.code, failure.message))
             count += 1

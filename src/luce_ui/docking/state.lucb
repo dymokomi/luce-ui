@@ -11,6 +11,7 @@ import luce_ui.result as result
 import luce_ui.docking.strip as strip
 import luce_ui.docking.drag as drag
 from luce_ui.arrangement import Arrangement
+from luce_ui.cursor import CursorSource
 from luce_ui.layout import Layout, Widget, Size, Point, Event
 from luce_ui.font import Font
 from luce_ui.theme import Theme
@@ -39,11 +40,12 @@ pub struct DockRequest:
 
 pub let dock_request_type: interop.Type[DockRequest] = interop.Type[DockRequest]("Dock request", DockRequest.close, DockRequest.trace, closeable = true, main_thread = true)
 
-pub struct State: Arrangement:
+pub struct State: Arrangement, CursorSource:
     pub let box: interop.WeakReference[Layout]
     pub let font: interop.Reference[Font]
     pub var panels: PanelSlot[]
     pub var model: Model
+    var detached: Model?
     pub var popup: interop.Reference[ActionPopup]?
     pub var overlay: interop.Interface[Widget]?
     pub var connections: ConnectionSlot[]
@@ -59,8 +61,9 @@ pub struct State: Arrangement:
     pub var focused_divider: usize
     var grab: f64
     var start: Point
+    pub var drag_pointer: Point
     pub var dragging: bool
-    pub var drop: drag.Drop
+    var drag_inside: bool
 
     pub func init(box: interop.Reference[Layout], font: interop.Reference[Font]) -> !:
         let selected = try interop.Signal[interop.Reference[Panel]]()
@@ -78,6 +81,7 @@ pub struct State: Arrangement:
         self.font = font.clone()
         self.panels = panels
         self.model = Model()
+        self.detached = none
         self.popup = none
         self.overlay = none
         self.connections = connections
@@ -93,8 +97,9 @@ pub struct State: Arrangement:
         self.focused_divider = 0
         self.grab = 0.0
         self.start = Point()
+        self.drag_pointer = Point()
         self.dragging = false
-        self.drop = drag.Drop()
+        self.drag_inside = false
 
     pub func theme() -> Theme:
         let box = self.box.get() else return Theme()
@@ -110,14 +115,22 @@ pub struct State: Arrangement:
         let bounds = box.value().bounds()
         return Size(bounds.width, bounds.height)
 
+    ## The committed topology keeps ownership and cancellation stable. Only the
+    ## detached copy participates in placement and hit testing during a drag.
+    pub func visible_model() -> Model:
+        return self.detached else self.model
+
     pub func geometry(size: Size) -> Geometry:
+        return self.geometry_for(self.visible_model(), size)
+
+    func geometry_for(model: Model, size: Size) -> Geometry:
         var minimums: Size[129]
         for index in 1..<self.panels.length:
             if let panel = self.panels[index]:
                 let box = panel.value().layout()
                 defer box.release()
                 minimums[index] = box.value().minimum_size()
-        return self.model.geometry(size, minimums, self.height(), 5.0)
+        return model.geometry(size, minimums, self.height(), 5.0)
 
     pub func place(child: i64, available: Size) -> interop.Outcome[gpu.Rect]:
         for index in 1..<self.panels.length:
@@ -126,7 +139,8 @@ pub struct State: Arrangement:
                 defer box.release()
                 if box.value().id() == child:
                     let geometry = self.geometry(available)
-                    let bounds = geometry.panes[self.model.tabs[index].group]
+                    let visible = self.visible_model()
+                    let bounds = geometry.panes[visible.tabs[index].group]
                     return result.success[gpu.Rect](gpu.Rect(bounds.x + 1.0, bounds.y + self.height() + 1.0,
                         math.max(0.0, bounds.width - 2.0), math.max(0.0, bounds.height - self.height() - 2.0)))
         return result.success[gpu.Rect](gpu.Rect(width = available.width, height = available.height))
@@ -157,15 +171,19 @@ pub struct State: Arrangement:
         return self.model.active
 
     pub func strip(group: usize, bounds: gpu.Rect) -> strip.Strip:
-        let selected = self.model.nodes[group].selected
+        let model = self.visible_model()
+        let selected = model.nodes[group].selected
         return strip.arrange(gpu.Rect(bounds.x + 1.0, bounds.y + 1.0,
-            math.max(0.0, bounds.width - 2.0), self.height()), self.model.tab_count(group),
-            self.model.tabs[selected].order, self.font.value().advance())
+            math.max(0.0, bounds.width - 2.0), self.height()), model.tab_count(group),
+            model.tabs[selected].order, self.font.value().advance())
 
     pub func tab_bounds(index: usize) -> gpu.Rect!:
-        let group = try self.model.require(index)
+        discard(try self.model.require(index))
+        let model = self.visible_model()
+        let group = model.tabs[index].group
+        if group == 0: return gpu.Rect()
         let geometry = self.geometry(self.size())
-        return self.strip(group, geometry.panes[group]).tab(self.model.tabs[index].order)
+        return self.strip(group, geometry.panes[group]).tab(model.tabs[index].order)
 
     pub func invalidate():
         if let box = self.box.get():
@@ -174,6 +192,10 @@ pub struct State: Arrangement:
 
     mutating func publish(model: Model):
         self.model = model
+        self.show_visible()
+
+    mutating func show_visible():
+        let model = self.visible_model()
         for index in 1..<self.panels.length:
             if let panel = self.panels[index]:
                 let box = panel.value().layout()
@@ -211,6 +233,7 @@ pub struct State: Arrangement:
         try self.children()
 
     pub mutating func add(panel: interop.Reference[Panel], relative: interop.Reference[Panel]?, position: DockPosition) -> !:
+        self.cancel()
         var slot: usize = 0
         for index in 1..<self.panels.length:
             if self.panels[index] == none:
@@ -244,6 +267,7 @@ pub struct State: Arrangement:
             try delivered.get()
 
     pub mutating func move(panel: interop.Reference[Panel], relative: interop.Reference[Panel], position: DockPosition) -> !:
+        self.cancel()
         let index = try self.index(panel)
         var next = self.model
         try next.move(index, try self.index(relative), position)
@@ -251,6 +275,7 @@ pub struct State: Arrangement:
         try self.select(index)
 
     pub mutating func remove(panel: interop.Reference[Panel]) -> !:
+        self.cancel()
         let index = try self.index(panel)
         let removed = panel.clone()
         defer removed.release()
@@ -312,14 +337,88 @@ pub struct State: Arrangement:
     pub mutating func split_horizontal(argument: unit) -> interop.Outcome[unit]:
         return self.request(DockPosition.bottom)
 
+    pub func current_drop() -> drag.Drop:
+        # A window may resize beneath a stationary pointer. Always resolve the
+        # preview from current detached geometry, just like the final release.
+        return self.drop_at(self.drag_pointer.x, self.drag_pointer.y) if self.dragging and self.drag_inside else drag.Drop()
+
+    pub func dragged_tab() -> usize:
+        return self.pressed_tab if self.dragging else 0
+
+    pub func drag_bounds() -> gpu.Rect:
+        if not self.dragging: return gpu.Rect()
+        let size = self.size()
+        let width = math.min(size.width, self.font.value().advance() * 28.0)
+        let height = self.height() + 2.0
+        return gpu.Rect(math.clamp(self.drag_pointer.x + 14.0, 0.0, math.max(0.0, size.width - width)),
+            math.clamp(self.drag_pointer.y + 18.0, 0.0, math.max(0.0, size.height - height)), width, height)
+
+    func insertion(drop: drag.Drop, x: f64, y: f64) -> Model!:
+        var next = self.visible_model()
+        let relative = next.nodes[drop.group].selected if drop.group != 0 else 0
+        var order = next.tab_count(drop.group)
+        if drop.group != 0 and drop.position == DockPosition.tab:
+            let geometry = self.geometry(self.size())
+            let header = self.strip(drop.group, geometry.panes[drop.group])
+            for index in header.first..<header.first + header.count:
+                let tab = header.tab(index)
+                if strip.contains(tab, x, y):
+                    order = index + (1 if x >= tab.x + tab.width * 0.5 else 0)
+                    break
+        try next.add(self.pressed_tab, relative, drop.position)
+        if drop.position == DockPosition.tab:
+            try next.reorder(self.pressed_tab, order)
+        return next
+
+    func drop_at(x: f64, y: f64) -> drag.Drop:
+        let size = self.size()
+        let area = gpu.Rect(width = size.width, height = size.height)
+        if not strip.contains(area, x, y): return drag.Drop()
+        var model = self.visible_model()
+        var geometry = self.geometry(size)
+        var drop = drag.Drop(accepted = true, preview = area) if model.root == 0 else drag.target(&model, &geometry, x, y, self.height())
+        if not drop.accepted: return drop
+        let inserted = self.insertion(drop, x, y) catch failure: return drag.Drop()
+        let placed = self.geometry_for(inserted, size)
+        drop.preview = placed.panes[inserted.tabs[self.pressed_tab].group]
+        return drop
+
+    pub func cursor(position: Point, captured: bool) -> input.Cursor:
+        if self.dragging: return input.Cursor.grabbing if self.current_drop().accepted else input.Cursor.not_allowed
+        let model = self.visible_model()
+        if captured and self.resize != 0:
+            return input.Cursor.resize_horizontal if model.nodes[self.resize].horizontal else input.Cursor.resize_vertical
+        let geometry = self.geometry(self.size())
+        for node in 1..<model.nodes.length:
+            if not model.nodes[node].used: continue
+            if model.nodes[node].first != 0:
+                if strip.contains(geometry.dividers[node], position.x, position.y):
+                    return input.Cursor.resize_horizontal if model.nodes[node].horizontal else input.Cursor.resize_vertical
+                continue
+            let bounds = geometry.panes[node]
+            let header = self.strip(node, bounds)
+            if strip.contains(header.add, position.x, position.y) or strip.contains(header.previous, position.x, position.y) or strip.contains(header.next, position.x, position.y):
+                return input.Cursor.pointer
+            if strip.contains(gpu.Rect(bounds.x, bounds.y, bounds.width, self.height() + 1.0), position.x, position.y):
+                for order in header.first..<header.first + header.count:
+                    let tab = header.tab(order)
+                    if strip.contains(tab, position.x, position.y) and position.x >= tab.x + tab.width - self.height():
+                        if let panel = self.panels[model.at(node, order)]:
+                            if panel.value().is_closable(): return input.Cursor.pointer
+                return input.Cursor.grab
+        if model.root == 0 and strip.contains(gpu.Rect(math.max(0.0, self.size().width - self.height()), 0.0, self.height(), self.height()), position.x, position.y):
+            return input.Cursor.pointer
+        return input.Cursor.arrow
+
     pub mutating func cancel():
+        self.detached = none
         self.pressed_tab = 0
         self.pressed_close = 0
         self.pressed_add = 0
         self.resize = 0
         self.dragging = false
-        self.drop = drag.Drop()
-        self.invalidate()
+        self.drag_inside = false
+        self.show_visible()
 
     pub mutating func handle(event: Event) -> !:
         if event.cancelled or (event.kind == input.EventKind.key_down and event.key == input.Key.escape):
@@ -370,20 +469,27 @@ pub struct State: Arrangement:
             elif self.pressed_tab != 0:
                 let dx = event.x - self.start.x
                 let dy = event.y - self.start.y
-                if dx * dx + dy * dy >= 16.0: self.dragging = true
+                if not self.dragging and dx * dx + dy * dy >= 16.0:
+                    var detached = self.model
+                    try detached.remove(self.pressed_tab)
+                    self.detached = detached
+                    self.dragging = true
+                    self.show_visible()
                 if self.dragging:
-                    var model = self.model
-                    var positions = geometry
-                    self.drop = drag.target(&model, &positions, event.x, event.y, self.height()) if event.inside else drag.Drop()
+                    self.drag_pointer = Point(event.x, event.y)
+                    self.drag_inside = event.inside
                     self.invalidate()
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
             let tab = self.pressed_tab
             let closing = self.pressed_close
             let adding = self.pressed_add
             let dragged = self.dragging
-            var model = self.model
-            var positions = geometry
-            let drop = drag.target(&model, &positions, event.x, event.y, self.height()) if dragged and event.inside else drag.Drop()
+            let drop = self.drop_at(event.x, event.y) if dragged and event.inside else drag.Drop()
+            # Prepare the final topology while the detached geometry is still
+            # available, then restore/cancel the gesture before publishing it.
+            var committed: Model? = none
+            if dragged and drop.accepted:
+                committed = try self.insertion(drop, event.x, event.y)
             self.cancel()
             if adding != 0 and event.inside:
                 let group = 0 if adding == 65 else adding
@@ -394,15 +500,7 @@ pub struct State: Arrangement:
                 if strip.contains(bounds, event.x, event.y) and event.x >= bounds.x + bounds.width - self.height():
                     try self.request_close(closing)
             elif tab != 0:
-                if dragged and drop.group != 0 and event.inside:
-                    var relative = self.model.nodes[drop.group].selected
-                    let header = self.strip(drop.group, geometry.panes[drop.group])
-                    for order in header.first..<header.first + header.count:
-                        if strip.contains(header.tab(order), event.x, event.y):
-                            relative = self.model.at(drop.group, order)
-                    var next = self.model
-                    try next.move(tab, relative, drop.position)
-                    self.publish(next)
+                if let next = committed: self.publish(next)
                 try self.select(tab)
         elif event.kind == input.EventKind.scroll:
             for group in 1..<self.model.nodes.length:

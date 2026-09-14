@@ -10,6 +10,7 @@ import luce_ui.result as result
 import luce_ui.docking.chrome as chrome
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.arrangement import Arrangement
+from luce_ui.cursor import CursorSource
 from luce_ui.font import Font, selected_font
 from luce_ui.action import Action, action_type
 from luce_ui.widgets.panel import Panel
@@ -67,6 +68,9 @@ pub struct DStack: Widget:
         let arrangement = state.as_interface[Arrangement](state.value())
         defer arrangement.release()
         try box.value().set_arrangement(arrangement)
+        let cursor = state.as_interface[CursorSource](state.value())
+        defer cursor.release()
+        try box.value().set_cursor_source(cursor)
         let overlay = try interop.Reference[Overlay].adopt(new Overlay(state) in memory.heap, overlay_type, memory.heap)
         defer overlay.release()
         let overlay_widget = overlay.as_interface[Widget](overlay.value())
@@ -107,12 +111,14 @@ pub struct DStack: Widget:
         try self.state.value().remove(panel)
 
     pub mutating func select(panel: interop.Reference[Panel]) -> !:
+        self.state.value().cancel()
         try self.state.value().select(try self.state.value().index(panel))
 
     ## Cycle visible groups in reading order; selection reveals that group's
     ## active tab and deferred focus finds its first keyboard-capable control.
     pub mutating func focus_next(backwards: bool = false) -> !:
         let state = self.state.value()
+        state.cancel()
         if state.model.root == 0: return
         let geometry = state.geometry(state.size())
         let current = state.model.tabs[state.active()].group
@@ -150,19 +156,26 @@ pub struct DStack: Widget:
     pub func panel_bounds(panel: interop.Reference[Panel]) -> gpu.Rect!:
         let index = try self.state.value().index(panel)
         let geometry = self.state.value().geometry(self.state.value().size())
-        return geometry.panes[self.state.value().model.tabs[index].group]
+        let model = self.state.value().visible_model()
+        return geometry.panes[model.tabs[index].group]
 
     pub func tab_bounds(panel: interop.Reference[Panel]) -> gpu.Rect!:
         return try self.state.value().tab_bounds(try self.state.value().index(panel))
 
     pub func add_bounds(panel: interop.Reference[Panel]) -> gpu.Rect!:
         let index = try self.state.value().index(panel)
-        return self.state.value().strip(self.state.value().model.tabs[index].group, try self.panel_bounds(panel)).add
+        let model = self.state.value().visible_model()
+        let group = model.tabs[index].group
+        return gpu.Rect() if group == 0 else self.state.value().strip(group, try self.panel_bounds(panel)).add
 
     pub func drop_preview() -> gpu.Rect:
-        return self.state.value().drop.preview
+        return self.state.value().current_drop().preview
+
+    pub func drag_bounds() -> gpu.Rect:
+        return self.state.value().drag_bounds()
 
     pub mutating func set_fraction(panel: interop.Reference[Panel], fraction: f64) -> !:
+        self.state.value().cancel()
         let index = try self.state.value().index(panel)
         let group = self.state.value().model.tabs[index].group
         let branch = self.state.value().model.nodes[group].parent

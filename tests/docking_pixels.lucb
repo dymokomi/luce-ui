@@ -38,11 +38,15 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
     for phase in 0..<3:
         if phase == 1:
             try dispatch(app, Event(kind = input.EventKind.pointer_down, x = 20.0, y = 5.0))
-            try dispatch(app, Event(kind = input.EventKind.pointer_moved, x = 280.0, y = 120.0))
+            try dispatch(app, Event(kind = input.EventKind.pointer_moved, x = 20.0, y = 120.0))
+            assert((try stack.value().panel_bounds(second)).width == 505.0)
+            let hidden = first.value().layout()
+            defer hidden.release()
+            assert(not hidden.value().is_visible())
         elif phase == 2:
             # Release at a different point: the committed drop uses final input,
             # not a stale preview rectangle from the previous pointer event.
-            try dispatch(app, Event(kind = input.EventKind.pointer_up, x = 380.0, y = 120.0))
+            try dispatch(app, Event(kind = input.EventKind.pointer_up, x = 260.0, y = 120.0))
             assert(stack.value().group_count() == 1)
         native.begin("UI pixel contracts")
         defer native.end()
@@ -53,8 +57,10 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
             pixels.pixel(scale, 430.0, 4.0, 0, 0, 255)
             pixels.pixel(scale, 450.0, 120.0, 255, 255, 255)
         elif phase == 1:
-            pixels.pixel(scale, 379.0, 120.0, 0, 0, 255)
+            pixels.pixel(scale, 249.0, 120.0, 0, 0, 255)
             pixels.pixel(scale, 450.0, 120.0, 255, 255, 255)
+            let dragged = stack.value().drag_bounds()
+            pixels.pixel(scale, dragged.x + 2.0, dragged.y + 2.0, 0, 0, 255)
         else:
             pixels.pixel(scale, 100.0, 4.0, 0, 0, 0)
             pixels.pixel(scale, 350.0, 4.0, 0, 0, 255)
