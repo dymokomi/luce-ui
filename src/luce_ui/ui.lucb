@@ -12,6 +12,7 @@ pub let invalid: ErrorCode = result.invalid
 pub type Widget = layout.Widget
 pub type Layout = layout.Layout
 pub type Size = layout.Size
+pub type Point = layout.Point
 pub type Constraints = layout.Constraints
 pub type Event = layout.Event
 pub type Axis = layout.Axis

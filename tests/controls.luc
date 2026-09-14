@@ -8,6 +8,7 @@ from ui import Action, Shortcut, Toolbar, Menu, Theme
 from text_views import text_views
 from panes import panes
 from contextual import contextual
+from hover import hover
 
 class Custom: Widget:
     let box: Layout
@@ -34,6 +35,7 @@ class Counter:
 
 pub func main(arguments: list[str]) -> int!:
     contextual()
+    hover()
     let font = Font(size = 14.0)
     assert(font.size() == 14.0 and font.measure("ii") == font.measure("WW"))
     let button = Button("pause", font = font)

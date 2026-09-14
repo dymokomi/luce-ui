@@ -97,6 +97,8 @@ pub struct ListView: Widget:
             if (i64)index == self.selection:
                 try painter.rectangle(gpu.Rect(y = y, width = size.width, height = self.row_height()), self.box.value().theme().selection)
                 try painter.rectangle(gpu.Rect(y = y, width = 2.0, height = self.row_height()), self.box.value().theme().accent)
+            elif self.box.value().contains_pointer() and self.box.value().pointer_position().y >= y and self.box.value().pointer_position().y < y + self.row_height():
+                try painter.rectangle(gpu.Rect(y = y, width = size.width, height = self.row_height()), self.box.value().theme().hover)
             try painter.text(self.items[index].value, self.box.value().theme().inset(self.font), y + (self.row_height() - self.font.value().height()) * 0.5, color = self.box.value().theme().foreground, font = self.font)
             index += 1
         if self.box.value().is_focused():

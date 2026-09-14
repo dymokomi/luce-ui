@@ -7,6 +7,7 @@ import ownership
 import window
 import native
 import ui
+import style_pixels
 from ui import Application, Button, Viewport, HStack, Widget, Painter, Rect, Size, Alignment
 
 struct Paint:
@@ -115,5 +116,6 @@ pub func main(arguments: str[]) -> i32!:
     assert(expired)
     try host.resize(200, 120)
     try frame(app, host, surface)
+    try style_pixels.check(host, surface)
     print("ok UI Metal pixels, ancestor clipping, resize and expired viewport")
     return 0

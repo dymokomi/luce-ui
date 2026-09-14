@@ -33,6 +33,7 @@ pub struct Menu: Widget:
         errdefer box.release()
         try box.value().set_shrink(vertical = 0.0)
         box.value().set_focusable(true)
+        box.value().set_menu_trigger(true)
         let popup = try interop.Reference[ActionPopup].adopt(new ActionPopup(actions, selected) in memory.heap, action_popup_type, memory.heap)
         errdefer popup.release()
         let widget = popup.as_interface[Widget](popup.value())
@@ -71,10 +72,15 @@ pub struct Menu: Widget:
         let theme = self.box.value().theme()
         if self.is_open() or self.box.value().is_focused():
             try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.selection)
-        try painter.text(self.caption.value, theme.inset(self.font), (size.height - self.font.value().height()) * 0.5, theme.foreground, self.font)
+        elif self.box.value().contains_pointer():
+            try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.hover)
+        try painter.text(self.caption.value, theme.inset(self.font), (size.height - self.font.value().height()) * 0.5, theme.foreground if self.box.value().is_enabled() else theme.muted, self.font)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
-        if event.cancelled:
+        if event.menu_requested:
+            self.open() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+        elif event.cancelled:
             self.pressed = false
         elif event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
             self.pressed = true

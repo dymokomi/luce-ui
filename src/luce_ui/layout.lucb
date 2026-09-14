@@ -1,4 +1,5 @@
 from luce_ui.theme import Theme
+from luce_ui.painter import Painter
 import luce_ui.splitting as splitting
 import gpu
 import input
@@ -10,6 +11,10 @@ import thread
 import luce_ui.result as result
 
 pub type Rect = gpu.Rect
+
+pub struct Point:
+    pub var x: f64
+    pub var y: f64
 
 pub struct Size:
     pub var width: f64
@@ -50,6 +55,8 @@ pub struct Event:
     pub var codepoint: i64
     pub var inside: bool
     pub var cancelled: bool
+    ## Menu triggers receive this request when an open menu session changes peer.
+    pub var menu_requested: bool
     pub var scroll_x: f64
     pub var scroll_y: f64
     pub var scroll_unit: input.ScrollUnit
@@ -93,8 +100,9 @@ pub struct Layout:
     var visible: bool
     var popup: bool
     var popup_placement: PopupPlacement
-    var popup_point: Size
+    var popup_point: Point
     var context_menu: bool
+    var menu_trigger: bool
     var accepts_focus: bool
     var accepts_pointer: bool
     var accepts_text: bool
@@ -102,6 +110,9 @@ pub struct Layout:
     var active: bool
     var focused: bool
     var focus_within: bool
+    var hovered: bool
+    var pointer_within: bool
+    var pointer: Point
     var editing: bool
 
     pub func init(axis: Axis = Axis.overlay, spacing: f64 = 0.0, padding: f64 = 0.0,
@@ -132,8 +143,9 @@ pub struct Layout:
         self.visible = true
         self.popup = false
         self.popup_placement = PopupPlacement.below
-        self.popup_point = Size()
+        self.popup_point = Point()
         self.context_menu = false
+        self.menu_trigger = false
         self.accepts_focus = false
         self.accepts_pointer = false
         self.accepts_text = false
@@ -141,6 +153,9 @@ pub struct Layout:
         self.active = true
         self.focused = false
         self.focus_within = false
+        self.hovered = false
+        self.pointer_within = false
+        self.pointer = Point()
         self.editing = false
 
     pub func is_visible() -> bool:
@@ -162,7 +177,7 @@ pub struct Layout:
         if not math.is_finite(x) or not math.is_finite(y):
             error(result.invalid, "popup coordinates must be finite")
         self.popup_placement = PopupPlacement.point
-        self.popup_point = Size(x, y)
+        self.popup_point = Point(x, y)
         self.invalidate()
 
     pub mutating func set_popup_placement(placement: PopupPlacement):
@@ -174,6 +189,12 @@ pub struct Layout:
     pub mutating func set_context_menu(enabled: bool):
         self.context_menu = enabled
         self.accepts_pointer = enabled or self.accepts_pointer
+        self.invalidate()
+
+    ## Sibling triggers form one menu group. Only an already-open menu enables
+    ## pointer switching; context menus and other modal popups remain isolated.
+    pub mutating func set_menu_trigger(enabled: bool):
+        self.menu_trigger = enabled
         self.invalidate()
 
     pub func theme() -> Theme:
@@ -200,6 +221,18 @@ pub struct Layout:
 
     pub func contains_focus() -> bool:
         return self.focus_within
+
+    ## Hover follows the topmost visible, enabled branch, independently of
+    ## keyboard focus and pointer capture. Ancestors can style their whole pane.
+    pub func is_hovered() -> bool:
+        return self.hovered
+
+    pub func contains_pointer() -> bool:
+        return self.pointer_within
+
+    ## Coordinates are local to this layout, valid while contains_pointer is true.
+    pub func pointer_position() -> Point:
+        return self.pointer
 
     pub func is_enabled() -> bool:
         return self.active
@@ -442,6 +475,9 @@ pub struct Tree:
     var capture: u64
     var return_focus: u64
     var appearance: Theme
+    var pointer_present: bool
+    var pointer_x: f64
+    var pointer_y: f64
 
     pub func init(content: interop.Interface[Widget], theme: Theme = Theme()) -> !:
         try require_main_thread()
@@ -460,6 +496,9 @@ pub struct Tree:
         self.capture = 0
         self.return_focus = 0
         self.appearance = theme
+        self.pointer_present = false
+        self.pointer_x = 0.0
+        self.pointer_y = 0.0
 
     pub func theme() -> Theme:
         return self.appearance
@@ -526,8 +565,8 @@ pub struct Tree:
                 let below = anchor.y + anchor.height
                 var y = below if below + popup_height <= bounds.height else math.max(0.0, anchor.y - popup_height)
                 if box.popup_placement == PopupPlacement.point:
-                    x = math.clamp(anchor.x + box.popup_point.width, 0.0, bounds.width - popup_width)
-                    y = math.clamp(anchor.y + box.popup_point.height, 0.0, bounds.height - popup_height)
+                    x = math.clamp(anchor.x + box.popup_point.x, 0.0, bounds.width - popup_width)
+                    y = math.clamp(anchor.y + box.popup_point.y, 0.0, bounds.height - popup_height)
                 elif box.popup_placement == PopupPlacement.window_top:
                     x = (bounds.width - popup_width) * 0.5
                     y = math.min(math.min(40.0, bounds.height * 0.1), bounds.height - popup_height)
@@ -564,6 +603,8 @@ pub struct Tree:
             entry.box.value().application = 0
             entry.box.value().focused = false
             entry.box.value().focus_within = false
+            entry.box.value().hovered = false
+            entry.box.value().pointer_within = false
         release_entries(self.entries, self.count)
         committed = true
         self.entries = replacement
@@ -576,6 +617,7 @@ pub struct Tree:
             box.application = self.identifier
             box.focused = box.identifier == self.focus
         mark_focus(self.entries, self.count, self.focus, self.return_focus)
+        self.update_hover()
         return result.success[unit](())
 
     pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
@@ -589,6 +631,11 @@ pub struct Tree:
                     continue
                 let native_target = target.get() catch failure:
                     return result.failure[unit](failure.code, failure.message)
+                # Shadows use the window target before popup clipping. They do
+                # not enlarge layout or hit bounds, and remain sharp at any scale.
+                if box.popup:
+                    self.draw_shadow(target, box.rectangle, box.appearance) catch failure:
+                        return result.failure[unit](failure.code, failure.message)
                 let clipped = native_target.clipped(box.clipping) catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 defer clipped.release()
@@ -607,12 +654,31 @@ pub struct Tree:
                 drawn.release()
         return result.success[unit](())
 
+    func draw_shadow(target: interop.View[gpu.RenderTarget], bounds: Rect, theme: Theme) -> !:
+        if theme.shadow_offset == 0.0 or theme.shadow_opacity == 0.0:
+            return
+        var painter = try Painter(target)
+        defer painter.close()
+        try painter.rectangle(Rect(bounds.x + theme.shadow_offset, bounds.y + theme.shadow_offset,
+            bounds.width, bounds.height), theme.shadow, theme.shadow_opacity)
+
     pub mutating func dispatch(event: input.Event) -> interop.Outcome[unit]:
         let arranged = self.arrange(self.width, self.height)
         if not arranged.is_success():
             return arranged
         arranged.release()
+        if event.kind == input.EventKind.pointer_left:
+            self.pointer_present = false
+            self.update_hover()
+            return result.success[unit](())
+        if event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_down or event.kind == input.EventKind.pointer_up or event.kind == input.EventKind.scroll:
+            self.pointer_x = event.x
+            self.pointer_y = event.y
+            self.pointer_present = math.is_finite(event.x) and math.is_finite(event.y)
+            self.update_hover()
         if event.kind == input.EventKind.focus_lost or event.kind == input.EventKind.overflow:
+            self.pointer_present = false
+            self.update_hover()
             let capture_cancelled = self.cancel(self.capture)
             if not capture_cancelled.is_success():
                 return capture_cancelled
@@ -623,10 +689,19 @@ pub struct Tree:
                     return focus_cancelled
                 focus_cancelled.release()
             self.capture = 0
+            self.return_focus = 0
+            self.requested_focus = 0
             self.set_focus(0)
             return result.success[unit](())
         if let popup = self.popup_index():
             let box = self.entries[popup].box.value()
+            if event.kind == input.EventKind.pointer_moved or (event.kind == input.EventKind.pointer_down and event.button == 0):
+                if let peer = self.menu_at(popup, event.x, event.y):
+                    if self.entries[popup].parent != (i64)peer:
+                        return self.switch_menu(popup, peer)
+            if event.kind == input.EventKind.key_down and not event.repeated and (event.key == input.Key.left or event.key == input.Key.right):
+                if let peer = self.next_menu(popup, event.key == input.Key.left):
+                    return self.switch_menu(popup, peer)
             if event.kind == input.EventKind.pointer_down and not inside(box.clipping, event.x, event.y):
                 let cancelled = self.cancel(box.identifier)
                 if not cancelled.is_success():
@@ -752,6 +827,79 @@ pub struct Tree:
                 return index
         return none
 
+    func menu_owner(popup: usize) -> usize?:
+        let parent = self.entries[popup].parent
+        if parent < 0 or not self.entries[(usize)parent].box.value().menu_trigger:
+            return none
+        return (usize)parent
+
+    func menu_at(popup: usize, x: f64, y: f64) -> usize?:
+        let owner = self.menu_owner(popup) else return none
+        let group = self.entries[owner].parent
+        for index in 0..<self.count:
+            let box = self.entries[index].box.value()
+            if self.entries[index].parent == group and box.menu_trigger and path_enabled(self.entries, index) and inside(box.clipping, x, y):
+                return index
+        return none
+
+    func next_menu(popup: usize, backwards: bool) -> usize?:
+        let owner = self.menu_owner(popup) else return none
+        let group = self.entries[owner].parent
+        var index = owner
+        for visited in 0..<self.count:
+            index = (self.count - 1 if index == 0 else index - 1) if backwards else (index + 1) % self.count
+            let box = self.entries[index].box.value()
+            if self.entries[index].parent == group and box.menu_trigger and path_enabled(self.entries, index) and box.clipping.width > 0.0 and box.clipping.height > 0.0:
+                return index
+        return none
+
+    mutating func switch_menu(popup: usize, peer: usize) -> interop.Outcome[unit]:
+        let cancelled = self.cancel(self.entries[popup].box.value().identifier)
+        if not cancelled.is_success():
+            return cancelled
+        cancelled.release()
+        let capture_cancelled = self.cancel(self.capture)
+        if not capture_cancelled.is_success():
+            return capture_cancelled
+        capture_cancelled.release()
+        self.capture = 0
+        self.return_focus = self.entries[peer].box.value().identifier
+        let opened = self.send(peer, Event(menu_requested = true))
+        if not opened.is_success():
+            return opened
+        opened.release()
+        return self.arrange(self.width, self.height)
+
+    ## Hover is derived from current geometry, including after layout changes
+    ## beneath a stationary pointer. Updating it never remeasures the widget tree.
+    mutating func update_hover():
+        for entry in self.entries[..<self.count]:
+            let box = entry.box.value()
+            box.hovered = false
+            box.pointer_within = false
+            box.pointer = Point(self.pointer_x - box.rectangle.x, self.pointer_y - box.rectangle.y)
+        if not self.pointer_present:
+            return
+        var hovered: usize? = none
+        let popup = self.popup_index()
+        if let active = popup:
+            if not inside(self.entries[active].box.value().clipping, self.pointer_x, self.pointer_y):
+                hovered = self.menu_at(active, self.pointer_x, self.pointer_y)
+        if hovered == none:
+            var index = self.count
+            while index > 0:
+                index -= 1
+                let box = self.entries[index].box.value()
+                if (popup == none or in_popup(self.entries, index)) and path_enabled(self.entries, index) and inside(box.clipping, self.pointer_x, self.pointer_y):
+                    hovered = index
+                    break
+        let index = hovered else return
+        self.entries[index].box.value().hovered = true
+        var ancestor = (i64)index
+        while ancestor >= 0:
+            self.entries[(usize)ancestor].box.value().pointer_within = true
+            ancestor = self.entries[(usize)ancestor].parent
+
     pub func has_popup() -> bool:
         return self.popup_index() != none
 
@@ -832,6 +980,8 @@ pub struct Tree:
                 box.application = 0
                 box.focused = false
                 box.focus_within = false
+                box.hovered = false
+                box.pointer_within = false
         release_entries(self.entries, self.count)
         self.count = 0
         var empty: Entry[]
@@ -935,8 +1085,11 @@ func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect):
     let horizontal = box.axis == Axis.horizontal
     let inner = Rect(bounds.x + box.padding, bounds.y + box.padding,
         math.max(0.0, bounds.width - box.padding * 2.0), math.max(0.0, bounds.height - box.padding * 2.0))
+    # A child may retain its minimum size in a smaller window. Clip it to the
+    # content area so it cannot paint or hit-test over its parent's frame.
+    let content_clip = intersection(box.clipping, inner)
     if let fraction = box.split:
-        place_split(entries, index, inner, box.clipping, fraction)
+        place_split(entries, index, inner, content_clip, fraction)
         return
     var child = index + 1
     var total: f64 = 0.0
@@ -1020,7 +1173,7 @@ func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect):
                 rectangle.y = cursor
                 rectangle.width = placed
                 cursor += rectangle.height + box.spacing
-        place(entries, child, rectangle, box.clipping)
+        place(entries, child, rectangle, content_clip)
         child = entries[child].end
 
 func discard_replacement(entries: Entry[], count: usize*, committed: bool*):

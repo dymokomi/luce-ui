@@ -1,0 +1,99 @@
+## Distinct test colors make hover, gutter, divider and shadow pixels independent
+## of the default theme. Sampling avoids glyphs and uses logical-to-backing scale.
+import gpu
+import input
+import interop
+import memory
+import native
+import ui
+import window
+from ui import Application, Action, Menu, Pane, SplitView, TextEditor, Button, Widget, Event
+
+func render(app: interop.Reference[Application], host: window.Window, surface: gpu.Surface) -> !:
+    while let event = try host.poll(): discard(event)
+    let recording = try surface.frame()
+    defer recording.release()
+    let target = try recording.value().target()
+    defer target.release()
+    let rendered = app.value().render(target)
+    defer rendered.release()
+    try rendered.get()
+    assert((try recording.value().present()) == gpu.PresentResult.submitted)
+    try surface.wait_idle()
+
+func pixel(scale: f64, x: f64, y: f64, red: u8, green: u8, blue: u8):
+    native.pixel((u64)(x * scale), (u64)(y * scale), red, green, blue)
+
+pub func check(host: window.Window, surface: gpu.Surface) -> !:
+    try host.resize(205, 120)
+    let font = try interop.Reference[ui.Font].adopt(new ui.Font() in memory.heap, ui.font_type, memory.heap)
+    defer font.release()
+    let editor = try interop.Reference[TextEditor].adopt(new TextEditor("one\ntwo\nthree", font = font) in memory.heap, ui.text_editor_type, memory.heap)
+    defer editor.release()
+    let editor_widget = editor.as_interface[Widget](editor.value())
+    defer editor_widget.release()
+    let left = try interop.Reference[Pane].adopt(new Pane(editor_widget, minimum = ui.Size(20.0, 20.0)) in memory.heap, ui.pane_type, memory.heap)
+    defer left.release()
+    let left_widget = left.as_interface[Widget](left.value())
+    defer left_widget.release()
+    let button = try interop.Reference[Button].adopt(new Button("B", font = font) in memory.heap, ui.button_type, memory.heap)
+    defer button.release()
+    let button_widget = button.as_interface[Widget](button.value())
+    defer button_widget.release()
+    let right = try interop.Reference[Pane].adopt(new Pane(button_widget, minimum = ui.Size(20.0, 20.0)) in memory.heap, ui.pane_type, memory.heap)
+    defer right.release()
+    let right_widget = right.as_interface[Widget](right.value())
+    defer right_widget.release()
+    let split = try interop.Reference[SplitView].adopt(new SplitView(left_widget, right_widget) in memory.heap, ui.split_view_type, memory.heap)
+    defer split.release()
+    let root = split.as_interface[Widget](split.value())
+    defer root.release()
+    let white = gpu.Color(1.0, 1.0, 1.0)
+    let black = gpu.Color()
+    let theme = ui.Theme(background = white, border = black, panel = white, foreground = black,
+        hover_border = gpu.Color(1.0, 0.0, 0.0), gutter = white,
+        gutter_active = gpu.Color(1.0, 0.0, 0.0), hover = gpu.Color(0.0, 1.0, 0.0),
+        accent = gpu.Color(0.0, 0.0, 1.0), shadow = black, shadow_opacity = 0.5)
+    let app = try interop.Reference[Application].adopt(new Application(root, theme = theme) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    let scale = (try host.size()).scale
+    for phase in 0..<3:
+        if phase > 0:
+            let moved = app.value().dispatch(Event(kind = input.EventKind.pointer_moved,
+                x = 102.0 if phase == 1 else 3.0,
+                y = 60.0 if phase == 1 else 1.0 + font.value().line_height() + 2.0))
+            defer moved.release()
+            try moved.get()
+        native.begin("UI pixel contracts")
+        defer native.end()
+        try render(app, host, surface)
+        pixel(scale, 99.0, 90.0, 255 if phase == 2 else 0, 0, 0)
+        pixel(scale, 102.0, 90.0, 0 if phase == 1 else 255, 0 if phase == 1 else 255, 255)
+        pixel(scale, 105.0, 90.0, 0, 0, 0)
+        pixel(scale, 3.0, 4.0, 255, 0, 0)
+        pixel(scale, 3.0, 1.0 + font.value().line_height() + 2.0, 0 if phase == 2 else 255, 255, 0 if phase == 2 else 255)
+    let action = try interop.Reference[Action].adopt(new Action("Shadow") in memory.heap, ui.action_type, memory.heap)
+    defer action.release()
+    let menu = try interop.Reference[Menu].adopt(new Menu("File", [action], font = font) in memory.heap, ui.menu_type, memory.heap)
+    defer menu.release()
+    let menu_box = menu.value().layout()
+    defer menu_box.release()
+    try menu_box.value().set_size(50.0, 20.0)
+    let menu_widget = menu.as_interface[Widget](menu.value())
+    defer menu_widget.release()
+    let left_box = left.value().layout()
+    defer left_box.release()
+    try left_box.value().set_children([menu_widget])
+    try menu.value().open()
+    native.begin("UI pixel contracts")
+    defer native.end()
+    try render(app, host, surface)
+    let popup = try menu_box.value().child(0)
+    defer popup.release()
+    let popup_box = popup.value().layout()
+    defer popup_box.release()
+    let bounds = popup_box.value().bounds()
+    # A half-opacity black shadow over white is 188 in sRGB. The adjacent pixel
+    # beyond its four-point extent remains white: no blur, spread or hit padding.
+    pixel(scale, bounds.x + bounds.width + 2.0, bounds.y + 8.0, 188, 188, 188)
+    pixel(scale, bounds.x + bounds.width + 6.0, bounds.y + 8.0, 255, 255, 255)

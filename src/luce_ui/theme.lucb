@@ -19,10 +19,20 @@ pub struct Theme:
     pub var border: gpu.Color = gpu.Color(0.06, 0.085, 0.12)
     pub var active_border: gpu.Color = gpu.Color(0.10, 0.22, 0.32)
     pub var gutter: gpu.Color = gpu.Color(0.021, 0.028, 0.041)
+    pub var hover: gpu.Color = gpu.Color(0.045, 0.065, 0.09)
+    pub var hover_border: gpu.Color = gpu.Color(0.09, 0.14, 0.19)
+    pub var gutter_active: gpu.Color = gpu.Color(0.055, 0.10, 0.16)
+    pub var shadow: gpu.Color = gpu.Color()
+    pub var shadow_offset: f64 = 4.0
+    pub var shadow_opacity: f64 = 0.35
     pub var control_lines: f64 = 1.0
     pub var inset_cells: f64 = 1.0
 
     pub func validate() -> !:
+        if not math.is_finite(self.shadow_offset) or self.shadow_offset < 0.0 or self.shadow_offset > 32.0:
+            error(result.invalid, "popup shadow offset must be in 0..32 points")
+        if not math.is_finite(self.shadow_opacity) or self.shadow_opacity < 0.0 or self.shadow_opacity > 1.0:
+            error(result.invalid, "popup shadow opacity must be in 0..1")
         if not math.is_finite(self.control_lines) or self.control_lines < 1.0 or self.control_lines > 4.0:
             error(result.invalid, "control height must be in 1..4 text lines")
         if not math.is_finite(self.inset_cells) or self.inset_cells < 0.0 or self.inset_cells > 4.0:
@@ -37,4 +47,5 @@ pub struct Theme:
     pub func editor() -> EditorTheme:
         return EditorTheme(background = self.background, foreground = self.foreground,
             gutter = self.gutter, line_number = self.muted, current_line = self.panel,
+            gutter_active = self.gutter_active, gutter_hover = self.hover, active_line_number = self.foreground,
             selection = self.selection, caret = self.accent, scrollbar = self.border)

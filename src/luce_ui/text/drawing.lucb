@@ -20,7 +20,7 @@ pub func gutter_width(numbers: bool, font: interop.Reference[Font], folding: boo
 pub func paint(document: const Document*, painter: Painter*, width: f64, height: f64,
                scroll_x: f64, scroll_y: f64, numbers: bool, focused: bool,
                caret_visible: bool, font: interop.Reference[Font], theme: EditorTheme,
-               highlights: const Highlight[], projection: const Projection*, folds: const Folding*) -> !:
+               highlights: const Highlight[], projection: const Projection*, folds: const Folding*, hovered_row: usize? = none) -> !:
     let folding = folds.values().length > 0
     let gutter = gutter_width(numbers, font, folding)
     try painter.rectangle(gpu.Rect(width = width, height = height), theme.background)
@@ -40,18 +40,24 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
         let line = projection.line(physical)
         offset = line.start
         let end = line.end
+        let row_top = y - vertical_padding(font)
+        if row == current:
+            try painter.rectangle(gpu.Rect(0.0, row_top, gutter, font.value().line_height()), theme.gutter_active)
+        elif hovered_row == row:
+            try painter.rectangle(gpu.Rect(0.0, row_top, gutter, font.value().line_height()), theme.gutter_hover)
         if focused and row == current:
-            try painter.rectangle(gpu.Rect(gutter, y - 3.0, math.max(0.0, width - gutter), font.value().line_height()), theme.current_line)
+            try painter.rectangle(gpu.Rect(gutter, row_top, math.max(0.0, width - gutter), font.value().line_height()), theme.current_line)
+        let number_color = theme.active_line_number if row == current or hovered_row == row else theme.line_number
         if numbers:
             var label: u8[32]
             let text = try format(label, f"{physical + 1}")
             let extent = try font.value().measure(text)
-            try painter.text(text, gutter - extent - font.value().advance() * (3.0 if folding else 1.0), y, theme.line_number, font)
+            try painter.text(text, gutter - extent - font.value().advance() * (3.0 if folding else 1.0), y, number_color, font)
         try paint_line(document, painter, offset, end, y, width, scroll_x, gutter,
             focused, caret_visible, font, theme, highlights, &style)
         if let index = folds.at(offset):
             let fold = folds.values()[index]
-            try painter.text("+" if fold.collapsed else "-", gutter - font.value().advance() * 1.5, y, theme.line_number, font)
+            try painter.text("+" if fold.collapsed else "-", gutter - font.value().advance() * 1.5, y, number_color, font)
             if fold.collapsed:
                 let x = gutter + font.value().advance() * (f64)(line.columns + 2) - scroll_x
                 if x >= gutter and x < width - 8.0:

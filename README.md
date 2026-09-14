@@ -102,3 +102,10 @@ supplies file-name entry or confirmation. Both mount as popup children and reuse
 the framework's focus restoration, text input and window clipping. Panes use
 `Theme.active_border` to indicate descendant focus; `Theme.gutter` styles the
 folding margin independently. See the [popup API](docs/API.md#context-menus-command-search-and-prompts).
+
+Layout tracks hover independently of focus and capture, exposing `is_hovered`,
+`contains_pointer` and local `pointer_position` to every widget. Menus switch
+between sibling titles during an open session. Panes, controls, list rows and
+editor gutters use inherited hover colors. Popup shadows are sharp translucent
+rectangles with configurable offset and opacity. See the
+[hover API](docs/API.md#hover-and-menu-sessions).

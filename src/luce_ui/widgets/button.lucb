@@ -91,7 +91,8 @@ pub struct Button: Widget:
         defer painter.close()
         let size = try target.get().size()
         let theme = self.box.value().theme()
-        let color = theme.pressed if self.pressed else theme.button
+        let pressing = self.pressed and (self.pressed_key != input.Key.unknown or self.box.value().contains_pointer())
+        let color = theme.pressed if pressing and self.is_enabled() else (theme.hover if self.is_enabled() and self.box.value().contains_pointer() else theme.button)
         try painter.rectangle(gpu.Rect(width = size.width, height = size.height), color)
         if self.box.value().is_focused():
             try painter.rectangle(gpu.Rect(width = size.width, height = 2.0), theme.accent)
@@ -100,6 +101,8 @@ pub struct Button: Widget:
         try painter.text(caption.value, theme.inset(self.font), math.max(0.0, (size.height - self.font.value().height()) * 0.5), color = theme.foreground if self.is_enabled() else theme.muted, font = self.font)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if event.kind == input.EventKind.pointer_moved and not event.cancelled:
+            return result.success[unit](())
         if event.cancelled:
             self.pressed = false
             self.pressed_key = input.Key.unknown

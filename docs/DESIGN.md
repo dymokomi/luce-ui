@@ -68,3 +68,27 @@ which region owns keyboard input without knowing an application's panel names.
 While a popup owns focus, the previous focus path remains highlighted. Actual
 parent edges are distinct from retained traversal membership: a widget removed
 and reinserted within the same mounted application need not wait for a frame.
+
+Hover is another derived path through the retained tree. It is recalculated from
+the last pointer position after geometry changes, and immediately on pointer
+movement. The hit path respects occlusion, clipping and enabled ancestors; drag
+capture only chooses the recipient of movement events. This keeps hover correct
+when a captured pointer crosses into another pane. Native enter/leave events
+come from Base's window backends, so the UI layer contains no OS tracking calls.
+
+Sibling menu triggers form a menu group. An open popup supplies the session;
+there is no second application-level menu-mode flag to drift out of sync. Only
+that group's triggers bypass modal pointer hit testing. The tree closes the old
+popup before requesting the next one, and keyboard navigation uses the same path.
+
+Popup shadows are drawn in the overlay pass before each popup, using the window
+target and a single translucent rectangle. Layout and input retain the popup's
+original bounds. Child clipping includes the parent's padding, so even a child
+whose minimum size exceeds available space cannot overwrite a pane border.
+
+The native boundary follows [AppKit tracking areas](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/EventOverview/TrackingAreaObjects/TrackingAreaObjects.html)
+and [Windows mouse tracking](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-trackmouseevent).
+AppKit owns a tracking area synchronized to the view's visible rectangle;
+Windows rearms leave notifications on a new pointer interval. Both emit the same
+portable enter/leave values. Leaving a window clears hover without cancelling a
+captured drag.

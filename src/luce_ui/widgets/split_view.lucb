@@ -46,9 +46,12 @@ struct Divider: Widget:
         let size = try target.get().size()
         let theme = self.box.value().theme()
         try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.background)
-        let color = theme.accent if self.dragging or self.box.value().is_focused() else theme.border
+        # Pane edges define the resting boundary. The center grip appears only
+        # during interaction, keeping a wide hit target without a third idle rule.
+        if not self.dragging and not self.box.value().is_focused() and not self.box.value().contains_pointer():
+            return
         let line = gpu.Rect(x = (size.width - 1.0) * 0.5, width = 1.0, height = size.height) if self.horizontal else gpu.Rect(y = (size.height - 1.0) * 0.5, width = size.width, height = 1.0)
-        try painter.rectangle(line, color)
+        try painter.rectangle(line, theme.accent)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         self.handle(event) catch failure:

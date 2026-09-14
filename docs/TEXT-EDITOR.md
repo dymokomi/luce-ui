@@ -105,5 +105,12 @@ used by keyboard editing. `has_selection`, `is_read_only`, `can_undo` and
 unchanged. The application owns Action instances and may wrap the editor in a
 ContextMenu; clipboard and document logic remain inside the text control.
 
+The gutter marks the caret's visible row with `EditorTheme.gutter_active` and
+`active_line_number`, even while a menu temporarily owns keyboard focus. Hovering
+a different gutter row uses `gutter_hover` and brightens its number/fold marker.
+Both rows use the same projection and scroll position as text, including folded
+content. Passive pointer movement changes no document, decoration or measured
+geometry.
+
 The inherited theme has a separate gutter color, so the folding/line-number
 area remains distinct from document content when the application changes theme.

@@ -288,11 +288,19 @@ pub struct TextEditor: Widget:
         var painter = try Painter(target)
         defer painter.close()
         let size = try target.get().size()
+        var hovered_row: usize? = none
+        let pointer = self.box.value().pointer_position()
+        if self.box.value().contains_pointer() and pointer.x < self.gutter_width():
+            hovered_row = (usize)((pointer.y + self.scroll_y) / self.font.value().line_height())
         try drawing.paint(&self.document, &painter, size.width, size.height, self.scroll_x, self.scroll_y,
             self.line_numbers, self.box.value().is_focused(), time.since(self.active_since) % 1000000000 < 600000000,
-            self.font, (self.theme else self.box.value().theme().editor()), self.highlights.values(), &self.projection, &self.folds)
+            self.font, (self.theme else self.box.value().theme().editor()), self.highlights.values(), &self.projection, &self.folds, hovered_row)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        # Passive hover is derived by Layout and rendered without remeasuring
+        # controls or rebuilding text projections for each pointer movement.
+        if event.kind == input.EventKind.pointer_moved and not event.cancelled and not self.dragging and not self.dragging_scroll:
+            return result.success[unit](())
         let before = self.document.version()
         self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)

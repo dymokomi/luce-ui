@@ -16,7 +16,7 @@ All objects and callbacks belong to the main thread.
 | `SplitView` | Two widgets, `axis`, preferred `fraction`, `handle_width`; `fraction`, `set_fraction`, `layout` |
 | `Viewport` | Preferred minimum width/height; `on_render`, `layout` |
 | `Application` | Content, title and dimensions; `run`, `stop`, `close`, `on_frame`, `layout`, `dispatch`, `render` |
-| `Painter` | Checked GPU target; `rectangle`, `text`, `target` |
+| `Painter` | Checked GPU target; `rectangle(rect, color, opacity=1.0)`, `text`, `target` |
 | `Font` | Installed monospace family and size; `measure`, `advance`, `height`, `line_height` |
 | `Action` | Label and `Shortcut`; `on_trigger`, `trigger`, `set_enabled` |
 | `Toolbar` | Heterogeneous children and shared font; compact row, `set_children` |
@@ -132,6 +132,9 @@ arrow keys move it eight points, Shift+arrow moves 32, and Home/End move to the
 allowed limits. Focus loss cancels dragging. `fraction()` returns the preference,
 which survives window resizing; inspect child bounds for the constrained sizes.
 `Layout.minimum_size()` and `maximum_size()` expose configured constraints.
+At rest, the neighboring pane borders are the two visible edges. The center
+grip is drawn only while hovered, dragged or keyboard-focused. The full handle
+width remains available for hit testing.
 
 The split's Layout owns three visible ordinary children: first pane, divider,
 second pane. Changing this shape or hiding a direct child is rejected. To hide
@@ -181,3 +184,32 @@ controls the text editor's line-number and folding area.
 `Font.configure(size, family="")` loads a replacement face before releasing the
 old one. Widgets sharing that Font update together; invalidate the root Layout
 after changing it. An invalid face leaves the previous font usable.
+
+## Hover and menu sessions
+
+`Layout.is_hovered()` identifies the deepest visible, enabled widget under the
+pointer. `contains_pointer()` also includes hovered descendants. While it is
+true, `pointer_position()` returns a local `Point(x, y)`. Hover follows clipping
+and popup occlusion, independently of keyboard focus and drag capture. Layout
+changes recompute it beneath a stationary pointer; pointer leave, focus loss and
+input overflow clear it. Passive hover does not invalidate measured geometry.
+
+Buttons and menu titles use `Theme.hover`; list rows use it without changing the
+selected item. Panes use `hover_border`, with `active_border` taking precedence
+for keyboard focus. Editor gutters use `gutter_active` for the caret row and
+`hover` for a different hovered row; active/hovered line numbers brighten.
+
+Opening a `Menu` starts a session among sibling menu triggers. Moving over another
+enabled sibling opens it immediately and closes the previous popup. Left/Right
+also switch menus, skipping disabled or hidden peers. Escape, invoking a command,
+or clicking outside ends the session. Other popups remain modal: hovering a menu
+title while a context menu, prompt or palette is open does not switch to it.
+Custom triggers opt in with `Layout.set_menu_trigger(true)` and handle
+`Event.menu_requested` by opening their popup.
+
+Popup shadows use `Theme.shadow` with `shadow_opacity` (0..1, default 0.35) and
+`shadow_offset` (0..32 points, default 4). Setting either metric to zero hides the
+shadow. The renderer draws one translated rectangle with straight alpha blending,
+without blur or extra layout/hit-test space. It is clipped to the window rather
+than the popup's own bounds. `Painter.rectangle` exposes the same optional opacity
+for custom widgets; invalid opacity is an error.
