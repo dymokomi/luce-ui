@@ -21,6 +21,7 @@ with tempfile.TemporaryDirectory(prefix="luce-ui-gpu-") as temporary:
     project = Path(temporary)
     shutil.copy2(ROOT / "tests/gpu.lucb", project / "main.lucb")
     shutil.copy2(ROOT / "tests/style_pixels.lucb", project / "style_pixels.lucb")
+    shutil.copy2(ROOT / "tests/docking_pixels.lucb", project / "docking_pixels.lucb")
     shutil.copy2(args.base_source / "tests/programs/gpu/native.lucb", project / "native.lucb")
     (project / "luce.toml").write_text('[package]\nname = "ui_pixels"\nsource = "."\n\n[dependencies]\nluce_ui = ' + json.dumps(str(ROOT)) + '\n')
     for flags in modes:

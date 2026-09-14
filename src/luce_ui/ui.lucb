@@ -102,3 +102,17 @@ pub type Icon = icon.Icon
 pub let icon_type = icon.icon_type
 pub type PaneHeader = pane_header.PaneHeader
 pub let pane_header_type = pane_header.pane_header_type
+
+import luce_ui.widgets.panel as panel
+import luce_ui.widgets.dstack as dstack
+import luce_ui.docking.model as docking_model
+import luce_ui.docking.state as docking_state
+import luce_ui.arrangement as arrangement
+pub type Panel = panel.Panel
+pub let panel_type = panel.panel_type
+pub type DStack = dstack.DStack
+pub let dstack_type = dstack.dstack_type
+pub type DockPosition = docking_model.DockPosition
+pub type DockRequest = docking_state.DockRequest
+pub let dock_request_type = docking_state.dock_request_type
+pub type Arrangement = arrangement.Arrangement

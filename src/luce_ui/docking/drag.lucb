@@ -1,0 +1,45 @@
+## Pure drop geometry. The header accepts tabs; outer content quarters split.
+## Invalid/outside drops have no target and leave the topology untouched.
+import math
+from gpu import Rect
+from luce_ui.docking.model import Model, Geometry, DockPosition
+from luce_ui.docking.strip import contains
+
+pub struct Drop:
+    pub var group: usize
+    pub var position: DockPosition
+    pub var preview: Rect
+
+pub func target(model: Model*, geometry: Geometry*, x: f64, y: f64, header: f64) -> Drop:
+    for group in 1..<model.nodes.length:
+        if not model.nodes[group].used or model.nodes[group].first != 0:
+            continue
+        let bounds = geometry.panes[group]
+        if not contains(bounds, x, y): continue
+        let content = Rect(bounds.x + 1.0, bounds.y + header + 1.0,
+            math.max(0.0, bounds.width - 2.0), math.max(0.0, bounds.height - header - 2.0))
+        var drop = Drop(group = group, preview = bounds)
+        if y < content.y or content.width == 0.0 or content.height == 0.0:
+            return drop
+        let left = (x - content.x) / content.width
+        let right = 1.0 - left
+        let top = (y - content.y) / content.height
+        let bottom = 1.0 - top
+        let edge = math.min(math.min(left, right), math.min(top, bottom))
+        if edge >= 0.25: return drop
+        if edge == left:
+            drop.position = DockPosition.left
+            drop.preview.width *= 0.5
+        elif edge == right:
+            drop.position = DockPosition.right
+            drop.preview.x += bounds.width * 0.5
+            drop.preview.width *= 0.5
+        elif edge == top:
+            drop.position = DockPosition.top
+            drop.preview.height *= 0.5
+        else:
+            drop.position = DockPosition.bottom
+            drop.preview.y += bounds.height * 0.5
+            drop.preview.height *= 0.5
+        return drop
+    return Drop()

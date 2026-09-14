@@ -1,0 +1,501 @@
+## Shared workspace state. The root retains one stable child per panel; selecting
+## a tab changes visibility, and docking changes only value topology.
+import gpu
+import input
+import interop
+import math
+import memory
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+import luce_ui.docking.strip as strip
+import luce_ui.docking.drag as drag
+from luce_ui.arrangement import Arrangement
+from luce_ui.layout import Layout, Widget, Size, Point, Event
+from luce_ui.font import Font
+from luce_ui.theme import Theme
+from luce_ui.widgets.panel import Panel
+from luce_ui.widgets.action_popup import ActionPopup
+from luce_ui.docking.model import Model, Geometry, DockPosition
+
+type PanelSlot = interop.Reference[Panel]?
+type ConnectionSlot = interop.Reference[interop.Connection]?
+
+pub struct DockRequest:
+    pub let panel: interop.Reference[Panel]?
+    pub let position: DockPosition
+
+    pub func init(panel: interop.Reference[Panel]?, position: DockPosition):
+        var retained: interop.Reference[Panel]? = none
+        if let value = panel: retained = value.clone()
+        self.panel = retained
+        self.position = position
+
+    pub mutating func close():
+        release_panel(self.panel)
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        if let panel = self.panel: panel.trace(visit, context)
+
+pub let dock_request_type: interop.Type[DockRequest] = interop.Type[DockRequest]("Dock request", DockRequest.close, DockRequest.trace, closeable = true, main_thread = true)
+
+pub struct State: Arrangement:
+    pub let box: interop.WeakReference[Layout]
+    pub let font: interop.Reference[Font]
+    pub var panels: PanelSlot[]
+    pub var model: Model
+    pub var popup: interop.Reference[ActionPopup]?
+    pub var overlay: interop.Interface[Widget]?
+    pub var connections: ConnectionSlot[]
+    pub let selected: interop.Signal[interop.Reference[Panel]]
+    pub let added: interop.Signal[interop.Reference[DockRequest]]
+    pub let closed: interop.Signal[interop.Reference[Panel]]
+    var close_handler: interop.Callback[interop.Reference[Panel], bool]?
+    var menu_target: usize
+    var pressed_tab: usize
+    var pressed_close: usize
+    var pressed_add: usize
+    var resize: usize
+    pub var focused_divider: usize
+    var grab: f64
+    var start: Point
+    pub var dragging: bool
+    pub var drop: drag.Drop
+
+    pub func init(box: interop.Reference[Layout], font: interop.Reference[Font]) -> !:
+        let selected = try interop.Signal[interop.Reference[Panel]]()
+        errdefer selected.release()
+        let added = try interop.Signal[interop.Reference[DockRequest]]()
+        errdefer added.release()
+        let closed = try interop.Signal[interop.Reference[Panel]]()
+        errdefer closed.release()
+        let panels = try alloc PanelSlot[129] in memory.heap
+        errdefer free(panels) in memory.heap
+        let connections = try alloc ConnectionSlot[3] in memory.heap
+        for index in 0..<panels.length: panels[index] = none
+        for index in 0..<connections.length: connections[index] = none
+        self.box = interop.WeakReference[Layout](box)
+        self.font = font.clone()
+        self.panels = panels
+        self.model = Model()
+        self.popup = none
+        self.overlay = none
+        self.connections = connections
+        self.selected = selected
+        self.added = added
+        self.closed = closed
+        self.close_handler = none
+        self.menu_target = 0
+        self.pressed_tab = 0
+        self.pressed_close = 0
+        self.pressed_add = 0
+        self.resize = 0
+        self.focused_divider = 0
+        self.grab = 0.0
+        self.start = Point()
+        self.dragging = false
+        self.drop = drag.Drop()
+
+    pub func theme() -> Theme:
+        let box = self.box.get() else return Theme()
+        defer box.release()
+        return box.value().theme()
+
+    pub func height() -> f64:
+        return self.theme().row_height(self.font)
+
+    pub func size() -> Size:
+        let box = self.box.get() else return Size()
+        defer box.release()
+        let bounds = box.value().bounds()
+        return Size(bounds.width, bounds.height)
+
+    pub func geometry(size: Size) -> Geometry:
+        var minimums: Size[129]
+        for index in 1..<self.panels.length:
+            if let panel = self.panels[index]:
+                let box = panel.value().layout()
+                defer box.release()
+                minimums[index] = box.value().minimum_size()
+        return self.model.geometry(size, minimums, self.height(), 5.0)
+
+    pub func place(child: i64, available: Size) -> interop.Outcome[gpu.Rect]:
+        for index in 1..<self.panels.length:
+            if let panel = self.panels[index]:
+                let box = panel.value().layout()
+                defer box.release()
+                if box.value().id() == child:
+                    let geometry = self.geometry(available)
+                    let bounds = geometry.panes[self.model.tabs[index].group]
+                    return result.success[gpu.Rect](gpu.Rect(bounds.x + 1.0, bounds.y + self.height() + 1.0,
+                        math.max(0.0, bounds.width - 2.0), math.max(0.0, bounds.height - self.height() - 2.0)))
+        return result.success[gpu.Rect](gpu.Rect(width = available.width, height = available.height))
+
+    pub func index(panel: interop.Reference[Panel]) -> usize!:
+        let sought = (try panel.get()).layout()
+        defer sought.release()
+        for index in 1..<self.panels.length:
+            if let current = self.panels[index]:
+                let box = current.value().layout()
+                defer box.release()
+                if box.value().id() == sought.value().id(): return index
+        error(result.invalid, "panel does not belong to this dynamic stack")
+
+    pub func panel(index: usize) -> interop.Reference[Panel]!:
+        discard(try self.model.require(index))
+        let panel = self.panels[index] else error(result.invalid, "panel slot is empty")
+        return panel.clone()
+
+    pub func active() -> usize:
+        # Content receives its own pointer events. Descendant focus identifies
+        # the active panel without intercepting editor input or polling events.
+        for index in 1..<self.panels.length:
+            if let panel = self.panels[index]:
+                let box = panel.value().layout()
+                defer box.release()
+                if box.value().contains_focus(): return index
+        return self.model.active
+
+    pub func strip(group: usize, bounds: gpu.Rect) -> strip.Strip:
+        let selected = self.model.nodes[group].selected
+        return strip.arrange(gpu.Rect(bounds.x + 1.0, bounds.y + 1.0,
+            math.max(0.0, bounds.width - 2.0), self.height()), self.model.tab_count(group),
+            self.model.tabs[selected].order, self.font.value().advance())
+
+    pub func tab_bounds(index: usize) -> gpu.Rect!:
+        let group = try self.model.require(index)
+        let geometry = self.geometry(self.size())
+        return self.strip(group, geometry.panes[group]).tab(self.model.tabs[index].order)
+
+    pub func invalidate():
+        if let box = self.box.get():
+            defer box.release()
+            box.value().invalidate()
+
+    mutating func publish(model: Model):
+        self.model = model
+        for index in 1..<self.panels.length:
+            if let panel = self.panels[index]:
+                let box = panel.value().layout()
+                defer box.release()
+                let group = model.tabs[index].group
+                box.value().set_visible(group != 0 and model.nodes[group].selected == index)
+        self.invalidate()
+
+    ## Layout allocates its replacement edges before detaching anything. The
+    ## model and retained slots are published only after that operation succeeds.
+    func children(add: usize = 0, candidate: interop.Reference[Panel]? = none, remove: usize = 0) -> !:
+        let box = self.box.get() else error(result.invalid, "dynamic stack is closed")
+        defer box.release()
+        let children = try alloc interop.Interface[Widget][131] in memory.heap
+        defer free(children) in memory.heap
+        var count: usize = 0
+        defer release_children(children, count)
+        for index in 1..<self.panels.length:
+            if index == remove: continue
+            let selected = candidate if index == add else self.panels[index]
+            if let panel = selected:
+                children[count] = panel.as_interface[Widget](panel.value())
+                count += 1
+        if let overlay = self.overlay:
+            children[count] = overlay.clone()
+            count += 1
+        if let popup = self.popup:
+            children[count] = popup.as_interface[Widget](popup.value())
+            count += 1
+        try box.value().set_children(children[..<count])
+
+    pub mutating func install(overlay: interop.Interface[Widget], popup: interop.Reference[ActionPopup]) -> !:
+        self.overlay = overlay.clone()
+        self.popup = popup.clone()
+        try self.children()
+
+    pub mutating func add(panel: interop.Reference[Panel], relative: interop.Reference[Panel]?, position: DockPosition) -> !:
+        var slot: usize = 0
+        for index in 1..<self.panels.length:
+            if self.panels[index] == none:
+                slot = index
+                break
+        if slot == 0: error(result.limit, "a dynamic stack supports at most 128 panels")
+        var target = self.active()
+        if let other = relative: target = try self.index(other)
+        let caption = (try panel.get()).text()
+        defer caption.release()
+        discard(try self.font.value().measure(caption.value))
+        var next = self.model
+        try next.add(slot, target, position)
+        try self.children(slot, panel)
+        self.panels[slot] = panel.clone()
+        self.publish(next)
+        try self.select(slot)
+
+    pub mutating func select(index: usize, focus: bool = true) -> !:
+        var next = self.model
+        try next.select(index)
+        self.publish(next)
+        if focus:
+            let panel = try self.panel(index)
+            defer panel.release()
+            let box = panel.value().layout()
+            defer box.release()
+            box.value().request_focus()
+            let delivered = self.selected.emit(panel)
+            defer delivered.release()
+            try delivered.get()
+
+    pub mutating func move(panel: interop.Reference[Panel], relative: interop.Reference[Panel], position: DockPosition) -> !:
+        let index = try self.index(panel)
+        var next = self.model
+        try next.move(index, try self.index(relative), position)
+        self.publish(next)
+        try self.select(index)
+
+    pub mutating func remove(panel: interop.Reference[Panel]) -> !:
+        let index = try self.index(panel)
+        let removed = panel.clone()
+        defer removed.release()
+        var next = self.model
+        try next.remove(index)
+        try self.children(remove = index)
+        let previous = self.panels[index] else trap("missing retained panel")
+        self.panels[index] = none
+        previous.release()
+        self.publish(next)
+        if next.active != 0: try self.select(next.active)
+        let delivered = self.closed.emit(removed)
+        defer delivered.release()
+        try delivered.get()
+
+    pub mutating func set_close_handler(callback: interop.Callback[interop.Reference[Panel], bool]):
+        let replacement = callback.clone()
+        if let previous = self.close_handler: previous.release()
+        self.close_handler = replacement
+
+    mutating func request_close(index: usize) -> !:
+        let panel = try self.panel(index)
+        defer panel.release()
+        if not panel.value().is_closable(): return
+        if let callback = self.close_handler:
+            let allowed = callback.invoke(panel)
+            defer allowed.release()
+            if not (try allowed.get()): return
+        try self.remove(panel)
+
+    pub mutating func open_menu(group: usize) -> !:
+        let popup = self.popup else error(result.invalid, "dynamic stack has no add menu")
+        let geometry = self.geometry(self.size())
+        let bounds = self.strip(group, geometry.panes[group]).add if group != 0 else gpu.Rect(math.max(0.0, self.size().width - self.height()), 0.0, self.height(), self.height())
+        self.menu_target = self.model.nodes[group].selected if group != 0 else 0
+        let box = popup.value().layout()
+        defer box.release()
+        try box.value().set_popup_point(bounds.x, bounds.y + bounds.height)
+        try popup.value().open()
+
+    func request(position: DockPosition) -> interop.Outcome[unit]:
+        var target: interop.Reference[Panel]? = none
+        if self.menu_target != 0:
+            let panel = self.panel(self.menu_target) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            target = panel
+        defer release_panel(target)
+        let request = interop.Reference[DockRequest].adopt(new DockRequest(target, position) in memory.heap, dock_request_type, memory.heap) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer request.release()
+        return self.added.emit(request)
+
+    pub mutating func add_tab(argument: unit) -> interop.Outcome[unit]:
+        return self.request(DockPosition.tab)
+
+    pub mutating func split_vertical(argument: unit) -> interop.Outcome[unit]:
+        return self.request(DockPosition.right)
+
+    pub mutating func split_horizontal(argument: unit) -> interop.Outcome[unit]:
+        return self.request(DockPosition.bottom)
+
+    pub mutating func cancel():
+        self.pressed_tab = 0
+        self.pressed_close = 0
+        self.pressed_add = 0
+        self.resize = 0
+        self.dragging = false
+        self.drop = drag.Drop()
+        self.invalidate()
+
+    pub mutating func handle(event: Event) -> !:
+        if event.cancelled or (event.kind == input.EventKind.key_down and event.key == input.Key.escape):
+            self.cancel()
+            return
+        let geometry = self.geometry(self.size())
+        if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
+            self.cancel()
+            self.focused_divider = 0
+            self.start = Point(event.x, event.y)
+            for node in 1..<self.model.nodes.length:
+                if self.model.nodes[node].used and self.model.nodes[node].first != 0 and strip.contains(geometry.dividers[node], event.x, event.y):
+                    self.resize = node
+                    self.focused_divider = node
+                    self.grab = event.x - geometry.dividers[node].x if self.model.nodes[node].horizontal else event.y - geometry.dividers[node].y
+                    return
+            if self.model.root == 0:
+                let add = gpu.Rect(math.max(0.0, self.size().width - self.height()), 0.0, self.height(), self.height())
+                if strip.contains(add, event.x, event.y): self.pressed_add = 65
+                return
+            for group in 1..<self.model.nodes.length:
+                if not self.model.nodes[group].used or self.model.nodes[group].first != 0: continue
+                let header = self.strip(group, geometry.panes[group])
+                if strip.contains(header.add, event.x, event.y):
+                    self.pressed_add = group
+                    return
+                if strip.contains(header.previous, event.x, event.y) or strip.contains(header.next, event.x, event.y):
+                    try self.step(group, strip.contains(header.previous, event.x, event.y))
+                    return
+                if event.y < geometry.panes[group].y + 1.0 or event.y >= geometry.panes[group].y + 1.0 + self.height() or not strip.contains(geometry.panes[group], event.x, event.y): continue
+                var selected = self.model.nodes[group].selected
+                for order in header.first..<header.first + header.count:
+                    let bounds = header.tab(order)
+                    if strip.contains(bounds, event.x, event.y):
+                        selected = self.model.at(group, order)
+                        let panel = try self.panel(selected)
+                        defer panel.release()
+                        if panel.value().is_closable() and event.x >= bounds.x + bounds.width - self.height():
+                            self.pressed_close = selected
+                            return
+                        break
+                self.pressed_tab = selected
+                try self.select(selected, focus = false)
+                return
+        elif event.kind == input.EventKind.pointer_moved:
+            if self.resize != 0:
+                try self.resize_to(geometry, event.x, event.y)
+            elif self.pressed_tab != 0:
+                let dx = event.x - self.start.x
+                let dy = event.y - self.start.y
+                if dx * dx + dy * dy >= 16.0: self.dragging = true
+                if self.dragging:
+                    var model = self.model
+                    var positions = geometry
+                    self.drop = drag.target(&model, &positions, event.x, event.y, self.height()) if event.inside else drag.Drop()
+                    self.invalidate()
+        elif event.kind == input.EventKind.pointer_up and event.button == 0:
+            let tab = self.pressed_tab
+            let closing = self.pressed_close
+            let adding = self.pressed_add
+            let dragged = self.dragging
+            var model = self.model
+            var positions = geometry
+            let drop = drag.target(&model, &positions, event.x, event.y, self.height()) if dragged and event.inside else drag.Drop()
+            self.cancel()
+            if adding != 0 and event.inside:
+                let group = 0 if adding == 65 else adding
+                if group == 0 or strip.contains(self.strip(group, geometry.panes[group]).add, event.x, event.y):
+                    try self.open_menu(group)
+            elif closing != 0 and event.inside:
+                let bounds = try self.tab_bounds(closing)
+                if strip.contains(bounds, event.x, event.y) and event.x >= bounds.x + bounds.width - self.height():
+                    try self.request_close(closing)
+            elif tab != 0:
+                if dragged and drop.group != 0 and event.inside:
+                    var relative = self.model.nodes[drop.group].selected
+                    let header = self.strip(drop.group, geometry.panes[drop.group])
+                    for order in header.first..<header.first + header.count:
+                        if strip.contains(header.tab(order), event.x, event.y):
+                            relative = self.model.at(drop.group, order)
+                    var next = self.model
+                    try next.move(tab, relative, drop.position)
+                    self.publish(next)
+                try self.select(tab)
+        elif event.kind == input.EventKind.scroll:
+            for group in 1..<self.model.nodes.length:
+                if self.model.nodes[group].used and self.model.nodes[group].first == 0:
+                    let bounds = geometry.panes[group]
+                    if strip.contains(gpu.Rect(bounds.x, bounds.y, bounds.width, self.height() + 1.0), event.x, event.y):
+                        try self.step(group, event.scroll_y > 0.0 or event.scroll_x > 0.0)
+                        return
+        elif event.kind == input.EventKind.key_down and not event.repeated:
+            if self.focused_divider != 0 and self.model.nodes[self.focused_divider].used and self.model.nodes[self.focused_divider].first != 0:
+                let node = self.focused_divider
+                let horizontal = self.model.nodes[node].horizontal
+                let backward = event.key == input.Key.left if horizontal else event.key == input.Key.up
+                let forward = event.key == input.Key.right if horizontal else event.key == input.Key.down
+                if event.key == input.Key.home or event.key == input.Key.end:
+                    self.model.nodes[node].fraction = 0.0 if event.key == input.Key.home else 1.0
+                    self.invalidate()
+                elif backward or forward:
+                    let bounds = geometry.dividers[node]
+                    let delta = (32.0 if event.shift else 8.0) * (-1.0 if backward else 1.0)
+                    self.resize = node
+                    self.grab = 0.0
+                    try self.resize_to(geometry, bounds.x + (delta if horizontal else 0.0), bounds.y + (0.0 if horizontal else delta))
+                    self.resize = 0
+            elif self.active() != 0:
+                let group = self.model.tabs[self.active()].group
+                if event.key == input.Key.left or event.key == input.Key.right:
+                    try self.step(group, event.key == input.Key.left)
+                elif event.key == input.Key.enter or event.key == input.Key.down:
+                    try self.select(self.model.nodes[group].selected)
+                elif event.key == input.Key.n and event.control:
+                    try self.open_menu(group)
+
+    mutating func step(group: usize, backwards: bool) -> !:
+        let current = self.model.tabs[self.model.nodes[group].selected].order
+        let count = self.model.tab_count(group)
+        let next = (current + count - 1) % count if backwards else (current + 1) % count
+        let index = self.model.at(group, next)
+        try self.select(index, focus = false)
+        let panel = try self.panel(index)
+        defer panel.release()
+        let delivered = self.selected.emit(panel)
+        defer delivered.release()
+        try delivered.get()
+
+    mutating func resize_to(geometry: Geometry, x: f64, y: f64) -> !:
+        if not math.is_finite(x) or not math.is_finite(y):
+            error(result.invalid, "divider position must be finite")
+        let bounds = geometry.panes[self.resize]
+        let horizontal = self.model.nodes[self.resize].horizontal
+        let available = math.max(0.0, (bounds.width if horizontal else bounds.height) - 5.0)
+        if available == 0.0: return
+        self.model.nodes[self.resize].fraction = math.clamp(((x - bounds.x if horizontal else y - bounds.y) - self.grab) / available, 0.0, 1.0)
+        self.invalidate()
+
+    pub mutating func close():
+        for retained in self.connections:
+            if let connection = retained:
+                # Connection disposal disconnects. Collector finalizers may
+                # already have closed an alias, so cleanup only releases it.
+                connection.release()
+        if let callback = self.close_handler: callback.release()
+        self.selected.close()
+        self.selected.release()
+        self.added.close()
+        self.added.release()
+        self.closed.close()
+        self.closed.release()
+        if let popup = self.popup: popup.release()
+        if let overlay = self.overlay: overlay.release()
+        for panel in self.panels: release_panel(panel)
+        free(self.panels) in memory.heap
+        free(self.connections) in memory.heap
+        self.font.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        for retained in self.connections:
+            if let connection = retained: connection.trace(visit, context)
+        if let callback = self.close_handler: callback.trace(visit, context)
+        self.selected.trace(visit, context)
+        self.added.trace(visit, context)
+        self.closed.trace(visit, context)
+        if let popup = self.popup: popup.trace(visit, context)
+        if let overlay = self.overlay: overlay.trace(visit, context)
+        for retained in self.panels:
+            if let panel = retained: panel.trace(visit, context)
+        self.font.trace(visit, context)
+
+func release_panel(retained: interop.Reference[Panel]?):
+    if let panel = retained: panel.release()
+
+func release_children(children: interop.Interface[Widget][], count: usize):
+    for child in children[..<count]: child.release()
+
+pub let state_type: interop.Type[State] = interop.Type[State]("Dynamic stack state", State.close, State.trace, closeable = true, main_thread = true)

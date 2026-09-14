@@ -1,0 +1,119 @@
+## Workspace chrome uses standard GPU regions. Every tab label is clipped away
+## from its close button and neighbors; overlay previews do not receive input.
+import gpu
+import interop
+import math
+import luce_ui.icons as icons
+import luce_ui.docking.strip as strip
+from luce_ui.docking.state import State
+from luce_ui.painter import Painter
+from luce_ui.geometry import Point, Size
+from luce_ui.icons import IconKind
+
+pub func draw(state: State*, target: interop.View[gpu.RenderTarget]) -> !:
+    var painter = try Painter(target)
+    defer painter.close()
+    let size = try target.get().size()
+    let geometry = state.geometry(Size(size.width, size.height))
+    let theme = state.theme()
+    let box = state.box.get() else return
+    defer box.release()
+    let pointer = box.value().pointer_position()
+    let hovered = box.value().contains_pointer()
+    let focused = box.value().contains_focus()
+    let active = state.active()
+    let active_group = state.model.tabs[active].group
+    try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.background)
+    if state.model.root == 0:
+        try button(state, &painter, gpu.Rect(math.max(0.0, size.width - state.height()), 0.0, state.height(), state.height()), "+", pointer, hovered)
+    for group in 1..<state.model.nodes.length:
+        let node = state.model.nodes[group]
+        if not node.used: continue
+        if node.first != 0:
+            let divider = geometry.dividers[group]
+            if (hovered and strip.contains(divider, pointer.x, pointer.y)) or (focused and state.focused_divider == group):
+                let line = gpu.Rect(divider.x + (divider.width - 1.0) * 0.5, divider.y, 1.0, divider.height) if node.horizontal else gpu.Rect(divider.x, divider.y + (divider.height - 1.0) * 0.5, divider.width, 1.0)
+                try painter.rectangle(line, theme.accent)
+            continue
+        let bounds = geometry.panes[group]
+        let border = theme.active_border if focused and active_group == group else (theme.hover_border if hovered and strip.contains(bounds, pointer.x, pointer.y) else theme.border)
+        try painter.rectangle(bounds, border)
+        try painter.rectangle(gpu.Rect(bounds.x + 1.0, bounds.y + state.height() + 1.0, math.max(0.0, bounds.width - 2.0), math.max(0.0, bounds.height - state.height() - 2.0)), theme.background)
+        let header = state.strip(group, bounds)
+        for order in header.first..<header.first + header.count:
+            let index = state.model.at(group, order)
+            let rectangle = header.tab(order)
+            if rectangle.width == 0.0: continue
+            let selected = node.selected == index
+            let color = border if selected else theme.panel
+            try painter.rectangle(rectangle, theme.hover if hovered and not selected and strip.contains(rectangle, pointer.x, pointer.y) else color)
+            try tab(state, target, index, rectangle, pointer, hovered)
+        try button(state, &painter, header.previous, "<", pointer, hovered)
+        try button(state, &painter, header.next, ">", pointer, hovered)
+        try button(state, &painter, header.add, "+", pointer, hovered)
+        if header.count == 1:
+            let index = state.model.at(group, header.first)
+            let panel = try state.panel(index)
+            defer panel.release()
+            let detail = panel.value().detail()
+            defer detail.release()
+            let x = header.tabs.x + header.width + theme.inset(state.font)
+            let width = header.add.x - theme.inset(state.font) - x
+            if detail.value.length > 0 and width > 0.0:
+                let clipped = try target.get().clipped(gpu.Rect(x, header.tabs.y, width, header.tabs.height))
+                defer clipped.release()
+                var labels = try Painter(clipped)
+                defer labels.close()
+                try labels.text(detail.value, x, header.tabs.y + (header.tabs.height - state.font.value().height()) * 0.5, theme.muted, state.font)
+
+func tab(state: State*, target: interop.View[gpu.RenderTarget], index: usize, bounds: gpu.Rect, pointer: Point, hovered: bool) -> !:
+    let theme = state.theme()
+    let font = state.font
+    let panel = try state.panel(index)
+    defer panel.release()
+    let inset = math.ceil(font.value().advance() * theme.header_inset_cells)
+    let close_width = bounds.height if panel.value().is_closable() else 0.0
+    let end = math.max(bounds.x, bounds.x + bounds.width - close_width)
+    let content = try target.get().clipped(gpu.Rect(bounds.x, bounds.y, end - bounds.x, bounds.height))
+    defer content.release()
+    var painter = try Painter(content)
+    defer painter.close()
+    var x = bounds.x + inset
+    let y = bounds.y + (bounds.height - font.value().height()) * 0.5
+    if panel.value().icon() != IconKind.blank:
+        let extent = font.value().height()
+        try icons.draw(&painter, panel.value().icon(), gpu.Rect(x, y, extent, extent), theme.foreground)
+        x += extent + theme.inset(font)
+    let label = panel.value().text()
+    defer label.release()
+    try painter.text(label.value, x, y, theme.foreground, font)
+    if close_width > 0.0:
+        var controls = try Painter(target)
+        defer controls.close()
+        let rectangle = gpu.Rect(end, bounds.y, close_width, bounds.height)
+        if hovered and strip.contains(rectangle, pointer.x, pointer.y):
+            try controls.rectangle(rectangle, theme.hover)
+        let middle = Point(end + close_width * 0.5, bounds.y + bounds.height * 0.5)
+        let extent = font.value().advance() * 0.3
+        try controls.line(Point(middle.x - extent, middle.y - extent), Point(middle.x + extent, middle.y + extent), 1.0, theme.muted)
+        try controls.line(Point(middle.x - extent, middle.y + extent), Point(middle.x + extent, middle.y - extent), 1.0, theme.muted)
+
+func button(state: State*, painter: Painter*, bounds: gpu.Rect, label: str, pointer: Point, hovered: bool) -> !:
+    if bounds.width == 0.0 or bounds.height == 0.0: return
+    let theme = state.theme()
+    if hovered and strip.contains(bounds, pointer.x, pointer.y):
+        try painter.rectangle(bounds, theme.hover)
+    try painter.text(label, bounds.x + (bounds.width - (try state.font.value().measure(label))) * 0.5,
+        bounds.y + (bounds.height - state.font.value().height()) * 0.5, theme.foreground, state.font)
+
+pub func preview(state: State*, target: interop.View[gpu.RenderTarget]) -> !:
+    if not state.dragging or state.drop.group == 0: return
+    var painter = try Painter(target)
+    defer painter.close()
+    let rectangle = state.drop.preview
+    let color = state.theme().accent
+    try painter.rectangle(rectangle, color, 0.22)
+    try painter.rectangle(gpu.Rect(rectangle.x, rectangle.y, rectangle.width, 2.0), color)
+    try painter.rectangle(gpu.Rect(rectangle.x, rectangle.y + math.max(0.0, rectangle.height - 2.0), rectangle.width, 2.0), color)
+    try painter.rectangle(gpu.Rect(rectangle.x, rectangle.y, 2.0, rectangle.height), color)
+    try painter.rectangle(gpu.Rect(rectangle.x + math.max(0.0, rectangle.width - 2.0), rectangle.y, 2.0, rectangle.height), color)

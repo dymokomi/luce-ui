@@ -1,0 +1,66 @@
+## Actual GPU contracts for flat tab headers and an input-transparent docking
+## preview drawn above content. Distinct colors avoid dependence on the theme.
+import gpu
+import input
+import interop
+import memory
+import native
+import window
+import ui
+import style_pixels as pixels
+from ui import Application, DStack, Panel, TextEditor, Widget, DockPosition, Event
+
+pub func check(host: window.Window, surface: gpu.Surface) -> !:
+    try host.resize(505, 240)
+    let a = try interop.Reference[TextEditor].adopt(new TextEditor("", line_numbers = false) in memory.heap, ui.text_editor_type, memory.heap)
+    defer a.release()
+    let a_widget = a.as_interface[Widget](a.value())
+    defer a_widget.release()
+    let first = try interop.Reference[Panel].adopt(new Panel("", a_widget, closable = false) in memory.heap, ui.panel_type, memory.heap)
+    defer first.release()
+    let b = try interop.Reference[TextEditor].adopt(new TextEditor("", line_numbers = false) in memory.heap, ui.text_editor_type, memory.heap)
+    defer b.release()
+    let b_widget = b.as_interface[Widget](b.value())
+    defer b_widget.release()
+    let second = try interop.Reference[Panel].adopt(new Panel("", b_widget, closable = false) in memory.heap, ui.panel_type, memory.heap)
+    defer second.release()
+    let stack = try interop.Reference[DStack].adopt(new DStack([first, second]) in memory.heap, ui.dstack_type, memory.heap)
+    defer stack.release()
+    try stack.value().move(second, first, DockPosition.right)
+    let root = stack.as_interface[Widget](stack.value())
+    defer root.release()
+    let theme = ui.Theme(background = gpu.Color(1.0, 1.0, 1.0), panel = gpu.Color(),
+        foreground = gpu.Color(1.0, 1.0, 1.0), border = gpu.Color(1.0, 0.0, 0.0),
+        hover_border = gpu.Color(0.0, 1.0, 0.0), active_border = gpu.Color(0.0, 0.0, 1.0), accent = gpu.Color(0.0, 0.0, 1.0))
+    let app = try interop.Reference[Application].adopt(new Application(root, theme = theme) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    let scale = (try host.size()).scale
+    for phase in 0..<3:
+        if phase == 1:
+            try dispatch(app, Event(kind = input.EventKind.pointer_down, x = 20.0, y = 5.0))
+            try dispatch(app, Event(kind = input.EventKind.pointer_moved, x = 280.0, y = 120.0))
+        elif phase == 2:
+            # Release at a different point: the committed drop uses final input,
+            # not a stale preview rectangle from the previous pointer event.
+            try dispatch(app, Event(kind = input.EventKind.pointer_up, x = 380.0, y = 120.0))
+            assert(stack.value().group_count() == 1)
+        native.begin("UI pixel contracts")
+        defer native.end()
+        try pixels.render(app, host, surface)
+        if phase == 0:
+            pixels.pixel(scale, 180.0, 4.0, 255, 0, 0)
+            pixels.pixel(scale, 0.0, 100.0, 255, 0, 0)
+            pixels.pixel(scale, 430.0, 4.0, 0, 0, 255)
+            pixels.pixel(scale, 450.0, 120.0, 255, 255, 255)
+        elif phase == 1:
+            pixels.pixel(scale, 379.0, 120.0, 0, 0, 255)
+            pixels.pixel(scale, 450.0, 120.0, 255, 255, 255)
+        else:
+            pixels.pixel(scale, 100.0, 4.0, 0, 0, 0)
+            pixels.pixel(scale, 350.0, 4.0, 0, 0, 255)
+            pixels.pixel(scale, 379.0, 120.0, 255, 255, 255)
+
+func dispatch(app: interop.Reference[Application], event: Event) -> !:
+    let outcome = app.value().dispatch(event)
+    defer outcome.release()
+    try outcome.get()

@@ -7,7 +7,8 @@ import ownership
 import thread
 import window
 import ui
-from ui import Widget, Button, Spacer, VStack, HStack, Layout, Size, Application, Painter, Rect, Event, Font
+import layout_cycles
+from ui import Widget, Button, Spacer, VStack, HStack, Layout, Size, Application, Painter, Rect, Event, Font, Panel, DStack
 
 struct Tracker: memory.Allocator:
     var upstream: memory.Allocator
@@ -60,6 +61,41 @@ func allocations(tracker: Tracker*) -> !:
         ownership.collect()
         assert(tracker.live == 0)
     assert(succeeded and failures >= 4)
+
+func new_stack() -> interop.Reference[DStack]!:
+    let button = try new_button("content")
+    defer button.release()
+    let widget = button.as_interface[Widget](button.value())
+    defer widget.release()
+    let panel = try interop.Reference[Panel].adopt(new Panel("Example", widget) in memory.heap, ui.panel_type, memory.heap)
+    defer panel.release()
+    return try interop.Reference[DStack].adopt(new DStack([panel]) in memory.heap, ui.dstack_type, memory.heap)
+
+func docking_allocations(tracker: Tracker*) -> !:
+    # Runtime candidate buffers grow infallibly. Reserve their normal capacity
+    # before testing fallible package allocations, then account for that cache.
+    let warmup = try new_stack()
+    warmup.release()
+    ownership.collect()
+    let baseline = tracker.live
+    var succeeded = false
+    var failures: usize = 0
+    for stage in 0..<160:
+        tracker.remaining = (usize)stage
+        let stack: interop.Reference[DStack]? = new_stack() catch failure:
+            assert(failure.code == memory.exhausted)
+            failures += 1
+            recover none
+        if let retained = stack:
+            assert(retained.value().panel_count() == 1)
+            retained.release()
+            succeeded = true
+        tracker.remaining = none
+        ownership.collect()
+        assert(tracker.live == baseline)
+    assert(succeeded and failures > 20)
+    assert(ownership.finish_run(0) == 0)
+    assert(tracker.live == 0)
 
 func ownership_and_layout(tracker: Tracker*) -> !:
     let control = try new_button("pause")
@@ -177,6 +213,10 @@ pub func main(arguments: str[]) -> i32!:
     defer restore(previous)
     with tracker:
         try allocations(&tracker)
+        try docking_allocations(&tracker)
+        try layout_cycles.collect()
+        assert(ownership.finish_run(0) == 0)
+        assert(tracker.live == 0)
         try ownership_and_layout(&tracker)
         assert(ownership.finish_run(0) == 0)
         assert(tracker.live == 0)

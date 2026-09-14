@@ -1,0 +1,90 @@
+import math
+from luce_ui.docking.model import Model, Geometry, DockPosition
+from luce_ui.geometry import Size
+
+func visit(model: Model*, node: usize, parent: usize, seen: bool[]):
+    assert(node > 0 and node < model.nodes.length and not seen[node])
+    seen[node] = true
+    let current = model.nodes[node]
+    assert(current.used and current.parent == parent)
+    if current.first == 0:
+        assert(current.second == 0 and current.selected > 0)
+        assert(model.tabs[current.selected].group == node)
+        let count = model.tab_count(node)
+        assert(count > 0)
+        for order in 0..<count:
+            let tab = model.at(node, order)
+            assert(tab > 0 and model.tabs[tab].order == order)
+    else:
+        assert(current.selected == 0 and math.is_finite(current.fraction))
+        assert(current.fraction >= 0.0 and current.fraction <= 1.0)
+        visit(model, current.first, node, seen)
+        visit(model, current.second, node, seen)
+
+func audit(model: Model*):
+    var seen: bool[65]
+    if model.root != 0:
+        visit(model, model.root, 0, seen)
+        assert(model.active > 0 and model.tabs[model.active].group != 0)
+    else:
+        assert(model.count() == 0 and model.active == 0)
+    for node in 1..<model.nodes.length:
+        assert(seen[node] == model.nodes[node].used)
+    for tab in model.tabs:
+        if tab.group != 0: assert(seen[tab.group] and model.nodes[tab.group].first == 0)
+
+test "dock moves preserve a valid tree, ordered tabs and selection through repeated collapse":
+    var model = Model()
+    for index in 1..<13:
+        try model.add((usize)index, (usize)(index - 1))
+    for step in 0..<600:
+        let tab = (usize)(step * 7 % 12 + 1)
+        let relative = (usize)((step * 11 + 3) % 12 + 1)
+        try model.move(tab, relative, (DockPosition)(u8)(step % 5))
+        audit(&model)
+        assert(model.count() == 12)
+        if step % 17 == 0:
+            try model.remove(tab)
+            audit(&model)
+            let target = relative if relative != tab else model.active
+            try model.add(tab, target, DockPosition.right)
+            audit(&model)
+    for index in 1..<13:
+        try model.remove((usize)index)
+        audit(&model)
+    assert(model.root == 0 and model.group_count() == 0)
+
+test "geometry preserves minimum sizes and fractions across both split axes":
+    var model = Model()
+    try model.add(1, 0)
+    try model.add(2, 1, DockPosition.right)
+    try model.add(3, 2, DockPosition.bottom)
+    var minimums: Size[129]
+    minimums[1] = Size(100.0, 60.0)
+    minimums[2] = Size(200.0, 80.0)
+    minimums[3] = Size(150.0, 50.0)
+    let first = model.tabs[1].group
+    let second = model.tabs[2].group
+    let third = model.tabs[3].group
+    model.nodes[model.root].fraction = 0.25
+    let large = model.geometry(Size(805.0, 505.0), minimums, 20.0, 5.0)
+    assert(large.panes[first].width == 200.0 and large.panes[second].width == 600.0)
+    assert(large.panes[third].y == 255.0)
+    let small = model.geometry(Size(100.0, 100.0), minimums, 20.0, 5.0)
+    assert(small.panes[first].width >= 102.0 and small.panes[second].width >= 202.0)
+    assert(small.panes[third].height >= 72.0 and small.panes[second].height >= 102.0)
+    assert(small.panes[second].x >= small.panes[first].width + 5.0)
+    let again = model.geometry(Size(805.0, 505.0), minimums, 20.0, 5.0)
+    assert(again.panes[first].width == large.panes[first].width)
+
+test "editing a model copy keeps a rejected split from changing published topology":
+    var published = Model()
+    try published.add(1, 0)
+    for index in 2..<33:
+        try published.add((usize)index, (usize)(index - 1), DockPosition.right)
+    assert(published.group_count() == 32)
+    var pending = published
+    var rejected = false
+    pending.add(33, 1, DockPosition.bottom) catch failure: rejected = true
+    assert(rejected and published.group_count() == 32 and published.count() == 32)
+    audit(&published)

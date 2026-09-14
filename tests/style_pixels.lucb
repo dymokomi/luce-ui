@@ -10,7 +10,7 @@ import ui
 import window
 from ui import Application, Action, Menu, Pane, PaneHeader, IconKind, SplitView, TextEditor, Button, Widget, Event
 
-func render(app: interop.Reference[Application], host: window.Window, surface: gpu.Surface) -> !:
+pub func render(app: interop.Reference[Application], host: window.Window, surface: gpu.Surface) -> !:
     while let event = try host.poll(): discard(event)
     let recording = try surface.frame()
     defer recording.release()
@@ -22,7 +22,7 @@ func render(app: interop.Reference[Application], host: window.Window, surface: g
     assert((try recording.value().present()) == gpu.PresentResult.submitted)
     try surface.wait_idle()
 
-func pixel(scale: f64, x: f64, y: f64, red: u8, green: u8, blue: u8):
+pub func pixel(scale: f64, x: f64, y: f64, red: u8, green: u8, blue: u8):
     native.pixel((u64)(x * scale), (u64)(y * scale), red, green, blue)
 
 pub func check(host: window.Window, surface: gpu.Surface) -> !:
@@ -146,8 +146,7 @@ pub func headers(host: window.Window, surface: gpu.Surface) -> !:
         pixel(scale, 204.0, 80.0, red, green, blue)
         pixel(scale, 180.0, 119.0, red, green, blue)
         pixel(scale, 180.0, 90.0, 255, 255, 255)
-        # Sample well inside the triangle and outside its tip: the ending is
-        # actual vector geometry, with no dependence on a font's special glyphs.
-        pixel(scale, 1.0 + badge + 2.0, 1.0 + height * 0.5, 0, 0, 0)
+        # The icon sits directly on the shared frame color, without a badge.
+        pixel(scale, 1.0 + badge + 2.0, 1.0 + height * 0.5, red, green, blue)
         pixel(scale, 1.0 + badge + height * 0.5 + 2.0, 1.0 + height * 0.5, red, green, blue)
         pixel(scale, 1.0 + inset + font.value().height() * 0.5, 1.0 + height * 0.5, 255, 255, 255)

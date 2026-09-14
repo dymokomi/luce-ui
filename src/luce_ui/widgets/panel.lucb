@@ -1,0 +1,93 @@
+## A panel is one persistent piece of content in a dynamic workspace. Docking
+## changes its position, never its content owner or document state.
+import gpu
+import interop
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Constraints, Size, Event
+from luce_ui.icons import IconKind
+
+pub struct Panel: Widget:
+    let box: interop.Reference[Layout]
+    var caption: interop.Owned[str]
+    var description: interop.Owned[str]
+    var symbol: IconKind
+    let closable: bool
+
+    pub func init(text: str, content: interop.Interface[Widget], icon: IconKind = IconKind.blank,
+                  minimum: Size = Size(120.0, 60.0), closable: bool = true) -> !:
+        let caption = try interop.copy_text(text)
+        errdefer caption.release()
+        let description = try interop.copy_text("")
+        errdefer description.release()
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_limits(minimum, Size(16384.0, 16384.0))
+        try box.value().set_flex()
+        try box.value().set_children([content])
+        self.box = box
+        self.caption = caption
+        self.description = description
+        self.symbol = icon
+        self.closable = closable
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func text() -> interop.Owned[str]:
+        return self.caption.clone()
+
+    pub func detail() -> interop.Owned[str]:
+        return self.description.clone()
+
+    pub func icon() -> IconKind:
+        return self.symbol
+
+    pub func is_closable() -> bool:
+        return self.closable
+
+    pub mutating func set_text(text: str) -> !:
+        if text == self.caption.value: return
+        let replacement = try interop.copy_text(text)
+        self.caption.release()
+        self.caption = replacement
+        self.box.value().invalidate()
+
+    pub mutating func set_detail(detail: str) -> !:
+        if detail == self.description.value: return
+        let replacement = try interop.copy_text(detail)
+        self.description.release()
+        self.description = replacement
+        self.box.value().invalidate()
+
+    pub mutating func set_icon(icon: IconKind):
+        if icon == self.symbol: return
+        self.symbol = icon
+        self.box.value().invalidate()
+
+    pub mutating func set_content(content: interop.Interface[Widget]) -> !:
+        try self.box.value().set_children([content])
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let size = self.box.value().content_size(available) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        return result.success[Size](size)
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.description.release()
+        self.caption.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.description.trace(visit, context)
+        self.caption.trace(visit, context)
+        self.box.trace(visit, context)
+
+pub let panel_type: interop.Type[Panel] = interop.Type[Panel]("Panel", Panel.close, Panel.trace, closeable = true, main_thread = true)

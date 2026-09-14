@@ -1,4 +1,4 @@
-## A compact pane title with a vector badge and arrow ending. Pane paints the
+## A compact pane title with an optional vector icon. Pane paints the
 ## shared frame background; this widget owns text, font metrics and presentation.
 import gpu
 import interop
@@ -8,7 +8,7 @@ import luce_ui.icons as icons
 import luce_ui.layout as layout
 import luce_ui.result as result
 from luce_ui.icons import IconKind
-from luce_ui.layout import Widget, Layout, Point, Size, Constraints, Event
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 from luce_ui.font import Font, selected_font
 
@@ -73,14 +73,14 @@ pub struct PaneHeader: Widget:
     func inset() -> f64:
         return math.ceil(self.font.value().advance() * self.box.value().theme().header_inset_cells)
 
-    func title_x(height: f64) -> f64:
-        return self.inset() if self.icon == IconKind.blank else self.inset() * 3.0 + self.font.value().height() + height * 0.5
+    func title_x() -> f64:
+        return self.inset() if self.icon == IconKind.blank else self.inset() * 2.0 + self.font.value().height()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         let width = self.font.value().measure(self.caption.value) catch failure:
             return result.failure[Size](failure.code, failure.message)
         let height = self.box.value().theme().row_height(self.font)
-        return result.success[Size](Size(self.title_x(height) + width + self.inset(), height))
+        return result.success[Size](Size(self.title_x() + width + self.inset(), height))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
@@ -94,11 +94,8 @@ pub struct PaneHeader: Widget:
         let theme = self.box.value().theme()
         if self.icon != IconKind.blank:
             let extent = self.font.value().height()
-            let badge = self.inset() * 2.0 + extent
-            try painter.rectangle(gpu.Rect(width = badge, height = size.height), theme.panel)
-            try painter.triangle(Point(badge, 0.0), Point(badge + size.height * 0.5, size.height * 0.5), Point(badge, size.height), theme.panel)
             try icons.draw(&painter, self.icon, gpu.Rect(self.inset(), (size.height - extent) * 0.5, extent, extent), theme.foreground)
-        let x = self.title_x(size.height)
+        let x = self.title_x()
         let y = math.max(0.0, (size.height - self.font.value().height()) * 0.5)
         try painter.text(self.caption.value, x, y, theme.foreground, self.font)
         let detail_x = x + (try self.font.value().measure(self.caption.value)) + self.inset() * 2.0

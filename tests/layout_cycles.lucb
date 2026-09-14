@@ -1,0 +1,52 @@
+## A callback-like retained parent edge makes layout owners part of a cycle.
+## The collector may finalize a child's layout before detaching its widget.
+import gpu
+import interop
+import memory
+import ownership
+import ui
+from ui import Layout, Widget, Size, Constraints, Event
+
+struct Child: Widget:
+    let box: interop.Reference[Layout]
+    let retained_parent: interop.Reference[Layout]
+
+    pub func init(box: interop.Reference[Layout], parent: interop.Reference[Layout]):
+        self.box = box.clone()
+        self.retained_parent = parent.clone()
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return interop.Outcome[Size].success(interop.Owned[Size](Size()))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        return interop.Outcome[unit].success(interop.Owned[unit](()))
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return interop.Outcome[unit].success(interop.Owned[unit](()))
+
+    pub mutating func close():
+        self.box.release()
+        self.retained_parent.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+        self.retained_parent.trace(visit, context)
+
+let child_type: interop.Type[Child] = interop.Type[Child]("Layout cycle child", Child.close, Child.trace, closeable = true, main_thread = true)
+
+pub func collect() -> !:
+    let box = try interop.Reference[Layout].adopt(new Layout() in memory.heap, ui.layout_type, memory.heap)
+    defer box.release()
+    # Buffer this leaf first so collection exercises the adverse finalizer order.
+    let alias = box.clone()
+    alias.release()
+    let parent = try interop.Reference[Layout].adopt(new Layout() in memory.heap, ui.layout_type, memory.heap)
+    defer parent.release()
+    let child = try interop.Reference[Child].adopt(new Child(box, parent) in memory.heap, child_type, memory.heap)
+    defer child.release()
+    let widget = child.as_interface[Widget](child.value())
+    defer widget.release()
+    try parent.value().set_children([widget])

@@ -1,0 +1,219 @@
+## Docking topology contains only values. Callers edit a copy and publish it
+## after fallible ownership work succeeds; dragging never mutates this model.
+import math
+import luce_ui.result as result
+import luce_ui.splitting as splitting
+from luce_ui.geometry import Size
+from gpu import Rect
+
+pub enum DockPosition as u8:
+    tab = 0
+    left = 1
+    right = 2
+    top = 3
+    bottom = 4
+
+pub struct Node:
+    pub var used: bool
+    pub var parent: usize
+    pub var first: usize
+    pub var second: usize
+    pub var horizontal: bool
+    pub var fraction: f64
+    pub var selected: usize
+
+pub struct Tab:
+    pub var group: usize
+    pub var order: usize
+
+pub struct Geometry:
+    pub var panes: Rect[65]
+    pub var dividers: Rect[65]
+    pub var minimum: Size[65]
+
+pub struct Model:
+    pub var nodes: Node[65]
+    pub var tabs: Tab[129]
+    pub var root: usize
+    pub var active: usize
+
+    pub func count() -> usize:
+        var count: usize = 0
+        for tab in self.tabs:
+            if tab.group != 0: count += 1
+        return count
+
+    pub func group_count() -> usize:
+        var count: usize = 0
+        for node in self.nodes:
+            if node.used and node.first == 0: count += 1
+        return count
+
+    pub func tab_count(group: usize) -> usize:
+        var count: usize = 0
+        for tab in self.tabs:
+            if tab.group == group and group != 0: count += 1
+        return count
+
+    pub func at(group: usize, order: usize) -> usize:
+        for index in 1..<self.tabs.length:
+            if self.tabs[index].group == group and self.tabs[index].order == order:
+                return index
+        return 0
+
+    pub func require(tab: usize) -> usize!:
+        if tab == 0 or tab >= self.tabs.length or self.tabs[tab].group == 0:
+            error(result.invalid, "panel does not belong to this dynamic stack")
+        return self.tabs[tab].group
+
+    pub mutating func select(tab: usize) -> !:
+        let group = try self.require(tab)
+        self.nodes[group].selected = tab
+        self.active = tab
+
+    mutating func allocate() -> usize!:
+        for index in 1..<self.nodes.length:
+            if not self.nodes[index].used:
+                self.nodes[index] = Node(used = true)
+                return index
+        error(result.limit, "a dynamic stack supports at most 32 tab groups")
+
+    pub mutating func add(tab: usize, relative: usize, position: DockPosition = DockPosition.tab) -> !:
+        if tab == 0 or tab >= self.tabs.length or self.tabs[tab].group != 0:
+            error(result.invalid, "panel slot is already occupied or outside this dynamic stack")
+        var group: usize = 0
+        if self.root == 0:
+            if relative != 0:
+                error(result.invalid, "an empty stack has no relative panel")
+            group = try self.allocate()
+            self.root = group
+        else:
+            group = try self.require(relative)
+            if position != DockPosition.tab:
+                let fresh = try self.allocate()
+                let branch = try self.allocate()
+                let parent = self.nodes[group].parent
+                let before = position == DockPosition.left or position == DockPosition.top
+                self.nodes[branch] = Node(used = true, parent = parent,
+                    first = fresh if before else group, second = group if before else fresh,
+                    horizontal = position == DockPosition.left or position == DockPosition.right, fraction = 0.5)
+                if parent == 0:
+                    self.root = branch
+                elif self.nodes[parent].first == group:
+                    self.nodes[parent].first = branch
+                else:
+                    self.nodes[parent].second = branch
+                self.nodes[group].parent = branch
+                self.nodes[fresh].parent = branch
+                group = fresh
+        self.tabs[tab] = Tab(group, self.tab_count(group))
+        try self.select(tab)
+
+    pub mutating func remove(tab: usize) -> !:
+        let group = try self.require(tab)
+        let order = self.tabs[tab].order
+        self.tabs[tab] = Tab()
+        for index in 1..<self.tabs.length:
+            if self.tabs[index].group == group and self.tabs[index].order > order:
+                self.tabs[index].order -= 1
+        let remaining = self.tab_count(group)
+        if remaining > 0:
+            if self.nodes[group].selected == tab:
+                self.nodes[group].selected = self.at(group, order if order < remaining else remaining - 1)
+        else:
+            let parent = self.nodes[group].parent
+            if parent == 0:
+                self.root = 0
+            else:
+                let sibling = self.nodes[parent].second if self.nodes[parent].first == group else self.nodes[parent].first
+                let ancestor = self.nodes[parent].parent
+                self.nodes[sibling].parent = ancestor
+                if ancestor == 0:
+                    self.root = sibling
+                elif self.nodes[ancestor].first == parent:
+                    self.nodes[ancestor].first = sibling
+                else:
+                    self.nodes[ancestor].second = sibling
+                self.nodes[parent] = Node()
+            self.nodes[group] = Node()
+        if self.active == tab:
+            self.active = self.nodes[group].selected if remaining > 0 else 0
+            if self.active == 0:
+                for index in 1..<self.tabs.length:
+                    if self.tabs[index].group != 0:
+                        self.active = self.nodes[self.tabs[index].group].selected
+                        break
+
+    pub mutating func move(tab: usize, relative: usize, position: DockPosition) -> !:
+        let source = try self.require(tab)
+        discard(try self.require(relative))
+        var target = relative
+        if tab == relative:
+            if position == DockPosition.tab or self.tab_count(source) == 1:
+                return
+            target = self.at(source, 1 if self.tabs[tab].order == 0 else 0)
+        if source == self.tabs[target].group and position == DockPosition.tab:
+            try self.reorder(tab, self.tabs[target].order)
+            return
+        try self.remove(tab)
+        try self.add(tab, target, position)
+
+    pub mutating func reorder(tab: usize, order: usize) -> !:
+        let group = try self.require(tab)
+        if order >= self.tab_count(group):
+            error(result.invalid, "tab order is outside its group")
+        let previous = self.tabs[tab].order
+        for index in 1..<self.tabs.length:
+            if index == tab or self.tabs[index].group != group:
+                continue
+            let value = self.tabs[index].order
+            if previous < order and value > previous and value <= order:
+                self.tabs[index].order -= 1
+            elif order < previous and value >= order and value < previous:
+                self.tabs[index].order += 1
+        self.tabs[tab].order = order
+        try self.select(tab)
+
+    pub func geometry(size: Size, minimums: const Size[], header: f64, handle: f64) -> Geometry:
+        var geometry = Geometry()
+        if self.root != 0:
+            discard(self.measure(self.root, minimums, header, handle, &geometry))
+            self.place(self.root, Rect(width = size.width, height = size.height), handle, &geometry)
+        return geometry
+
+    func measure(node: usize, minimums: const Size[], header: f64, handle: f64, geometry: Geometry*) -> Size:
+        let current = self.nodes[node]
+        var size = Size()
+        if current.first == 0:
+            for index in 1..<self.tabs.length:
+                if self.tabs[index].group == node:
+                    size.width = math.max(size.width, minimums[index].width)
+                    size.height = math.max(size.height, minimums[index].height)
+            size.width += 2.0
+            size.height += header + 2.0
+        else:
+            let first = self.measure(current.first, minimums, header, handle, geometry)
+            let second = self.measure(current.second, minimums, header, handle, geometry)
+            size = Size(first.width + second.width + handle, math.max(first.height, second.height)) if current.horizontal else Size(math.max(first.width, second.width), first.height + second.height + handle)
+        geometry.minimum[node] = size
+        return size
+
+    func place(node: usize, bounds: Rect, handle: f64, geometry: Geometry*):
+        geometry.panes[node] = bounds
+        let current = self.nodes[node]
+        if current.first == 0:
+            return
+        let a = geometry.minimum[current.first]
+        let b = geometry.minimum[current.second]
+        let available = math.max(0.0, (bounds.width if current.horizontal else bounds.height) - handle)
+        let sizes = splitting.distribute(available, current.fraction,
+            a.width if current.horizontal else a.height, 16384.0,
+            b.width if current.horizontal else b.height, 16384.0)
+        if current.horizontal:
+            self.place(current.first, Rect(bounds.x, bounds.y, sizes.first, bounds.height), handle, geometry)
+            geometry.dividers[node] = Rect(bounds.x + sizes.first, bounds.y, handle, bounds.height)
+            self.place(current.second, Rect(bounds.x + sizes.first + handle, bounds.y, sizes.second, bounds.height), handle, geometry)
+        else:
+            self.place(current.first, Rect(bounds.x, bounds.y, bounds.width, sizes.first), handle, geometry)
+            geometry.dividers[node] = Rect(bounds.x, bounds.y + sizes.first, bounds.width, handle)
+            self.place(current.second, Rect(bounds.x, bounds.y + sizes.first + handle, bounds.width, sizes.second), handle, geometry)

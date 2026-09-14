@@ -1,0 +1,38 @@
+## Painting and hit testing share these rectangles, including narrow headers
+## and overflow. The add button always stays at the trailing edge.
+import math
+from gpu import Rect
+
+pub struct Strip:
+    pub var tabs: Rect
+    pub var previous: Rect
+    pub var next: Rect
+    pub var add: Rect
+    pub var first: usize
+    pub var count: usize
+    pub var width: f64
+
+    pub func tab(order: usize) -> Rect:
+        if order < self.first or order >= self.first + self.count:
+            return Rect()
+        return Rect(self.tabs.x + (f64)(order - self.first) * self.width, self.tabs.y, self.width, self.tabs.height)
+
+pub func arrange(bounds: Rect, count: usize, selected: usize, advance: f64) -> Strip:
+    let control = math.min(bounds.height, math.max(0.0, bounds.width))
+    var strip = Strip(add = Rect(bounds.x + math.max(0.0, bounds.width - control), bounds.y, control, bounds.height))
+    var available = math.max(0.0, bounds.width - control)
+    let minimum = advance * 10.0
+    let overflow = (f64)count * minimum > available
+    if overflow and available >= control * 2.0 + minimum:
+        strip.previous = Rect(bounds.x, bounds.y, control, bounds.height)
+        strip.next = Rect(strip.add.x - control, bounds.y, control, bounds.height)
+        available -= control * 2.0
+    strip.tabs = Rect(bounds.x + strip.previous.width, bounds.y, available, bounds.height)
+    let capacity = (usize)math.max(1.0, math.floor(available / minimum))
+    strip.count = count if count < capacity else capacity
+    strip.first = selected + 1 - capacity if selected >= capacity else 0
+    strip.width = math.min(advance * 28.0, available / (f64)strip.count) if strip.count > 0 else 0.0
+    return strip
+
+pub func contains(bounds: Rect, x: f64, y: f64) -> bool:
+    return x >= bounds.x and y >= bounds.y and x < bounds.x + bounds.width and y < bounds.y + bounds.height

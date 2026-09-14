@@ -10,6 +10,7 @@ import ownership
 import thread
 import luce_ui.result as result
 import luce_ui.geometry as geometry
+from luce_ui.arrangement import Arrangement
 
 pub type Rect = gpu.Rect
 
@@ -88,6 +89,8 @@ pub struct Layout:
     var growth: Size
     var shrink: Size
     var split: f64?
+    var arrangement: interop.Interface[Arrangement]?
+    var focus_requested: bool
     var measured: Size
     var local_theme: Theme?
     var appearance: Theme
@@ -122,6 +125,8 @@ pub struct Layout:
         self.application = 0
         var empty: interop.Interface[Widget][]
         self.items = empty
+        self.arrangement = none
+        self.focus_requested = false
         self.axis = axis
         self.spacing = spacing
         self.padding = padding
@@ -206,8 +211,8 @@ pub struct Layout:
         self.local_theme = none
         self.invalidate()
 
-    pub func id() -> u64:
-        return self.identifier
+    pub func id() -> i64:
+        return (i64)self.identifier
 
     pub func bounds() -> Rect:
         return self.rectangle
@@ -217,6 +222,12 @@ pub struct Layout:
 
     pub func contains_focus() -> bool:
         return self.focus_within
+
+    ## Resolve to the first eligible descendant after the next arrangement.
+    ## Containers can reveal a tab and focus its content in the same operation.
+    pub mutating func request_focus():
+        self.focus_requested = true
+        self.invalidate()
 
     ## Hover follows the topmost visible, enabled branch, independently of
     ## keyboard focus and pointer capture. Ancestors can style their whole pane.
@@ -316,6 +327,17 @@ pub struct Layout:
     pub func split_fraction() -> f64:
         return self.split else 0.5
 
+    pub mutating func set_arrangement(arrangement: interop.Interface[Arrangement]) -> !:
+        if self.axis != Axis.overlay or self.split != none:
+            error(result.invalid, "custom arrangement needs an overlay layout")
+        try arrangement.enter()
+        defer arrangement.leave()
+        let replacement = arrangement.clone()
+        if let previous = self.arrangement:
+            previous.release()
+        self.arrangement = replacement
+        self.invalidate()
+
     pub func child_count() -> i64:
         return (i64)self.items.length
 
@@ -408,7 +430,10 @@ pub struct Layout:
             let layout = widget_layout(child) catch failure:
                 child.release()
                 continue
-            layout.value().parent = 0
+            # Collection finalizes every owner before releasing graph edges.
+            # A still-open widget can therefore return an already-closed layout.
+            let state: Layout*? = layout.get() catch failure: recover none
+            if let open = state: open.parent = 0
             layout.release()
             child.release()
         if previous.length > 0:
@@ -416,9 +441,13 @@ pub struct Layout:
 
     mutating func dispose():
         self.detach()
+        if let arrangement = self.arrangement:
+            arrangement.release()
         self.invalidate()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        if let arrangement = self.arrangement:
+            arrangement.trace(visit, context)
         for child in self.items:
             child.trace(visit, context)
 
@@ -549,7 +578,8 @@ pub struct Tree:
         if epoch() != started:
             return result.failure[unit](result.busy, "a widget changed the tree during measurement")
         let bounds = Rect(width = width, height = height)
-        place(replacement, 0, bounds, bounds)
+        place(replacement, 0, bounds, bounds) catch failure:
+            return result.failure[unit](failure.code, failure.message)
         var popup: u64 = 0
         for entry in replacement[..<count]:
             let box = entry.box.value()
@@ -567,7 +597,8 @@ pub struct Tree:
                     x = (bounds.width - popup_width) * 0.5
                     y = math.min(math.min(40.0, bounds.height * 0.1), bounds.height - popup_height)
                 let position = find_entry(replacement, count, box.identifier) else trap("popup missing from tree")
-                place(replacement, position, Rect(x, y, popup_width, popup_height), bounds)
+                place(replacement, position, Rect(x, y, popup_width, popup_height), bounds) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
                 popup = box.identifier
         if popup != 0 and popup != self.focus:
             if self.return_focus == 0:
@@ -591,6 +622,16 @@ pub struct Tree:
             if eligible(replacement, count, self.return_focus, true):
                 self.focus = self.return_focus
             self.return_focus = 0
+        if popup == 0:
+            for position in 0..<count:
+                let entry = &replacement[position]
+                if entry.box.value().focus_requested:
+                    entry.box.value().focus_requested = false
+                    for descendant in position..<entry.end:
+                        let identifier = replacement[descendant].box.value().identifier
+                        if eligible(replacement, count, identifier, true):
+                            self.focus = identifier
+                            break
         if self.requested_focus != 0 and popup == 0:
             if eligible(replacement, count, self.requested_focus, true):
                 self.focus = self.requested_focus
@@ -943,7 +984,7 @@ pub struct Tree:
     ## Apply after the next arrangement, including children replaced during an
     ## input callback. Detached or disabled targets cannot acquire focus.
     pub mutating func focus_layout(target: interop.Reference[Layout]):
-        self.requested_focus = target.value().id()
+        self.requested_focus = target.value().identifier
         target.value().invalidate()
 
     mutating func set_focus(identifier: u64):
@@ -1074,7 +1115,7 @@ func intersection(a: Rect, b: Rect) -> Rect:
 func along(size: Size, horizontal: bool) -> f64:
     return size.width if horizontal else size.height
 
-func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect):
+func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect) -> !:
     let box = entries[index].box.value()
     box.rectangle = bounds
     box.clipping = intersection(bounds, clip)
@@ -1085,7 +1126,10 @@ func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect):
     # content area so it cannot paint or hit-test over its parent's frame.
     let content_clip = intersection(box.clipping, inner)
     if let fraction = box.split:
-        place_split(entries, index, inner, content_clip, fraction)
+        try place_split(entries, index, inner, content_clip, fraction)
+        return
+    if let arrangement = box.arrangement:
+        try place_custom(entries, index, inner, content_clip, arrangement)
         return
     var child = index + 1
     var total: f64 = 0.0
@@ -1169,7 +1213,7 @@ func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect):
                 rectangle.y = cursor
                 rectangle.width = placed
                 cursor += rectangle.height + box.spacing
-        place(entries, child, rectangle, content_clip)
+        try place(entries, child, rectangle, content_clip)
         child = entries[child].end
 
 func discard_replacement(entries: Entry[], count: usize*, committed: bool*):
@@ -1196,7 +1240,7 @@ func in_popup(entries: const Entry[], index: usize) -> bool:
         cursor = entries[(usize)cursor].parent
     return false
 
-func place_split(entries: Entry[], index: usize, bounds: Rect, clip: Rect, fraction: f64):
+func place_split(entries: Entry[], index: usize, bounds: Rect, clip: Rect, fraction: f64) -> !:
     let first = index + 1
     if first >= entries[index].end:
         return
@@ -1215,10 +1259,43 @@ func place_split(entries: Entry[], index: usize, bounds: Rect, clip: Rect, fract
     let sizes = splitting.distribute(available, fraction, along(leading.minimum, horizontal),
         along(leading.maximum, horizontal), along(trailing.minimum, horizontal), along(trailing.maximum, horizontal))
     if horizontal:
-        place(entries, first, Rect(bounds.x, bounds.y, sizes.first, math.clamp(bounds.height, leading.minimum.height, leading.maximum.height)), clip)
-        place(entries, divider, Rect(bounds.x + sizes.first, bounds.y, gap, bounds.height), clip)
-        place(entries, second, Rect(bounds.x + sizes.first + gap, bounds.y, sizes.second, math.clamp(bounds.height, trailing.minimum.height, trailing.maximum.height)), clip)
+        try place(entries, first, Rect(bounds.x, bounds.y, sizes.first, math.clamp(bounds.height, leading.minimum.height, leading.maximum.height)), clip)
+        try place(entries, divider, Rect(bounds.x + sizes.first, bounds.y, gap, bounds.height), clip)
+        try place(entries, second, Rect(bounds.x + sizes.first + gap, bounds.y, sizes.second, math.clamp(bounds.height, trailing.minimum.height, trailing.maximum.height)), clip)
     else:
-        place(entries, first, Rect(bounds.x, bounds.y, math.clamp(bounds.width, leading.minimum.width, leading.maximum.width), sizes.first), clip)
-        place(entries, divider, Rect(bounds.x, bounds.y + sizes.first, bounds.width, gap), clip)
-        place(entries, second, Rect(bounds.x, bounds.y + sizes.first + gap, math.clamp(bounds.width, trailing.minimum.width, trailing.maximum.width), sizes.second), clip)
+        try place(entries, first, Rect(bounds.x, bounds.y, math.clamp(bounds.width, leading.minimum.width, leading.maximum.width), sizes.first), clip)
+        try place(entries, divider, Rect(bounds.x, bounds.y + sizes.first, bounds.width, gap), clip)
+        try place(entries, second, Rect(bounds.x, bounds.y + sizes.first + gap, math.clamp(bounds.width, trailing.minimum.width, trailing.maximum.width), sizes.second), clip)
+
+func place_custom(entries: Entry[], index: usize, bounds: Rect, clip: Rect, arrangement: interop.Interface[Arrangement]) -> !:
+    # Validate the complete direct-child plan before applying any rectangle.
+    # Stable child identities let policies retain geometry across tab visibility.
+    var rectangles: Rect[1024]
+    var count: usize = 0
+    var child = index + 1
+    let started = epoch()
+    try arrangement.enter()
+    defer arrangement.leave()
+    while child < entries[index].end:
+        let item = entries[child].box.value()
+        if not item.popup:
+            let placed = arrangement.value().place((i64)item.identifier, Size(bounds.width, bounds.height))
+            defer placed.release()
+            let rectangle = try placed.get()
+            if not math.is_finite(rectangle.x) or not math.is_finite(rectangle.y):
+                error(result.invalid, "custom placement coordinates must be finite")
+            try extent(rectangle.width)
+            try extent(rectangle.height)
+            rectangles[count] = rectangle
+            count += 1
+        child = entries[child].end
+    if epoch() != started:
+        error(result.busy, "a custom arrangement changed the widget tree")
+    count = 0
+    child = index + 1
+    while child < entries[index].end:
+        if not entries[child].box.value().popup:
+            let rectangle = rectangles[count]
+            try place(entries, child, Rect(bounds.x + rectangle.x, bounds.y + rectangle.y, rectangle.width, rectangle.height), clip)
+            count += 1
+        child = entries[child].end

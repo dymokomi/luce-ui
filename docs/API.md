@@ -14,6 +14,8 @@ All objects and callbacks belong to the main thread.
 | `VStack`, `HStack` | Heterogeneous children, spacing, padding, alignment; `set_children`, `layout` |
 | `Pane` | `Pane(content, minimum=Size(120, 80), header=none)`; shared header/frame color and one-point content inset |
 | `PaneHeader` | Title, optional `icon`, `detail`, shared font; `set_text`, `set_detail`, `set_icon` |
+| `Panel` | `Panel(text, content, icon=..., minimum=..., closable=true)`; persistent tab content, `set_text`, `set_detail`, `set_icon`, `set_content` |
+| `DStack` | Panels and shared font; `add`, `move`, `remove`, `select`, `focus_next`, `set_fraction`, add/select/close callbacks |
 | `Icon` | `Icon(kind, font=...)`; vector symbol sized to its font, `set_kind`, `layout` |
 | `SplitView` | Two widgets, `axis`, preferred `fraction`, `handle_width`; `fraction`, `set_fraction`, `layout` |
 | `Viewport` | Preferred minimum width/height; `on_render`, `layout` |
@@ -124,8 +126,7 @@ toolbar, text control, or GPU viewport. Borders do not imply a particular layout
 Pass `header=PaneHeader("FILES", icon=IconKind.folder_open, detail="project")`
 to reserve a title row above content. Pane paints the header and border together
 using `border`, `hover_border`, or `active_border`; focus takes precedence over
-hover. The leading badge uses `panel`, with a sharp vector arrow ending. The
-title and optional secondary detail use `foreground` and `muted` respectively.
+hover. The optional icon and title use `foreground`; secondary detail uses `muted`.
 Text clips inside the pane; a long detail does not force the pane wider.
 
 `PaneHeader` uses the shared font and `Theme.control_lines` for its row height.
@@ -141,7 +142,80 @@ PaneHeader use the same symbols. Shapes are drawn through standard GPU triangles
 in logical coordinates and scale with the shared font. No icon font is required.
 `Painter.triangle` and `Painter.line` accept `Point` values in this same coordinate
 space and obey the target's clipping. Lines have a positive finite width and
-square, unextended ends; a zero-length line draws nothing.
+flat ends; a zero-length line draws nothing.
+
+## Dynamic workspaces
+
+`DStack(panels, font=font)` initially stacks its panels as tabs. A `Panel` owns one
+ordinary content widget. Its identity and child ownership stay unchanged when
+moved; inactive tabs are hidden from drawing, hit testing and keyboard traversal.
+
+| Operation | Behavior |
+| --- | --- |
+| `add(panel, relative_to=none, position=DockPosition.tab)` | Add new content beside or inside the relative panel's group; defaults to the active group |
+| `move(panel, relative_to, position=DockPosition.tab)` | Move existing content; same-group tab moves reorder tabs |
+| `select(panel)` | Reveal its tab and request focus for its first eligible descendant |
+| `remove(panel)` | Remove it and collapse an empty branch; notify `on_close` after the change |
+| `focus_next(backwards=false)` | Cycle visible groups in reading order |
+| `set_fraction(panel, fraction)` | Set the nearest split parent's preferred first-child share in 0..1 |
+| `panel_count`, `group_count`, `tab_count(panel)`, `same_group(a, b)` | Inspect membership without exposing mutable topology |
+| `panel_bounds(panel)`, `tab_bounds(panel)`, `add_bounds(panel)` | Inspect geometry local to DStack; an overflowed tab has empty bounds |
+| `active_panel()` | The focused panel, or the most recently selected panel; none when empty |
+
+`DockPosition` is `tab`, `left`, `right`, `top` or `bottom`. Horizontal split
+geometry places children side by side; the menu calls this **Split Vertical**
+because its divider is vertical. **Split Horizontal** places a new group below.
+
+The `+` menu emits `on_add(request)` with a retained `DockRequest`: `panel` is the
+relative panel (none for an empty stack), and `position` is the requested placement.
+The application supplies content, for example:
+
+```luce
+let connection = workspace.on_add(func(request: DockRequest) -> unit!:
+    let panel = Panel("New document", TextEditor("", font = font))
+    workspace.add(panel, relative_to = request.panel, position = request.position))
+```
+
+Keep signal connections alive. `on_select(panel)` reports a selection, and
+`on_close(panel)` reports removal after topology is committed. Header close
+buttons first call the optional `set_close_handler(callback)` Boolean callback;
+false or a failure preserves the panel. Without a handler they remove it.
+`Panel(closable=false)` omits the close button. Programmatic `remove` deliberately
+does not ask the handler; the application has already made that decision.
+
+Dragging begins after four logical points of movement. A tab-strip drop stacks
+or reorders tabs. The middle of content stacks; its four outer quarters split.
+The overlay marks the destination while retaining normal pointer capture.
+Escape, focus loss and outside release cancel a drag. A single panel cannot
+split itself into two copies. Applications create a second content view explicitly
+if they need simultaneous views of one document.
+
+Tabs remain one themed font row tall. Overflow exposes previous/next controls
+when space permits; the selected tab stays visible. Wheel input over the header
+cycles tabs. A focused header accepts Left/Right; Enter/Down focuses its content.
+Dividers support pointer dragging and the same arrow/Home/End keys as SplitView.
+Headers use `header_inset_cells`, `border`, `active_border`, `hover_border` and
+`panel` for inactive tabs. The trailing `+` remains visible in narrow groups.
+
+The first implementation supports 128 panels and 32 groups. Failed ownership or
+topology preparation leaves the prior membership intact. Callback failures occur
+after the reported change and do not roll it back. Layout persistence, floating
+windows and cross-window docking are outside this initial API.
+
+## Custom arrangement and focus
+
+`Layout.set_arrangement(policy)` accepts an `Arrangement` on an overlay layout.
+Its `place(child: int, available: Size)` supplies a local `Rect` for each visible,
+ordinary child, identified by `Layout.id()`. The policy must not mutate the tree.
+The tree validates the plan, then applies ancestor clipping and ordinary child
+layout; popup placement remains separate. DStack uses this contract without
+introducing docking-specific rules into the layout tree.
+
+`Layout.request_focus()` requests the first eligible widget in that subtree
+after arrangement. Hidden descendants do not participate. An open popup defers
+the request until it closes; an explicit Application focus request takes priority.
+
+## Split views
 
 `SplitView(first, second, axis=Axis.horizontal, fraction=0.5, handle_width=5.0)`
 shares space between two children. Nest vertical and horizontal splits to build

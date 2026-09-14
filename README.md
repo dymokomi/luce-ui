@@ -118,9 +118,25 @@ let header = PaneHeader("FILES", icon = IconKind.folder_open, detail = "project"
 let sidebar = Pane(files, header = header)
 ```
 
-The header shares the border's normal, hover and focus colors, with an arrow-ended
-icon badge and 1.5 character cells of leading inset. `Theme.header_inset_cells`
-adjusts this spacing. Reusable `Icon` widgets, pane badges and list symbols use
+The header shares the border's normal, hover and focus colors, with a vector
+icon and 1.5 character cells of leading inset. `Theme.header_inset_cells`
+adjusts this spacing. Reusable `Icon` widgets, pane icons and list symbols use
 the same vector shapes through standard `gpu`; they scale with the shared font.
 Portable tests cover header layout, resizing, font changes and icon-bearing
-lists. Native Metal readback verifies frame colors, arrow geometry and icon pixels.
+lists. Native Metal readback verifies frame colors and icon pixels.
+
+`DStack` supplies a dynamic workspace of tabbed panels:
+
+```luce
+let files = Panel("FILES", explorer, icon = IconKind.folder, closable = false)
+let source = Panel("main.luc", editor, icon = IconKind.code)
+let workspace = DStack([files, source], font = font)
+workspace.move(source, files, DockPosition.right)
+```
+
+Every group has a trailing `+` menu. Applications create content in response to
+`on_add`; `set_close_handler` can refuse closing an unsaved document. Header
+dragging moves tabs, center drops stack them and edge drops split the destination.
+Nested dividers resize live, and empty branches collapse. Panels retain their
+content, focus targets and identity across these operations. See the
+[dynamic workspace API](docs/API.md#dynamic-workspaces) and [design](docs/DSTACK.md).

@@ -1,0 +1,8 @@
+## Custom containers supply local rectangles while the tree retains ownership,
+## clipping, input routing and focus. Placement must not change the widget tree.
+import gpu
+import interop
+from luce_ui.geometry import Size
+
+pub interface Arrangement:
+    func place(child: i64, available: Size) -> interop.Outcome[gpu.Rect]
