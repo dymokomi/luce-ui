@@ -449,7 +449,7 @@ pub struct TextEditor: Widget:
         self.scroll_y = math.clamp(y / math.max(1.0, height), 0.0, 1.0) * self.maximum_scroll()
 
     func gutter_width() -> f64:
-        return drawing.gutter_width(self.line_numbers, self.font, self.folds.values().length > 0)
+        return drawing.gutter_width(self.line_numbers, self.font, self.projection.line_count(), self.folds.values().length > 0)
 
     func content_width() -> f64:
         return math.max(1.0, self.box.value().bounds().width - self.gutter_width() - self.font.value().advance() - 8.0)

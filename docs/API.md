@@ -304,6 +304,10 @@ Buttons and menu titles use `Theme.hover`; list rows use it without changing the
 selected item. Panes use `hover_border`, with `active_border` taking precedence
 for keyboard focus. Editor gutters use `gutter_active` for the caret row and
 `hover` for a different hovered row; active/hovered line numbers brighten.
+The number column fits the largest line number in the document, with one font
+cell of leading and trailing padding. Edits, undo and replacement grow or shrink
+it across digit boundaries. Fold controls have their own space; scrolling and
+folding preserve the number width.
 
 Opening a `Menu` starts a session among sibling menu triggers. Moving over another
 enabled sibling opens it immediately and closes the previous popup. Left/Right

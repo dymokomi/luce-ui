@@ -14,15 +14,22 @@ from luce_ui.text.style import Highlight, EditorTheme
 pub func vertical_padding(font: interop.Reference[Font]) -> f64:
     return (font.value().line_height() - font.value().height()) * 0.5
 
-pub func gutter_width(numbers: bool, font: interop.Reference[Font], folding: bool = false) -> f64:
-    return font.value().advance() * ((6.0 if numbers else 0.0) + (2.0 if folding else 0.0))
+pub func gutter_width(numbers: bool, font: interop.Reference[Font], line_count: usize, folding: bool = false) -> f64:
+    # Size from the physical line count so scrolling or folding cannot shift
+    # the text. Reserve one cell on each side of the widest line-number label.
+    var digits: usize = 1
+    var largest = line_count
+    while largest >= 10:
+        largest //= 10
+        digits += 1
+    return font.value().advance() * (((f64)digits + 2.0 if numbers else 0.0) + (2.0 if folding else 0.0))
 
 pub func paint(document: const Document*, painter: Painter*, width: f64, height: f64,
                scroll_x: f64, scroll_y: f64, numbers: bool, focused: bool,
                caret_visible: bool, font: interop.Reference[Font], theme: EditorTheme,
                highlights: const Highlight[], projection: const Projection*, folds: const Folding*, hovered_row: usize? = none) -> !:
     let folding = folds.values().length > 0
-    let gutter = gutter_width(numbers, font, folding)
+    let gutter = gutter_width(numbers, font, projection.line_count(), folding)
     try painter.rectangle(gpu.Rect(width = width, height = height), theme.background)
     if numbers or folding:
         try painter.rectangle(gpu.Rect(width = gutter, height = height), theme.gutter)

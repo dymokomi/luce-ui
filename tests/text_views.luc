@@ -7,6 +7,38 @@ pub func text_views() -> unit!:
     scrolling()
     folding()
     folded_extents()
+    gutter_edits()
+
+func gutter_edits() -> unit!:
+    let font = Font()
+    var text = "word"
+    for index in 0..<98: text += "\n"
+    let editor = TextEditor(text, font = font)
+    let app = Application(editor)
+    app.layout(320.0, 100.0)
+    # Click the second source column across 99/100 lines, then shrink through
+    # undo and replacement. Painting, selection and scroll bounds share sizing.
+    source_column(app, editor, font.advance() * 6.0)
+    editor.set_selection(editor.length(), editor.length())
+    editor.insert("\nlast")
+    source_column(app, editor, font.advance() * 7.0)
+    editor.undo()
+    source_column(app, editor, font.advance() * 6.0)
+    editor.redo()
+    source_column(app, editor, font.advance() * 7.0)
+    assert(editor.set_folds([FoldRange(0, editor.length())], editor.version()))
+    editor.fold_all()
+    assert(editor.visible_line_count() == 1)
+    source_column(app, editor, font.advance() * 9.0)
+    editor.set_text("word")
+    source_column(app, editor, font.advance() * 5.0)
+    app.close()
+
+func source_column(app: Application, editor: TextEditor, x: float) -> unit!:
+    editor.set_selection(0, 0)
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = 8.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x, y = 8.0))
+    assert(editor.column() == 2 and editor.line() == 1)
 
 func scrolling() -> unit!:
     let font = Font()
@@ -96,8 +128,8 @@ func folding() -> unit!:
     editor.unfold_all()
     assert(editor.visible_line_count() == 5)
     # Gutter toggles use the same visible rows as mouse selection and drawing.
-    app.dispatch(Event(kind = EventKind.pointer_down, x = font.advance() * 7.0, y = 8.0))
-    app.dispatch(Event(kind = EventKind.pointer_up, x = font.advance() * 7.0, y = 8.0))
+    app.dispatch(Event(kind = EventKind.pointer_down, x = font.advance() * 4.0, y = 8.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = font.advance() * 4.0, y = 8.0))
     assert(editor.is_folded(1))
     editor.set_selection(6, 6)
     app.dispatch(Event(kind = EventKind.key_down, key = Key.delete))
