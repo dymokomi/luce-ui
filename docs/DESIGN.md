@@ -56,3 +56,15 @@ ranges; Projection maps physical lines to visible rows and caches their widths.
 Drawing, hit testing, cursor navigation and scroll extents consume that same map.
 Fold publication does not alter the document. Language-specific range discovery
 belongs alongside the application's incremental lexer.
+
+Context menus are widget decorators. Tree dispatch selects the clicked content,
+then delivers the request to its nearest provider. Action availability can be
+updated immediately before presentation. Ordinary menus and command search use
+one shared action popup; search and prompts reuse a Unicode single-line input
+model. Placement, focus restoration and modal routing stay in the tree.
+
+Focus is propagated through layout ancestors. Pane framing can therefore show
+which region owns keyboard input without knowing an application's panel names.
+While a popup owns focus, the previous focus path remains highlighted. Actual
+parent edges are distinct from retained traversal membership: a widget removed
+and reinserted within the same mounted application need not wait for a frame.

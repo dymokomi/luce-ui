@@ -1,0 +1,83 @@
+## A context menu decorates any widget. The tree routes requests to the nearest
+## provider after the clicked control has updated its selection.
+import gpu
+import interop
+import memory
+import ownership
+import input
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.action import Action
+from luce_ui.font import Font, selected_font
+from luce_ui.widgets.action_popup import ActionPopup, action_popup_type
+
+pub struct ContextMenu: Widget:
+    let box: interop.Reference[Layout]
+    let popup: interop.Reference[ActionPopup]
+    let opening: interop.Signal[unit]
+
+    pub func init(content: interop.Interface[Widget], actions: const interop.Reference[Action][],
+                  font: interop.Reference[Font]? = none) -> !:
+        let selected = try selected_font(font)
+        defer selected.release()
+        let box = try layout.make_layout()
+        errdefer box.release()
+        let content_box = try layout.widget_layout(content)
+        defer content_box.release()
+        try box.value().copy_sizing_from(content_box)
+        box.value().set_context_menu(true)
+        let popup = try interop.Reference[ActionPopup].adopt(new ActionPopup(actions, selected) in memory.heap, action_popup_type, memory.heap)
+        errdefer popup.release()
+        let widget = popup.as_interface[Widget](popup.value())
+        defer widget.release()
+        try box.value().set_children([content, widget])
+        let opening = try interop.Signal[unit]()
+        self.box = box
+        self.popup = popup
+        self.opening = opening
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func on_open(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.opening.connect(callback)
+
+    pub mutating func open_at(x: f64, y: f64) -> !:
+        let notified = self.opening.emit(())
+        defer notified.release()
+        try notified.get()
+        let box = self.popup.value().layout()
+        defer box.release()
+        try box.value().set_popup_point(x, y)
+        try self.popup.value().open()
+
+    pub func is_open() -> bool:
+        return self.popup.value().is_open()
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let size = self.box.value().content_size(available) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        return result.success[Size](size)
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if event.kind == input.EventKind.pointer_down and event.button == 1:
+            self.open_at(event.x, event.y) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.opening.close()
+        self.opening.release()
+        self.popup.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.opening.trace(visit, context)
+        self.popup.trace(visit, context)
+        self.box.trace(visit, context)
+
+pub let context_menu_type: interop.Type[ContextMenu] = interop.Type[ContextMenu]("ContextMenu", ContextMenu.close, ContextMenu.trace, closeable = true, main_thread = true)

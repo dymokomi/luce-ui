@@ -95,3 +95,10 @@ maximum sizes, and splits can nest. Generic `TextEditor.set_folds` accepts range
 from a language service; Luce syntax knowledge stays in luced. See the
 [pane API](docs/API.md#panes-and-split-views) and
 [folding contracts](docs/TEXT-EDITOR.md#folding-and-viewport-bounds).
+
+Context menus decorate any widget: `ContextMenu(content, actions, font=font)`.
+`CommandPalette(actions, font=font)` supplies command search, and `TextPrompt`
+supplies file-name entry or confirmation. Both mount as popup children and reuse
+the framework's focus restoration, text input and window clipping. Panes use
+`Theme.active_border` to indicate descendant focus; `Theme.gutter` styles the
+folding margin independently. See the [popup API](docs/API.md#context-menus-command-search-and-prompts).

@@ -37,7 +37,8 @@ pub struct Pane: Widget:
         var painter = try Painter(target)
         defer painter.close()
         let size = try target.get().size()
-        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), self.box.value().theme().border)
+        let theme = self.box.value().theme()
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.active_border if self.box.value().contains_focus() else theme.border)
         try painter.rectangle(gpu.Rect(1.0, 1.0, math.max(0.0, size.width - 2.0), math.max(0.0, size.height - 2.0)), self.box.value().theme().background)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:

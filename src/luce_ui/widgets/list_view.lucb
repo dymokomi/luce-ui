@@ -117,11 +117,13 @@ pub struct ListView: Widget:
             let limit = math.max(0.0, (f64)self.items.length * self.row_height() - self.box.value().bounds().height)
             self.scroll = math.clamp(self.scroll - event.scroll_y * scale, 0.0, limit)
             self.box.value().invalidate()
-        elif event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
+        elif event.kind == input.EventKind.pointer_down and (event.button == 0 or event.button == 1) and event.inside:
             let index = (i64)((event.y + self.scroll) / self.row_height())
             if index >= 0 and index < (i64)self.items.length:
                 try self.select(index)
-                return true
+                return event.button == 0
+            if event.button == 1:
+                try self.select(-1)
         elif event.kind == input.EventKind.key_down:
             if event.key == input.Key.enter and self.selection >= 0:
                 return true

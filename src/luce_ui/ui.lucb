@@ -16,6 +16,7 @@ pub type Constraints = layout.Constraints
 pub type Event = layout.Event
 pub type Axis = layout.Axis
 pub type Alignment = layout.Alignment
+pub type PopupPlacement = layout.PopupPlacement
 pub type Rect = layout.Rect
 pub type Painter = painter.Painter
 pub type Text = text.Text
@@ -80,3 +81,13 @@ pub let split_view_type = split_view.split_view_type
 
 import luce_ui.text.folding as folding
 pub type FoldRange = folding.FoldRange
+
+import luce_ui.widgets.context_menu as context_menu
+pub type ContextMenu = context_menu.ContextMenu
+pub let context_menu_type = context_menu.context_menu_type
+import luce_ui.widgets.command_palette as command_palette
+pub type CommandPalette = command_palette.CommandPalette
+pub let command_palette_type = command_palette.command_palette_type
+import luce_ui.widgets.text_prompt as text_prompt
+pub type TextPrompt = text_prompt.TextPrompt
+pub let text_prompt_type = text_prompt.text_prompt_type

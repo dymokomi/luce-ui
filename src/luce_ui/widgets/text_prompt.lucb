@@ -1,0 +1,159 @@
+## A modal prompt owns temporary text, never application state. Submission hides
+## the popup before invoking the retained callback, allowing another view to open.
+import gpu
+import input
+import interop
+import memory
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Constraints, Size, Event
+from luce_ui.font import Font, selected_font
+from luce_ui.painter import Painter
+from luce_ui.text.line_input import LineInput
+
+pub struct TextPrompt: Widget:
+    let box: interop.Reference[Layout]
+    let font: interop.Reference[Font]
+    var caption: interop.Owned[str]
+    var accept: interop.Owned[str]
+    var text: LineInput
+    var editable: bool
+    var pressed: i64
+    let submitted: interop.Signal[str]
+
+    pub func init(font: interop.Reference[Font]? = none) -> !:
+        let selected = try selected_font(font)
+        errdefer selected.release()
+        let box = try layout.make_layout()
+        errdefer box.release()
+        box.value().set_popup(true)
+        box.value().set_popup_placement(layout.PopupPlacement.window_top)
+        box.value().set_text_input(true)
+        box.value().set_visible(false)
+        var text = try LineInput()
+        errdefer text.close()
+        let caption = try interop.copy_text("")
+        errdefer caption.release()
+        let accept = try interop.copy_text("OK")
+        errdefer accept.release()
+        let submitted = try interop.Signal[str]()
+        self.box = box
+        self.font = selected
+        self.caption = caption
+        self.accept = accept
+        self.text = text
+        self.editable = true
+        self.pressed = -1
+        self.submitted = submitted
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func on_submit(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.submitted.connect(callback)
+
+    pub mutating func open(title: str, text: str = "", accept: str = "OK", editable: bool = true) -> !:
+        discard(try self.font.value().measure(title))
+        discard(try self.font.value().measure(accept))
+        let caption = try interop.copy_text(title)
+        errdefer caption.release()
+        let label = try interop.copy_text(accept)
+        errdefer label.release()
+        try self.text.set_text(text)
+        self.caption.release()
+        self.accept.release()
+        self.caption = caption
+        self.accept = label
+        self.editable = editable
+        self.pressed = -1
+        self.box.value().set_text_input(editable)
+        self.box.value().set_visible(true)
+
+    pub func is_open() -> bool:
+        return self.box.value().is_visible()
+
+    pub func value() -> interop.Owned[str]!:
+        return try self.text.text()
+
+    func row_height() -> f64:
+        return self.box.value().theme().row_height(self.font)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return result.success[Size](Size(600.0, self.row_height() * (4.0 if self.editable else 3.0)))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        let inset = theme.inset(self.font)
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.panel)
+        try painter.text(self.caption.value, inset, 0.0, theme.foreground, self.font)
+        if self.editable:
+            try self.text.paint(&painter, self.font, theme, inset, self.row_height(), size.width - inset * 2.0)
+        let y = size.height - self.row_height()
+        try painter.rectangle(gpu.Rect(size.width * 0.5, y, size.width * 0.5, self.row_height()), theme.selection)
+        try painter.text("Cancel (Esc)", inset, y, theme.foreground, self.font)
+        try painter.text(self.accept.value, size.width * 0.5 + inset, y, theme.foreground, self.font)
+        try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.active_border)
+        try painter.rectangle(gpu.Rect(y = size.height - 1.0, width = size.width, height = 1.0), theme.active_border)
+
+    mutating func submit() -> interop.Outcome[unit]:
+        let text = self.text.text() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer text.release()
+        self.box.value().set_visible(false)
+        self.pressed = -1
+        return self.submitted.emit(text.value)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if self.editable:
+            let inset = self.box.value().theme().inset(self.font)
+            self.text.pointer(event, self.font, inset, self.row_height(), self.box.value().bounds().width - inset * 2.0, self.row_height()) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+        if event.cancelled or (event.kind == input.EventKind.key_down and event.key == input.Key.escape):
+            self.box.value().set_visible(false)
+            self.pressed = -1
+        elif event.kind == input.EventKind.key_down and event.key == input.Key.enter and not event.repeated:
+            return self.submit()
+        elif event.kind == input.EventKind.pointer_down and event.button == 0:
+            let bounds = self.box.value().bounds()
+            self.pressed = (0 if event.x < bounds.width * 0.5 else 1) if event.inside and event.y >= bounds.height - self.row_height() else -1
+        elif event.kind == input.EventKind.pointer_up and event.button == 0:
+            let pressed = self.pressed
+            self.pressed = -1
+            let bounds = self.box.value().bounds()
+            let button = 0 if event.x < bounds.width * 0.5 else 1
+            if event.inside and event.y >= bounds.height - self.row_height() and button == pressed:
+                if button == 1:
+                    return self.submit()
+                self.box.value().set_visible(false)
+        elif self.editable:
+            discard(self.text.event(event) catch failure:
+                return result.failure[unit](failure.code, failure.message))
+        self.box.value().invalidate()
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.submitted.close()
+        self.submitted.release()
+        self.text.close()
+        self.accept.release()
+        self.caption.release()
+        self.font.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.submitted.trace(visit, context)
+        self.accept.trace(visit, context)
+        self.caption.trace(visit, context)
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+
+pub let text_prompt_type: interop.Type[TextPrompt] = interop.Type[TextPrompt]("TextPrompt", TextPrompt.close, TextPrompt.trace, closeable = true, main_thread = true)

@@ -14,164 +14,13 @@ from luce_ui.font import Font, selected_font
 from luce_ui.action import Action, Actions
 from luce_ui.painter import Painter
 
-struct MenuPopup: Widget:
-    let box: interop.Reference[Layout]
-    let font: interop.Reference[Font]
-    var actions: Actions
-    var selected: i64
-    var first: i64
-    var pressed: i64
-
-    pub func init(actions: const interop.Reference[Action][], font: interop.Reference[Font]) -> !:
-        if actions.length == 0:
-            error(result.invalid, "a menu needs at least one action")
-        var copied = Actions()
-        errdefer copied.close()
-        try copied.set(actions)
-        let box = try layout.make_layout()
-        errdefer box.release()
-        try box.value().set_shrink(vertical = 0.0)
-        box.value().set_focusable(true)
-        box.value().set_popup(true)
-        box.value().set_visible(false)
-        self.box = box
-        self.font = font.clone()
-        self.actions = copied
-        self.selected = -1
-        self.first = 0
-        self.pressed = -1
-
-    pub func layout() -> interop.Reference[Layout]:
-        return self.box.clone()
-
-    pub mutating func open():
-        self.selected = -1
-        self.first = 0
-        self.pressed = -1
-        self.move(1)
-        # The initial popup has not been placed yet. Its previous (or zero)
-        # height must not scroll leading disabled entries out of the new menu.
-        self.first = 0
-        self.box.value().set_visible(true)
-
-    func row_height() -> f64:
-        return self.box.value().theme().row_height(self.font)
-
-    pub func measure(available: Constraints) -> interop.Outcome[Size]:
-        var width: f64 = 0.0
-        for action in self.actions.values():
-            let text = action.value().text()
-            defer text.release()
-            let measured = self.font.value().measure(text.value) catch failure:
-                return result.failure[Size](failure.code, failure.message)
-            width = math.max(width, measured)
-        return result.success[Size](Size(width + self.box.value().theme().inset(self.font) * 4.0,
-            self.row_height() * (f64)self.actions.values().length))
-
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
-        self.paint(target) catch failure:
-            return result.failure[unit](failure.code, failure.message)
-        return result.success[unit](())
-
-    func paint(target: interop.View[gpu.RenderTarget]) -> !:
-        var painter = try Painter(target)
-        defer painter.close()
-        let size = try target.get().size()
-        let theme = self.box.value().theme()
-        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.panel)
-        var index = self.first
-        while index < (i64)self.actions.values().length:
-            let y = (f64)(index - self.first) * self.row_height()
-            if y >= size.height:
-                break
-            let action = self.actions.values()[(usize)index]
-            if index == self.selected:
-                try painter.rectangle(gpu.Rect(y = y, width = size.width, height = self.row_height()), theme.selection)
-            let caption = action.value().text()
-            defer caption.release()
-            try painter.text(caption.value, theme.inset(self.font), y + (self.row_height() - self.font.value().height()) * 0.5,
-                theme.foreground if action.value().is_enabled() else theme.muted, self.font)
-            index += 1
-        try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.border)
-        try painter.rectangle(gpu.Rect(y = math.max(0.0, size.height - 1.0), width = size.width, height = 1.0), theme.border)
-
-    mutating func move(direction: i64):
-        let count = (i64)self.actions.values().length
-        if count == 0:
-            return
-        var index = self.selected
-        for visited in 0..<count:
-            index = (index + direction + count) % count
-            if self.actions.values()[(usize)index].value().is_enabled():
-                self.selected = index
-                let rows = (i64)math.max(1.0, self.box.value().bounds().height / self.row_height())
-                if index < self.first:
-                    self.first = index
-                elif index >= self.first + rows:
-                    self.first = index - rows + 1
-                self.box.value().invalidate()
-                return
-
-    mutating func activate() -> interop.Outcome[unit]:
-        if self.selected < 0:
-            return result.success[unit](())
-        let action = self.actions.values()[(usize)self.selected].clone()
-        defer action.release()
-        if not action.value().is_enabled():
-            return result.success[unit](())
-        # Close before invoking application code, including callbacks which
-        # replace the containing view or fail while saving a document.
-        self.box.value().set_visible(false)
-        self.pressed = -1
-        return action.value().trigger()
-
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
-        if event.cancelled:
-            self.box.value().set_visible(false)
-            self.pressed = -1
-        elif event.kind == input.EventKind.key_down:
-            if event.key == input.Key.escape:
-                self.box.value().set_visible(false)
-            elif event.key == input.Key.down or (event.key == input.Key.tab and not event.shift):
-                self.move(1)
-            elif event.key == input.Key.up or (event.key == input.Key.tab and event.shift):
-                self.move(-1)
-            elif (event.key == input.Key.enter or event.key == input.Key.space) and not event.repeated:
-                return self.activate()
-        elif event.kind == input.EventKind.scroll:
-            self.move(1 if event.scroll_y < 0.0 else -1)
-        elif event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_down:
-            let index = self.first + (i64)(event.y / self.row_height())
-            if event.inside and index >= 0 and index < (i64)self.actions.values().length:
-                self.selected = index
-                if event.kind == input.EventKind.pointer_down and event.button == 0:
-                    self.pressed = index
-                self.box.value().invalidate()
-        elif event.kind == input.EventKind.pointer_up and event.button == 0:
-            let index = self.first + (i64)(event.y / self.row_height())
-            let activate = event.inside and self.pressed >= 0 and index == self.pressed
-            self.pressed = -1
-            if activate:
-                return self.activate()
-        return result.success[unit](())
-
-    pub mutating func close():
-        self.actions.close()
-        self.font.release()
-        self.box.release()
-
-    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
-        self.actions.trace(visit, context)
-        self.font.trace(visit, context)
-        self.box.trace(visit, context)
-
-let popup_type: interop.Type[MenuPopup] = interop.Type[MenuPopup]("Menu popup", MenuPopup.close, MenuPopup.trace, closeable = true, main_thread = true)
+from luce_ui.widgets.action_popup import ActionPopup, action_popup_type
 
 pub struct Menu: Widget:
     let box: interop.Reference[Layout]
     let caption: interop.Owned[str]
     let font: interop.Reference[Font]
-    let popup: interop.Reference[MenuPopup]
+    let popup: interop.Reference[ActionPopup]
     var pressed: bool
 
     pub func init(text: str, actions: const interop.Reference[Action][], font: interop.Reference[Font]? = none) -> !:
@@ -184,7 +33,7 @@ pub struct Menu: Widget:
         errdefer box.release()
         try box.value().set_shrink(vertical = 0.0)
         box.value().set_focusable(true)
-        let popup = try interop.Reference[MenuPopup].adopt(new MenuPopup(actions, selected) in memory.heap, popup_type, memory.heap)
+        let popup = try interop.Reference[ActionPopup].adopt(new ActionPopup(actions, selected) in memory.heap, action_popup_type, memory.heap)
         errdefer popup.release()
         let widget = popup.as_interface[Widget](popup.value())
         defer widget.release()
@@ -198,11 +47,11 @@ pub struct Menu: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
-    pub mutating func open():
-        self.popup.value().open()
+    pub mutating func open() -> !:
+        try self.popup.value().open()
 
     pub func is_open() -> bool:
-        return self.popup.value().box.value().is_visible()
+        return self.popup.value().is_open()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         let width = self.font.value().measure(self.caption.value) catch failure:
@@ -233,9 +82,11 @@ pub struct Menu: Widget:
             let activate = self.pressed and event.inside
             self.pressed = false
             if activate:
-                self.open()
+                self.open() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
         elif event.kind == input.EventKind.key_down and not event.repeated and (event.key == input.Key.enter or event.key == input.Key.space or event.key == input.Key.down):
-            self.open()
+            self.open() catch failure:
+                return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
     pub mutating func close():

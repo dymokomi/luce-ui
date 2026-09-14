@@ -1,0 +1,131 @@
+## Shared single-line editing for command search and prompts. The document owns
+## Unicode selection and history; popup widgets supply focus and submission.
+import clipboard
+import gpu
+import input
+import interop
+import math
+import utf8
+import luce_ui.text.editing as editing
+import luce_ui.result as result
+from luce_ui.text.document import Document
+from luce_ui.layout import Event
+from luce_ui.font import Font
+from luce_ui.painter import Painter
+from luce_ui.theme import Theme
+
+pub struct LineInput:
+    var document: Document
+    var dragging: bool
+    var first_column: usize
+
+    pub func init() -> !:
+        self.document = try Document()
+        self.dragging = false
+        self.first_column = 0
+
+    pub func text() -> interop.Owned[str]!:
+        return try self.document.text()
+
+    pub mutating func set_text(text: str) -> !:
+        discard(try validate(text))
+        try self.document.set_text(text)
+        try self.document.select(0, self.document.length())
+        self.dragging = false
+
+    pub mutating func event(event: Event) -> bool!:
+        let before = self.document.version()
+        let command = event.control or event.meta
+        if event.cancelled:
+            self.dragging = false
+            return false
+        if event.kind == input.EventKind.text_input and not command:
+            if event.codepoint >= 32 and event.codepoint != 127 and self.document.length() - (self.document.last() - self.document.first()) < 1024:
+                var bytes: u8[4]
+                let count = utf8.encode((u32)event.codepoint, bytes) else return false
+                try self.document.insert((str)bytes[..<count])
+        elif event.kind == input.EventKind.key_down:
+            if command and event.key == input.Key.a:
+                try self.document.select(0, self.document.length())
+            elif command and (event.key == input.Key.c or event.key == input.Key.x):
+                if self.document.first() != self.document.last():
+                    let text = try self.document.text(self.document.first(), self.document.last())
+                    defer text.release()
+                    try clipboard.write_text(text.value)
+                    if event.key == input.Key.x:
+                        try self.document.insert("")
+            elif command and event.key == input.Key.v:
+                let text = try clipboard.read_text()
+                defer text.release()
+                let scalars = try validate(text.value)
+                if self.document.length() - (self.document.last() - self.document.first()) + scalars > 1024:
+                    error(result.limit, "single-line input is limited to 1024 characters")
+                try self.document.insert(text.value)
+            elif command and event.key == input.Key.z:
+                discard(try self.document.redo() if event.shift else try self.document.undo())
+            elif event.key == input.Key.backspace or event.key == input.Key.delete:
+                try editing.erase(&self.document, event.key == input.Key.backspace, command or event.alt)
+            elif event.key == input.Key.home:
+                try editing.move(&self.document, 0, event.shift)
+            elif event.key == input.Key.end:
+                try editing.move(&self.document, self.document.length(), event.shift)
+            elif event.key == input.Key.left:
+                let caret = self.document.caret()
+                let offset = editing.word_left(&self.document, caret) if command or event.alt else (caret - 1 if caret > 0 else 0)
+                try editing.move(&self.document, self.document.first() if not event.shift and self.document.first() != self.document.last() else offset, event.shift)
+            elif event.key == input.Key.right:
+                let caret = self.document.caret()
+                let offset = editing.word_right(&self.document, caret) if command or event.alt else (caret + 1 if caret < self.document.length() else caret)
+                try editing.move(&self.document, self.document.last() if not event.shift and self.document.first() != self.document.last() else offset, event.shift)
+        return before != self.document.version()
+
+    pub mutating func pointer(event: Event, font: interop.Reference[Font], x: f64, y: f64, width: f64, height: f64) -> !:
+        if event.kind == input.EventKind.pointer_up or event.cancelled:
+            self.dragging = false
+            return
+        if event.kind == input.EventKind.pointer_down and event.button == 0 and event.x >= x and event.x < x + width and event.y >= y and event.y < y + height:
+            let columns = (usize)math.max(1.0, width / font.value().advance() - 1.0)
+            let caret = self.document.caret()
+            self.first_column = caret - columns if caret > columns else 0
+            let column = (usize)math.max(0.0, (event.x - x) / font.value().advance() + 0.5) + self.first_column
+            let offset = column if column < self.document.length() else self.document.length()
+            try self.document.select(self.document.anchor() if event.shift else offset, offset)
+            self.dragging = true
+        elif event.kind == input.EventKind.pointer_moved and self.dragging:
+            let column = (usize)math.max(0.0, (event.x - x) / font.value().advance() + 0.5) + self.first_column
+            try self.document.select(self.document.anchor(), column if column < self.document.length() else self.document.length())
+
+    pub func paint(painter: Painter*, font: interop.Reference[Font], theme: Theme,
+                   x: f64, y: f64, width: f64) -> !:
+        let advance = font.value().advance()
+        let columns = (usize)math.max(1.0, width / advance - 1.0)
+        let caret = self.document.caret()
+        let start = caret - columns if caret > columns else 0
+        let end = self.document.length() if self.document.length() < start + columns else start + columns
+        let first = start if start > self.document.first() else self.document.first()
+        let last = end if end < self.document.last() else self.document.last()
+        if last > first:
+            try painter.rectangle(gpu.Rect(x + (f64)(first - start) * advance, y, (f64)(last - first) * advance, font.value().height()), theme.selection)
+        let text = try self.document.text(start, end)
+        defer text.release()
+        try painter.text(text.value, x, y, theme.foreground, font)
+        try painter.rectangle(gpu.Rect(x + (f64)(caret - start) * advance, y, 1.0, font.value().height()), theme.accent)
+
+    pub mutating func close():
+        self.document.close()
+
+func validate(text: str) -> usize!:
+    if text.length > 4096:
+        error(result.limit, "single-line input is too long")
+    for byte in text.bytes:
+        if byte < 32 or byte == 127:
+            error(result.invalid, "single-line input cannot contain control characters")
+    var offset: usize = 0
+    var count: usize = 0
+    while offset < text.length:
+        let scalar = utf8.decode(text.bytes, offset) else error(result.invalid, "single-line input must be UTF-8")
+        count += 1
+        offset += scalar.width
+    if count > 1024:
+        error(result.limit, "single-line input is limited to 1024 characters")
+    return count

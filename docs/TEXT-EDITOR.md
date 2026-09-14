@@ -96,3 +96,14 @@ Horizontal extent includes tab expansion, the longest visible line and room for
 the caret; vertical extent uses visible rows. `scroll_offset()` returns the
 clamped offsets as `Size(width=x, height=y)`. The output viewer uses this same
 behavior through `read_only=true`.
+
+## Editing commands and context menus
+
+`copy`, `cut`, `paste`, `select_all`, `undo` and `redo` expose the same operations
+used by keyboard editing. `has_selection`, `is_read_only`, `can_undo` and
+`can_redo` let menus update availability. Cut and paste leave read-only content
+unchanged. The application owns Action instances and may wrap the editor in a
+ContextMenu; clipboard and document logic remain inside the text control.
+
+The inherited theme has a separate gutter color, so the folding/line-number
+area remains distinct from document content when the application changes theme.

@@ -60,6 +60,12 @@ pub struct Document:
     pub func version() -> u64:
         return self.revision
 
+    pub func can_undo() -> bool:
+        return self.edit_position > 0
+
+    pub func can_redo() -> bool:
+        return self.edit_position < self.edit_count
+
     pub func last_change() -> TextChange:
         return self.change
 

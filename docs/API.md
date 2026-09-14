@@ -21,6 +21,9 @@ All objects and callbacks belong to the main thread.
 | `Action` | Label and `Shortcut`; `on_trigger`, `trigger`, `set_enabled` |
 | `Toolbar` | Heterogeneous children and shared font; compact row, `set_children` |
 | `Menu` | Label, actions and shared font; `open`, `is_open`, `layout` |
+| `ContextMenu` | Decorate a widget with actions; `open_at`, `on_open`, `is_open`, `layout` |
+| `CommandPalette` | Searchable actions; `open`, `query`, `result_count`, `is_open`, `layout` |
+| `TextPrompt` | Text entry or confirmation; `open`, `value`, `on_submit`, `is_open`, `layout` |
 | `Theme` | Semantic colors, `control_lines`, `inset_cells`, `row_height`, `inset` |
 | `TextEditor` | Unicode text, selection, history and decorations; see [text controls](TEXT-EDITOR.md) |
 | `ListView` | Items and optional row height/font; `select`, `set_items`, `on_activate` |
@@ -134,3 +137,47 @@ The split's Layout owns three visible ordinary children: first pane, divider,
 second pane. Changing this shape or hiding a direct child is rejected. To hide
 content while retaining its pane, change the content inside the Pane. This first
 splitter provides no docking, collapsible panes, or saved session geometry.
+
+## Context menus, command search and prompts
+
+`ContextMenu(content, actions, font=...)` preserves the content's initial sizing
+policy and owns a popup action list. The nearest enabled context provider handles
+a right-click or Shift+F10. Right-clicking a ListView selects that row without
+activating it; empty list space clears selection. TextEditor preserves a selection
+when clicked inside it and otherwise moves the caret to the clicked position.
+`on_open(callback)` runs after that selection change and before presentation, so
+the application can update action availability. `open_at(x, y)` uses local points.
+
+The window clips and positions popups; they cannot escape its bounds. Menu,
+ContextMenu and CommandPalette share action-list selection and invocation. Arrow
+keys skip disabled actions, Enter invokes the selected action, and Escape or an
+outside click dismisses the popup. Invocation hides the popup before calling the
+application. Popup text events preserve Unicode codepoints. Application shortcuts
+remain suspended during modal input.
+
+`CommandPalette(actions, font=...)` is a popup Widget. Add it as a child of the
+application's content, then call `open()` from an Action. Its input filters caption
+words with ASCII case-insensitive matching; Unicode is matched literally.
+Up/Down, Tab/Shift+Tab and the wheel navigate results; Enter invokes. No matches
+leave the palette open. Input supports Unicode, selection, mouse placement and
+dragging, clipboard and undo. Queries are limited to 1024 Unicode scalars.
+
+`TextPrompt(font=...)` mounts the same way. `open(title, text="", accept="OK",
+editable=true)` selects its initial text. `on_submit(callback)` supplies the
+entered string. Enter or the accept button submits; Escape, Cancel or an outside
+click dismisses without submission. `editable=false` provides a confirmation
+surface with the same callback contract. Text is bounded to 1024 scalars and
+cannot contain control characters.
+
+`Layout.set_popup_point(x, y)` anchors a popup at a parent-local point.
+`set_popup_placement(PopupPlacement.window_top)` centers it near the window top;
+the default `below` placement remains appropriate for menu triggers.
+`copy_sizing_from(layout)` copies the current limits, flex and shrink policy for
+decorators. `contains_focus()` reports focus anywhere in a subtree after layout,
+including the originating pane while a popup temporarily owns focus. Pane uses
+the inherited `active_border` color in this state. `Theme.gutter` independently
+controls the text editor's line-number and folding area.
+
+`Font.configure(size, family="")` loads a replacement face before releasing the
+old one. Widgets sharing that Font update together; invalidate the root Layout
+after changing it. An invalid face leaves the previous font usable.

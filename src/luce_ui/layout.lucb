@@ -30,6 +30,11 @@ pub enum Alignment as u8:
     end = 2
     stretch = 3
 
+pub enum PopupPlacement as u8:
+    below = 0
+    point = 1
+    window_top = 2
+
 ## Coordinates are local to the receiving widget. Cancellation clears any press.
 pub struct Event:
     pub var kind: input.EventKind
@@ -87,12 +92,16 @@ pub struct Layout:
     var clipping: Rect
     var visible: bool
     var popup: bool
+    var popup_placement: PopupPlacement
+    var popup_point: Size
+    var context_menu: bool
     var accepts_focus: bool
     var accepts_pointer: bool
     var accepts_text: bool
     var accepts_tab: bool
     var active: bool
     var focused: bool
+    var focus_within: bool
     var editing: bool
 
     pub func init(axis: Axis = Axis.overlay, spacing: f64 = 0.0, padding: f64 = 0.0,
@@ -122,12 +131,16 @@ pub struct Layout:
         self.clipping = Rect()
         self.visible = true
         self.popup = false
+        self.popup_placement = PopupPlacement.below
+        self.popup_point = Size()
+        self.context_menu = false
         self.accepts_focus = false
         self.accepts_pointer = false
         self.accepts_text = false
         self.accepts_tab = false
         self.active = true
         self.focused = false
+        self.focus_within = false
         self.editing = false
 
     pub func is_visible() -> bool:
@@ -141,6 +154,26 @@ pub struct Layout:
     ## the window. Its subtree is drawn last and receives modal input.
     pub mutating func set_popup(popup: bool):
         self.popup = popup
+        self.invalidate()
+
+    ## A point is local to the popup's parent. Window placement clamps every
+    ## edge; centered command surfaces stay independent of surrounding flow.
+    pub mutating func set_popup_point(x: f64, y: f64) -> !:
+        if not math.is_finite(x) or not math.is_finite(y):
+            error(result.invalid, "popup coordinates must be finite")
+        self.popup_placement = PopupPlacement.point
+        self.popup_point = Size(x, y)
+        self.invalidate()
+
+    pub mutating func set_popup_placement(placement: PopupPlacement):
+        self.popup_placement = placement
+        self.invalidate()
+
+    ## Context providers receive a secondary-click request after its target has
+    ## selected the clicked content. The nearest enabled ancestor handles it.
+    pub mutating func set_context_menu(enabled: bool):
+        self.context_menu = enabled
+        self.accepts_pointer = enabled or self.accepts_pointer
         self.invalidate()
 
     pub func theme() -> Theme:
@@ -164,6 +197,9 @@ pub struct Layout:
 
     pub func is_focused() -> bool:
         return self.focused
+
+    pub func contains_focus() -> bool:
+        return self.focus_within
 
     pub func is_enabled() -> bool:
         return self.active
@@ -228,6 +264,16 @@ pub struct Layout:
     pub func maximum_size() -> Size:
         return self.maximum
 
+    ## Decorators can preserve a content widget's sizing policy while owning a
+    ## separate layout for popup children or framing.
+    pub mutating func copy_sizing_from(source: interop.Reference[Layout]) -> !:
+        let value = try source.get()
+        self.minimum = value.minimum
+        self.maximum = value.maximum
+        self.growth = value.growth
+        self.shrink = value.shrink
+        self.invalidate()
+
     ## Split layouts contain first pane, divider and second pane, in that order.
     ## The fraction is a preference; placement enforces the children's limits.
     pub mutating func set_split(fraction: f64) -> !:
@@ -268,7 +314,10 @@ pub struct Layout:
             let state = try layout.get()
             if state.parent != 0 and state.parent != self.identifier:
                 error(result.busy, "a widget already has a parent")
-            if state.application != 0 and state.parent != self.identifier:
+            # Traversal membership may outlive a just-removed parent edge until
+            # the next arrangement. Reattaching within that same application is
+            # safe; its retained snapshot still protects any active dispatch.
+            if state.application != 0 and state.parent != self.identifier and state.application != self.application:
                 error(result.busy, "a widget is mounted in an application")
             if try contains(child, self.identifier, 0):
                 error(result.invalid, "a widget tree cannot contain a cycle")
@@ -473,9 +522,15 @@ pub struct Tree:
                 let anchor = replacement[(usize)entry.parent].box.value().rectangle
                 let popup_width = math.min(box.measured.width, bounds.width)
                 let popup_height = math.min(box.measured.height, bounds.height)
-                let x = math.clamp(anchor.x, 0.0, bounds.width - popup_width)
+                var x = math.clamp(anchor.x, 0.0, bounds.width - popup_width)
                 let below = anchor.y + anchor.height
-                let y = below if below + popup_height <= bounds.height else math.max(0.0, anchor.y - popup_height)
+                var y = below if below + popup_height <= bounds.height else math.max(0.0, anchor.y - popup_height)
+                if box.popup_placement == PopupPlacement.point:
+                    x = math.clamp(anchor.x + box.popup_point.width, 0.0, bounds.width - popup_width)
+                    y = math.clamp(anchor.y + box.popup_point.height, 0.0, bounds.height - popup_height)
+                elif box.popup_placement == PopupPlacement.window_top:
+                    x = (bounds.width - popup_width) * 0.5
+                    y = math.min(math.min(40.0, bounds.height * 0.1), bounds.height - popup_height)
                 let position = find_entry(replacement, count, box.identifier) else trap("popup missing from tree")
                 place(replacement, position, Rect(x, y, popup_width, popup_height), bounds)
                 popup = box.identifier
@@ -508,6 +563,7 @@ pub struct Tree:
         for entry in self.entries[..<self.count]:
             entry.box.value().application = 0
             entry.box.value().focused = false
+            entry.box.value().focus_within = false
         release_entries(self.entries, self.count)
         committed = true
         self.entries = replacement
@@ -519,6 +575,7 @@ pub struct Tree:
             let box = entry.box.value()
             box.application = self.identifier
             box.focused = box.identifier == self.focus
+        mark_focus(self.entries, self.count, self.focus, self.return_focus)
         return result.success[unit](())
 
     pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
@@ -581,11 +638,50 @@ pub struct Tree:
             if event.kind == input.EventKind.key_down or event.kind == input.EventKind.key_up or event.kind == input.EventKind.text_input:
                 let delivered = self.send(popup, Event(kind = event.kind, key = event.key,
                     repeated = event.repeated, shift = event.modifiers.shift,
-                    control = event.modifiers.control, alt = event.modifiers.alt, meta = event.modifiers.super))
+                    control = event.modifiers.control, alt = event.modifiers.alt, meta = event.modifiers.super,
+                    codepoint = (i64)event.codepoint))
                 if not delivered.is_success():
                     return delivered
                 delivered.release()
                 return self.arrange(self.width, self.height)
+        let secondary = event.kind == input.EventKind.pointer_down and event.button == 1
+        let keyboard_context = event.kind == input.EventKind.key_down and event.key == input.Key.f10 and event.modifiers.shift and not event.repeated
+        if (secondary or keyboard_context) and not self.has_popup():
+            let destination = self.hit(event.x, event.y) if secondary else self.focus
+            if let target = self.find(destination):
+                let box = self.entries[target].box.value()
+                if secondary:
+                    let cancelled = self.cancel(self.capture)
+                    if not cancelled.is_success():
+                        return cancelled
+                    cancelled.release()
+                    self.capture = 0
+                    if box.accepts_focus:
+                        if self.focus != destination:
+                            let cancelled_focus = self.cancel(self.focus)
+                            if not cancelled_focus.is_success():
+                                return cancelled_focus
+                            cancelled_focus.release()
+                        self.set_focus(destination)
+                    if not box.context_menu:
+                        let selected = self.send(target, Event(kind = event.kind, button = 1,
+                            x = event.x - box.rectangle.x, y = event.y - box.rectangle.y, inside = true))
+                        if not selected.is_success():
+                            return selected
+                        selected.release()
+                var ancestor = (i64)target
+                while ancestor >= 0:
+                    let provider = self.entries[(usize)ancestor].box.value()
+                    if provider.context_menu and path_enabled(self.entries, (usize)ancestor):
+                        let x = event.x - provider.rectangle.x if secondary else 0.0
+                        let y = event.y - provider.rectangle.y if secondary else math.min(box.rectangle.y - provider.rectangle.y + box.rectangle.height, provider.rectangle.height)
+                        let opened = self.send((usize)ancestor, Event(kind = input.EventKind.pointer_down, button = 1, x = x, y = y, inside = true))
+                        if not opened.is_success():
+                            return opened
+                        opened.release()
+                        return self.arrange(self.width, self.height)
+                    ancestor = self.entries[(usize)ancestor].parent
+            return result.success[unit](())
         var text_tab = false
         if let focused = self.find(self.focus):
             text_tab = self.entries[focused].box.value().accepts_tab and not event.modifiers.control
@@ -710,6 +806,7 @@ pub struct Tree:
         self.focus = identifier
         for entry in self.entries[..<self.count]:
             entry.box.value().focused = entry.box.value().identifier == identifier
+        mark_focus(self.entries, self.count, identifier, self.return_focus)
         revision = revision +? 1 else trap("UI revision exhausted")
 
     mutating func advance_focus(backwards: bool):
@@ -734,6 +831,7 @@ pub struct Tree:
                 let box = entry.box.value()
                 box.application = 0
                 box.focused = false
+                box.focus_within = false
         release_entries(self.entries, self.count)
         self.count = 0
         var empty: Entry[]
@@ -745,6 +843,16 @@ pub struct Tree:
         for entry in self.entries[..<self.count]:
             entry.widget.trace(visit, context)
             entry.box.trace(visit, context)
+
+func mark_focus(entries: Entry[], count: usize, focus: u64, return_focus: u64):
+    for entry in entries[..<count]:
+        entry.box.value().focus_within = false
+    for identifier in [focus, return_focus]:
+        if let index = find_entry(entries, count, identifier):
+            var ancestor = (i64)index
+            while ancestor >= 0:
+                entries[(usize)ancestor].box.value().focus_within = true
+                ancestor = entries[(usize)ancestor].parent
 
 func release_entries(entries: Entry[], count: usize):
     for entry in entries[..<count]:

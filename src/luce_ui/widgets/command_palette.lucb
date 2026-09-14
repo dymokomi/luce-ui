@@ -1,0 +1,50 @@
+## A searchable command surface uses the same action list as ordinary menus.
+## Attach it as a popup child of the application content, then call open().
+import gpu
+import interop
+import memory
+import ownership
+from luce_ui.layout import Widget, Layout, Constraints, Size, Event
+from luce_ui.font import Font, selected_font
+from luce_ui.action import Action
+from luce_ui.widgets.action_popup import ActionPopup, action_popup_type
+
+pub struct CommandPalette: Widget:
+    let popup: interop.Reference[ActionPopup]
+
+    pub func init(actions: const interop.Reference[Action][], font: interop.Reference[Font]? = none) -> !:
+        let selected = try selected_font(font)
+        defer selected.release()
+        self.popup = try interop.Reference[ActionPopup].adopt(new ActionPopup(actions, selected, searchable = true) in memory.heap, action_popup_type, memory.heap)
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.popup.value().layout()
+
+    pub mutating func open() -> !:
+        try self.popup.value().open()
+
+    pub func is_open() -> bool:
+        return self.popup.value().is_open()
+
+    pub func query() -> interop.Owned[str]!:
+        return try self.popup.value().query_text()
+
+    pub func result_count() -> i64:
+        return self.popup.value().result_count()
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return self.popup.value().measure(available)
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        return self.popup.value().draw(target)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return self.popup.value().event(event)
+
+    pub mutating func close():
+        self.popup.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.popup.trace(visit, context)
+
+pub let command_palette_type: interop.Type[CommandPalette] = interop.Type[CommandPalette]("CommandPalette", CommandPalette.close, CommandPalette.trace, closeable = true, main_thread = true)

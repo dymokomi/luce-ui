@@ -1,0 +1,264 @@
+## A menu composes a compact trigger and a popup action list. Layout owns popup
+## placement, clipping, modal dispatch and focus restoration; this module owns
+## only menu selection and command presentation.
+import gpu
+import input
+import interop
+import math
+import memory
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.font import Font, selected_font
+from luce_ui.action import Action, Actions
+from luce_ui.painter import Painter
+from luce_ui.text.line_input import LineInput
+
+pub struct ActionPopup: Widget:
+    let box: interop.Reference[Layout]
+    let font: interop.Reference[Font]
+    var actions: Actions
+    var selected: i64
+    var first: i64
+    var pressed: i64
+    let searchable: bool
+    var query: LineInput
+    var matches: usize[128]
+    var count: usize
+
+    pub func init(actions: const interop.Reference[Action][], font: interop.Reference[Font], searchable: bool = false) -> !:
+        if actions.length == 0:
+            error(result.invalid, "a menu needs at least one action")
+        var copied = Actions()
+        errdefer copied.close()
+        try copied.set(actions)
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_shrink(vertical = 0.0)
+        box.value().set_focusable(true)
+        box.value().set_popup(true)
+        box.value().set_visible(false)
+        var query = try LineInput()
+        self.searchable = searchable
+        self.query = query
+        var matches: usize[128]
+        self.count = actions.length
+        for index in 0..<actions.length:
+            matches[index] = index
+        self.matches = matches
+        if searchable:
+            box.value().set_text_input(true)
+            box.value().set_popup_placement(layout.PopupPlacement.window_top)
+        self.box = box
+        self.font = font.clone()
+        self.actions = copied
+        self.selected = -1
+        self.first = 0
+        self.pressed = -1
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func is_open() -> bool:
+        return self.box.value().is_visible()
+
+    pub mutating func open() -> !:
+        try self.query.set_text("")
+        try self.filter()
+        self.selected = -1
+        self.first = 0
+        self.pressed = -1
+        self.move(1)
+        # The initial popup has not been placed yet. Its previous (or zero)
+        # height must not scroll leading disabled entries out of the new menu.
+        self.first = 0
+        self.box.value().set_visible(true)
+
+    pub func query_text() -> interop.Owned[str]!:
+        return try self.query.text()
+
+    pub func result_count() -> i64:
+        return (i64)self.count
+
+    mutating func filter() -> !:
+        let query = try self.query.text()
+        defer query.release()
+        self.count = 0
+        for index in 0..<self.actions.values().length:
+            let text = self.actions.values()[index].value().text()
+            defer text.release()
+            if matches_query(text.value, query.value):
+                self.matches[self.count] = index
+                self.count += 1
+        self.selected = -1
+        self.first = 0
+        self.pressed = -1
+        self.move(1)
+        self.first = 0
+
+    func header_height() -> f64:
+        return self.row_height() * 2.0 if self.searchable else 0.0
+
+    func row_height() -> f64:
+        return self.box.value().theme().row_height(self.font)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        var width: f64 = 0.0
+        for action in self.actions.values():
+            let text = action.value().text()
+            defer text.release()
+            let measured = self.font.value().measure(text.value) catch failure:
+                return result.failure[Size](failure.code, failure.message)
+            width = math.max(width, measured)
+        return result.success[Size](Size(600.0 if self.searchable else width + self.box.value().theme().inset(self.font) * 4.0,
+            self.header_height() + self.row_height() * (math.clamp((f64)self.count, 1.0, 10.0) if self.searchable else (f64)self.count)))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.panel)
+        if self.searchable:
+            try painter.text("Search commands", theme.inset(self.font), 0.0, theme.muted, self.font)
+            try self.query.paint(&painter, self.font, theme, theme.inset(self.font), self.row_height(), size.width - theme.inset(self.font) * 2.0)
+            try painter.rectangle(gpu.Rect(y = self.header_height() - 1.0, width = size.width, height = 1.0), theme.border)
+            if self.count == 0:
+                try painter.text("No matching commands", theme.inset(self.font), self.header_height(), theme.muted, self.font)
+        var index = self.first
+        while index < (i64)self.count:
+            let y = self.header_height() + (f64)(index - self.first) * self.row_height()
+            if y >= size.height:
+                break
+            let action = self.actions.values()[self.matches[(usize)index]]
+            if index == self.selected:
+                try painter.rectangle(gpu.Rect(y = y, width = size.width, height = self.row_height()), theme.selection)
+            let caption = action.value().text()
+            defer caption.release()
+            try painter.text(caption.value, theme.inset(self.font), y + (self.row_height() - self.font.value().height()) * 0.5,
+                theme.foreground if action.value().is_enabled() else theme.muted, self.font)
+            index += 1
+        try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.border)
+        try painter.rectangle(gpu.Rect(y = math.max(0.0, size.height - 1.0), width = size.width, height = 1.0), theme.border)
+        try painter.rectangle(gpu.Rect(width = 1.0, height = size.height), theme.border)
+        try painter.rectangle(gpu.Rect(x = math.max(0.0, size.width - 1.0), width = 1.0, height = size.height), theme.border)
+
+    mutating func move(direction: i64):
+        let count = (i64)self.count
+        if count == 0:
+            return
+        var index = self.selected
+        for visited in 0..<count:
+            index = (index + direction + count) % count
+            if self.actions.values()[self.matches[(usize)index]].value().is_enabled():
+                self.selected = index
+                let rows = (i64)math.max(1.0, (self.box.value().bounds().height - self.header_height()) / self.row_height())
+                if index < self.first:
+                    self.first = index
+                elif index >= self.first + rows:
+                    self.first = index - rows + 1
+                self.box.value().invalidate()
+                return
+
+    mutating func activate() -> interop.Outcome[unit]:
+        if self.selected < 0:
+            return result.success[unit](())
+        let action = self.actions.values()[self.matches[(usize)self.selected]].clone()
+        defer action.release()
+        if not action.value().is_enabled():
+            return result.success[unit](())
+        # Close before invoking application code, including callbacks which
+        # replace the containing view or fail while saving a document.
+        self.box.value().set_visible(false)
+        self.pressed = -1
+        return action.value().trigger()
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if self.searchable:
+            let inset = self.box.value().theme().inset(self.font)
+            self.query.pointer(event, self.font, inset, self.row_height(), self.box.value().bounds().width - inset * 2.0, self.row_height()) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            let changed = self.query.event(event) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            if changed:
+                self.filter() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+            self.box.value().invalidate()
+        if event.cancelled:
+            self.box.value().set_visible(false)
+            self.pressed = -1
+        elif event.kind == input.EventKind.key_down:
+            if event.key == input.Key.escape:
+                self.box.value().set_visible(false)
+            elif event.key == input.Key.down or (event.key == input.Key.tab and not event.shift):
+                self.move(1)
+            elif event.key == input.Key.up or (event.key == input.Key.tab and event.shift):
+                self.move(-1)
+            elif (event.key == input.Key.enter or (event.key == input.Key.space and not self.searchable)) and not event.repeated:
+                return self.activate()
+        elif event.kind == input.EventKind.scroll:
+            self.move(1 if event.scroll_y < 0.0 else -1)
+        elif event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_down:
+            let index = self.first + (i64)((event.y - self.header_height()) / self.row_height())
+            if event.inside and event.y >= self.header_height() and index >= 0 and index < (i64)self.count:
+                self.selected = index
+                if event.kind == input.EventKind.pointer_down and event.button == 0:
+                    self.pressed = index
+                self.box.value().invalidate()
+        elif event.kind == input.EventKind.pointer_up and event.button == 0:
+            let index = self.first + (i64)((event.y - self.header_height()) / self.row_height())
+            let activate = event.inside and event.y >= self.header_height() and self.pressed >= 0 and index == self.pressed
+            self.pressed = -1
+            if activate:
+                return self.activate()
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.query.close()
+        self.actions.close()
+        self.font.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.actions.trace(visit, context)
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+
+pub let action_popup_type: interop.Type[ActionPopup] = interop.Type[ActionPopup]("Menu popup", ActionPopup.close, ActionPopup.trace, closeable = true, main_thread = true)
+
+
+## Match query words case-insensitively in the caption. ASCII case folding keeps
+## UTF-8 bytes intact; literal Unicode words still match without reinterpretation.
+func matches_query(text: str, query: str) -> bool:
+    var start: usize = 0
+    while start < query.length:
+        while start < query.length and query.bytes[start] == 32:
+            start += 1
+        var end = start
+        while end < query.length and query.bytes[end] != 32:
+            end += 1
+        if end == start:
+            break
+        var found = false
+        var position: usize = 0
+        while position + end - start <= text.length:
+            var offset: usize = 0
+            while offset < end - start and folded(text.bytes[position + offset]) == folded(query.bytes[start + offset]):
+                offset += 1
+            if offset == end - start:
+                found = true
+                break
+            position += 1
+        if not found:
+            return false
+        start = end
+    return true
+
+func folded(byte: u8) -> u8:
+    return byte + 32 if byte >= 65 and byte <= 90 else byte

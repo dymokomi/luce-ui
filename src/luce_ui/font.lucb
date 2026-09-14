@@ -93,6 +93,13 @@ pub struct Font:
         let storage = try new FontState(face = face, runs = runs) in memory.heap
         self.state = reservation.publish(storage, memory.heap)
 
+    ## Replace the shared face only after loading succeeds. Controls retain the
+    ## Font object, so a settings reload updates all of them together.
+    pub mutating func configure(size: f64, family: str = "") -> !:
+        let replacement = try Font(size, family)
+        self.state.release()
+        self.state = replacement.state
+
     pub func size() -> f64:
         return self.state.value().face.size
 

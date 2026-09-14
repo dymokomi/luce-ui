@@ -89,6 +89,42 @@ pub struct TextEditor: Widget:
     pub func selected_text() -> interop.Owned[str]!:
         return try self.document.text(self.document.first(), self.document.last())
 
+    pub func has_selection() -> bool:
+        return self.document.first() != self.document.last()
+
+    pub func is_read_only() -> bool:
+        return self.read_only
+
+    pub func can_undo() -> bool:
+        return not self.read_only and self.document.can_undo()
+
+    pub func can_redo() -> bool:
+        return not self.read_only and self.document.can_redo()
+
+    pub mutating func select_all() -> !:
+        try self.set_selection(0, self.length())
+
+    pub func copy() -> !:
+        if self.has_selection():
+            let text = try self.selected_text()
+            defer text.release()
+            try clipboard.write_text(text.value)
+
+    pub mutating func cut() -> interop.Outcome[unit]:
+        if self.read_only or not self.has_selection():
+            return result.success[unit](())
+        self.copy() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return self.insert("")
+
+    pub mutating func paste() -> interop.Outcome[unit]:
+        if self.read_only:
+            return result.success[unit](())
+        let text = clipboard.read_text() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer text.release()
+        return self.insert(text.value)
+
     pub func version() -> i64:
         return (i64)self.document.version()
 
@@ -270,6 +306,11 @@ pub struct TextEditor: Widget:
         if event.cancelled:
             self.dragging = false
             self.dragging_scroll = false
+            return
+        if event.kind == input.EventKind.pointer_down and event.button == 1:
+            let position = self.position_at(event.x, event.y)
+            if position < self.document.first() or position >= self.document.last():
+                try self.set_selection((i64)position, (i64)position)
             return
         if event.kind == input.EventKind.scroll:
             if not math.is_finite(event.scroll_x) or not math.is_finite(event.scroll_y):
