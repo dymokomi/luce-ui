@@ -1,6 +1,9 @@
 ## One line index drives painting, hit testing, navigation and scroll extents.
 ## Edits rescan only affected line text; unchanged suffix entries are shifted.
 ## Folding rebuilds the visible-row map without copying or changing the source.
+## Soft wrap adds a second layer: each fold-visible physical line becomes one or
+## more visual rows, split at word boundaries to the wrap width. Wrapping is off
+## by default, and the unwrapped path is unchanged.
 import memory
 from luce_ui.text.document import Document
 from luce_ui.text.folding import Folding
@@ -10,21 +13,50 @@ pub struct Line:
     pub let end: usize
     pub let columns: usize
 
+## One visual row. When wrap is off it spans a whole physical line; when on it
+## is a segment of it. `column` is the display column at `start`, `width` the
+## columns the segment occupies, and `leading` marks a line's first segment,
+## the only one that shows a line number and fold marker.
+pub struct Visual:
+    pub let physical: usize
+    pub let start: usize
+    pub let end: usize
+    pub let column: usize
+    pub let width: usize
+    pub let leading: bool
+
+struct Break:
+    let offset: usize
+    let column: usize
+
 pub struct Projection:
     var lines: Line[]
     var visible: usize[]
     var count: usize
     var widest: usize
+    var wrapped: Visual[]
+    var wrapped_count: usize
+    var wrap_columns: usize
+    var wrapped_columns_for: usize
+    var wrapped_text: i64
+    var wrapped_fold: i64
     var text_version: i64
     var fold_version: i64
 
     pub func init():
         var lines: Line[]
         var visible: usize[]
+        var wrapped: Visual[]
         self.lines = lines
         self.visible = visible
         self.count = 0
         self.widest = 0
+        self.wrapped = wrapped
+        self.wrapped_count = 0
+        self.wrap_columns = 0
+        self.wrapped_columns_for = 0
+        self.wrapped_text = -1
+        self.wrapped_fold = -1
         self.text_version = -1
         self.fold_version = -1
 
@@ -32,7 +64,7 @@ pub struct Projection:
         return self.lines.length
 
     pub func visible_count() -> usize:
-        return self.count
+        return self.wrapped_count if self.wrap_columns > 0 else self.count
 
     pub func maximum_columns() -> usize:
         return self.widest
@@ -40,7 +72,20 @@ pub struct Projection:
     pub func line(index: usize) -> Line:
         return self.lines[index if index < self.lines.length else self.lines.length - 1]
 
+    ## The visual row at a visible index: a physical line when wrap is off, a
+    ## segment of one when on. Painting, hit testing and navigation share it.
+    pub func row(index: usize) -> Visual:
+        if self.wrap_columns > 0:
+            let clamped = index if index < self.wrapped_count else (self.wrapped_count - 1 if self.wrapped_count > 0 else 0)
+            return self.wrapped[clamped]
+        let physical = self.physical_row(index)
+        let line = self.lines[physical]
+        return Visual(physical, line.start, line.end, 0, line.columns, true)
+
     pub func physical_row(visible: usize) -> usize:
+        if self.wrap_columns > 0:
+            let clamped = visible if visible < self.wrapped_count else (self.wrapped_count - 1 if self.wrapped_count > 0 else 0)
+            return self.wrapped[clamped].physical
         return self.visible[visible if visible < self.count else self.count - 1]
 
     pub func row_at(offset: usize) -> usize:
@@ -55,6 +100,16 @@ pub struct Projection:
         return low - 1 if low > 0 else 0
 
     pub func visual_row(offset: usize) -> usize:
+        if self.wrap_columns > 0:
+            var low: usize = 0
+            var high = self.wrapped_count
+            while low < high:
+                let middle = (low + high) // 2
+                if self.wrapped[middle].start <= offset:
+                    low = middle + 1
+                else:
+                    high = middle
+            return low - 1 if low > 0 else 0
         let physical = self.row_at(offset)
         var low: usize = 0
         var high = self.count
@@ -69,35 +124,82 @@ pub struct Projection:
     pub func is_hidden(offset: usize) -> bool:
         return self.physical_row(self.visual_row(offset)) != self.row_at(offset)
 
-    pub mutating func refresh(document: const Document*, folds: const Folding*) -> !:
+    pub mutating func refresh(document: const Document*, folds: const Folding*, wrap: usize = 0) -> !:
         let revision = (i64)document.version()
         let edited = self.text_version != revision
         if edited:
             try self.update_lines(document)
-        if not edited and self.fold_version == (i64)folds.version():
-            return
-        self.count = 0
-        self.widest = 0
-        var fold_index: usize = 0
-        var hidden_end: usize = 0
+        if edited or self.fold_version != (i64)folds.version():
+            self.count = 0
+            self.widest = 0
+            var fold_index: usize = 0
+            var hidden_end: usize = 0
+            let ranges = folds.values()
+            for physical in 0..<self.lines.length:
+                let line = self.lines[physical]
+                while fold_index < ranges.length and ranges[fold_index].hidden <= line.start:
+                    if ranges[fold_index].collapsed and ranges[fold_index].end > hidden_end:
+                        hidden_end = ranges[fold_index].end
+                    fold_index += 1
+                if line.start < hidden_end:
+                    continue
+                self.visible[self.count] = physical
+                self.count += 1
+                var columns = line.columns
+                if let index = folds.at(line.start):
+                    if ranges[index].collapsed:
+                        columns += 4
+                if columns > self.widest:
+                    self.widest = columns
+            self.fold_version = (i64)folds.version()
+        self.wrap_columns = wrap
+        if wrap > 0 and (self.wrapped_text != self.text_version or self.wrapped_fold != self.fold_version or self.wrapped_columns_for != wrap):
+            try self.build_wrapped(document, folds, wrap)
+
+    mutating func build_wrapped(document: const Document*, folds: const Folding*, wrap: usize) -> !:
+        var empty: Visual[]
+        let total = self.lay_wrapped(document, folds, wrap, empty)
+        let buffer = try alloc Visual[total if total > 0 else 1] in memory.heap
+        errdefer free(buffer) in memory.heap
+        discard(self.lay_wrapped(document, folds, wrap, buffer))
+        if self.wrapped.length > 0:
+            free(self.wrapped) in memory.heap
+        self.wrapped = buffer
+        self.wrapped_count = total
+        self.wrapped_columns_for = wrap
+        self.wrapped_text = self.text_version
+        self.wrapped_fold = self.fold_version
+
+    ## Fill `out` with visual rows, or count them when `out` is empty. Both the
+    ## sizing and the filling pass share this single walk, so they cannot drift.
+    func lay_wrapped(document: const Document*, folds: const Folding*, wrap: usize, out: Visual[]) -> usize:
+        var n: usize = 0
         let ranges = folds.values()
-        for physical in 0..<self.lines.length:
+        for i in 0..<self.count:
+            let physical = self.visible[i]
             let line = self.lines[physical]
-            while fold_index < ranges.length and ranges[fold_index].hidden <= line.start:
-                if ranges[fold_index].collapsed and ranges[fold_index].end > hidden_end:
-                    hidden_end = ranges[fold_index].end
-                fold_index += 1
-            if line.start < hidden_end:
-                continue
-            self.visible[self.count] = physical
-            self.count += 1
-            var columns = line.columns
+            var collapsed = false
             if let index = folds.at(line.start):
-                if ranges[index].collapsed:
-                    columns += 4
-            if columns > self.widest:
-                self.widest = columns
-        self.fold_version = (i64)folds.version()
+                collapsed = ranges[index].collapsed
+            if collapsed or line.columns <= wrap or line.start == line.end:
+                if out.length > 0:
+                    out[n] = Visual(physical, line.start, line.end, 0, line.columns, true)
+                n += 1
+            else:
+                var start = line.start
+                var column: usize = 0
+                var leading = true
+                while true:
+                    let brk = wrap_break(document, start, line.end, column, wrap)
+                    if out.length > 0:
+                        out[n] = Visual(physical, start, brk.offset, column, brk.column - column, leading)
+                    n += 1
+                    start = brk.offset
+                    column = brk.column
+                    leading = false
+                    if start >= line.end:
+                        break
+        return n
 
     mutating func update_lines(document: const Document*) -> !:
         let change = document.last_change()
@@ -141,12 +243,12 @@ pub struct Projection:
             let line = self.lines[index]
             lines[row] = Line((usize)((i64)line.start + delta), (usize)((i64)line.end + delta), line.columns)
             row += 1
-        self.close()
+        self.free_lines()
         self.lines = lines
         self.visible = visible
         self.text_version = (i64)document.version()
 
-    pub mutating func close():
+    mutating func free_lines():
         if self.lines.length > 0:
             free(self.lines) in memory.heap
             free(self.visible) in memory.heap
@@ -154,7 +256,43 @@ pub struct Projection:
         var visible: usize[]
         self.lines = lines
         self.visible = visible
+
+    pub mutating func close():
+        self.free_lines()
+        if self.wrapped.length > 0:
+            free(self.wrapped) in memory.heap
+        var wrapped: Visual[]
+        self.wrapped = wrapped
         self.count = 0
         self.widest = 0
+        self.wrapped_count = 0
+        self.wrap_columns = 0
+        self.wrapped_columns_for = 0
+        self.wrapped_text = -1
+        self.wrapped_fold = -1
         self.text_version = -1
         self.fold_version = -1
+
+## Find where a segment beginning at `start`/`start_column` should end so it is at
+## most `wrap` columns wide, preferring the last space inside it and otherwise
+## breaking hard. Always makes progress: a segment holds at least one scalar.
+func wrap_break(document: const Document*, start: usize, end: usize, start_column: usize, wrap: usize) -> Break:
+    var index = start
+    var column = start_column
+    var break_index: usize = 0
+    var break_column: usize = 0
+    var has_break = false
+    while index < end:
+        let scalar = document.scalar(index)
+        let cells = 4 - column % 4 if scalar == 9 else 1
+        if index > start and column + cells - start_column > wrap:
+            break
+        column += cells
+        index += 1
+        if scalar == 32 and index < end:
+            break_index = index
+            break_column = column
+            has_break = true
+    if index < end and has_break and break_index > start:
+        return Break(break_index, break_column)
+    return Break(index, column)

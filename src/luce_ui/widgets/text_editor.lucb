@@ -43,9 +43,10 @@ pub struct TextEditor: Widget:
     var last_click: u64
     var last_offset: usize
     var clicks: i64
+    var wrap: bool
 
     pub func init(text: str = "", read_only: bool = false, line_numbers: bool = true,
-                  font: interop.Reference[Font]? = none, theme: EditorTheme? = none) -> !:
+                  font: interop.Reference[Font]? = none, theme: EditorTheme? = none, wrap: bool = false) -> !:
         var selected = try selected_font(font)
         errdefer selected.release()
         let box = try layout.make_layout()
@@ -86,6 +87,7 @@ pub struct TextEditor: Widget:
         self.last_click = 0
         self.last_offset = 0
         self.clicks = 0
+        self.wrap = wrap
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -268,11 +270,33 @@ pub struct TextEditor: Widget:
     pub func visible_line_count() -> i64:
         return (i64)self.projection.visible_count()
 
+    pub func wrapping() -> bool:
+        return self.wrap
+
+    ## Soft wrap long lines to the viewport width, or restore horizontal scrolling.
+    ## The caret keeps its place and is revealed on its new visual row.
+    pub mutating func set_wrap(enabled: bool) -> !:
+        if self.wrap == enabled:
+            return
+        self.wrap = enabled
+        self.scroll_x = 0.0
+        try self.refresh_view()
+        try self.reveal_caret()
+        self.box.value().invalidate()
+
     pub func scroll_offset() -> Size:
         return Size(math.clamp(self.scroll_x, 0.0, self.maximum_scroll_x()), math.clamp(self.scroll_y, 0.0, self.maximum_scroll()))
 
+    ## Columns per visual row when wrapping, or 0 to disable it. One column is
+    ## reserved so the caret past the last glyph never sits under the scrollbar.
+    func wrap_columns() -> usize:
+        if not self.wrap:
+            return 0
+        let columns = (usize)(self.content_width() / self.font.value().advance())
+        return columns if columns > 1 else 1
+
     mutating func refresh_view() -> !:
-        try self.projection.refresh(&self.document, &self.folds)
+        try self.projection.refresh(&self.document, &self.folds, self.wrap_columns())
         self.clamp_scroll()
 
     mutating func finish_folding() -> !:
@@ -428,13 +452,21 @@ pub struct TextEditor: Widget:
             try editing.move(&self.document, self.document.length() if command else self.document.line_end(caret), extend)
         elif event.key == input.Key.up or event.key == input.Key.down or event.key == input.Key.page_up or event.key == input.Key.page_down:
             if not self.vertical_move:
-                self.preferred_column = editing.column(&self.document, caret)
+                let here = self.projection.row(self.projection.visual_row(caret))
+                self.preferred_column = editing.column(&self.document, caret) - here.column
             let row = self.projection.visual_row(caret)
             let page = (usize)math.max(1.0, self.box.value().bounds().height / self.font.value().line_height() - 1.0)
             let step = page if event.key == input.Key.page_up or event.key == input.Key.page_down else 1
             let upwards = event.key == input.Key.up or event.key == input.Key.page_up
-            let destination = row - step if upwards and row >= step else (0 if upwards else row + step)
-            try editing.move(&self.document, editing.at_column(&self.document, self.projection.physical_row(destination), self.preferred_column), extend)
+            let rows = self.projection.visible_count()
+            let raw = row - step if upwards and row >= step else (0 if upwards else row + step)
+            let target = self.projection.row(raw if raw < rows else (rows - 1 if rows > 0 else 0))
+            var offset = editing.at_column(&self.document, target.physical, target.column + self.preferred_column)
+            if offset > target.end:
+                offset = target.end
+            if offset < target.start:
+                offset = target.start
+            try editing.move(&self.document, offset, extend)
             self.vertical_move = true
             return
         elif not self.read_only:
@@ -453,9 +485,16 @@ pub struct TextEditor: Widget:
         self.vertical_move = false
 
     func position_at(x: f64, y: f64) -> usize:
-        let row = (usize)(math.max(0.0, y - drawing.vertical_padding(self.font) + self.scroll_y) / self.font.value().line_height())
-        let column = (usize)(math.max(0.0, x - self.gutter_width() - self.font.value().advance() + self.scroll_x) / (self.font.value().advance()) + 0.5)
-        return editing.at_column(&self.document, self.projection.physical_row(row), column)
+        let rows = self.projection.visible_count()
+        let raw = (usize)(math.max(0.0, y - drawing.vertical_padding(self.font) + self.scroll_y) / self.font.value().line_height())
+        let segment = self.projection.row(raw if raw < rows else (rows - 1 if rows > 0 else 0))
+        let cells = (usize)(math.max(0.0, x - self.gutter_width() - self.font.value().advance() + self.scroll_x) / self.font.value().advance() + 0.5)
+        var offset = editing.at_column(&self.document, segment.physical, segment.column + cells)
+        if offset > segment.end:
+            offset = segment.end
+        if offset < segment.start:
+            offset = segment.start
+        return offset
 
     func maximum_scroll() -> f64:
         return math.max(0.0, (f64)self.projection.visible_count() * self.font.value().line_height() + drawing.vertical_padding(self.font) * 2.0 - self.box.value().bounds().height)
@@ -471,6 +510,8 @@ pub struct TextEditor: Widget:
         return math.max(1.0, self.box.value().bounds().width - self.gutter_width() - self.font.value().advance() - 8.0)
 
     func maximum_scroll_x() -> f64:
+        if self.wrap:
+            return 0.0
         return math.max(0.0, (f64)(self.projection.maximum_columns() + 1) * self.font.value().advance() - self.content_width())
 
     mutating func clamp_scroll():
@@ -491,12 +532,13 @@ pub struct TextEditor: Widget:
         if y + self.font.value().line_height() > self.scroll_y + height:
             self.scroll_y = y + self.font.value().line_height() - height
         self.scroll_y = math.clamp(self.scroll_y, 0.0, self.maximum_scroll())
-        let x = (f64)editing.column(&self.document, self.document.caret()) * self.font.value().advance()
-        let width = self.content_width()
-        if x < self.scroll_x:
-            self.scroll_x = x
-        if x + self.font.value().advance() > self.scroll_x + width:
-            self.scroll_x = x + self.font.value().advance() - width
+        if not self.wrap:
+            let x = (f64)editing.column(&self.document, self.document.caret()) * self.font.value().advance()
+            let width = self.content_width()
+            if x < self.scroll_x:
+                self.scroll_x = x
+            if x + self.font.value().advance() > self.scroll_x + width:
+                self.scroll_x = x + self.font.value().advance() - width
         self.clamp_scroll()
 
     mutating func notify_changed() -> interop.Outcome[unit]:

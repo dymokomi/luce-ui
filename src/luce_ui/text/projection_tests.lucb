@@ -112,6 +112,39 @@ func projection_edits() -> !:
             try projection.refresh(&document, &folds)
             check_projection(&document, &projection)
 
+func wrapping() -> !:
+    var document = try Document("aaaa bbbb cccc dddd\nshort\n")
+    defer document.close()
+    var folds = Folding()
+    defer folds.close()
+    var projection = Projection()
+    defer projection.close()
+    try projection.refresh(&document, &folds, 10)
+    assert(projection.line_count() == 3 and projection.visible_count() == 4)
+    let first = projection.row(0)
+    let second = projection.row(1)
+    assert(first.physical == 0 and first.start == 0 and first.end == 10 and first.column == 0 and first.width == 10 and first.leading)
+    assert(second.physical == 0 and second.start == 10 and second.end == 19 and second.column == 10 and second.width == 9 and not second.leading)
+    assert(projection.row(2).physical == 1 and projection.row(2).start == 20 and projection.row(2).leading)
+    assert(projection.row(3).physical == 2 and projection.row(3).start == 26)
+    # Every visible scalar lands in the segment that draws it, no wider than the wrap.
+    for offset in 0..<document.length():
+        if document.scalar(offset) == 10:
+            continue
+        let visual = projection.visual_row(offset)
+        let segment = projection.row(visual)
+        assert(segment.start <= offset and offset < segment.end)
+        assert(segment.physical == projection.row_at(offset) and segment.width <= 10)
+    # A single word longer than the wrap still advances, one hard break at a time.
+    try document.set_text("wwwwwwwwwwww\n")
+    try projection.refresh(&document, &folds, 5)
+    assert(projection.visible_count() == 4)
+    assert(projection.row(0).width == 5 and projection.row(1).width == 5 and projection.row(2).width == 2)
+    assert(projection.row(3).physical == 1 and projection.row(3).start == 13)
+    # Turning wrap off restores one visual row per physical line.
+    try projection.refresh(&document, &folds, 0)
+    assert(projection.visible_count() == 2)
+
 test "fold and projection allocation failures preserve usable storage":
     var tracker = Tracker(upstream = memory.heap)
     let previous = memory.heap
@@ -123,3 +156,6 @@ test "fold and projection allocation failures preserve usable storage":
 
 test "incremental line projection matches complete scans through Unicode edits and history":
     try projection_edits()
+
+test "soft wrap splits physical lines into word-broken visual rows":
+    try wrapping()

@@ -8,6 +8,37 @@ pub func text_views() -> unit!:
     folding()
     folded_extents()
     gutter_edits()
+    wrapping()
+
+func wrapping() -> unit!:
+    let font = Font()
+    let editor = TextEditor("one two three four five six seven eight nine ten\nshort", font = font)
+    let app = Application(editor)
+    app.layout(220.0, 200.0)
+    app.focus(editor.layout())
+    app.layout(220.0, 200.0)
+    # Off: one visual row per physical line.
+    assert(editor.visible_line_count() == 2)
+    editor.set_wrap(true)
+    app.layout(220.0, 200.0)
+    assert(editor.wrapping() and editor.visible_line_count() > 2)
+    # Down from the start stays on the first physical line, on its next visual row.
+    editor.set_selection(0, 0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.down))
+    assert(editor.line() == 1 and editor.caret() > 0)
+    # A click on the second visual row lands inside the first physical line.
+    editor.set_selection(0, 0)
+    app.dispatch(Event(kind = EventKind.pointer_down, x = font.advance() * 6.0, y = font.line_height() * 1.5))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = font.advance() * 6.0, y = font.line_height() * 1.5))
+    assert(editor.line() == 1 and editor.caret() > 0)
+    # Wrapping pins the horizontal offset to zero even at the far right.
+    editor.set_selection(editor.length(), editor.length())
+    assert(editor.scroll_offset().width == 0.0)
+    # Off again: the two-row layout returns.
+    editor.set_wrap(false)
+    app.layout(220.0, 200.0)
+    assert(not editor.wrapping() and editor.visible_line_count() == 2)
+    app.close()
 
 func gutter_edits() -> unit!:
     let font = Font()

@@ -33,20 +33,18 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
     try painter.rectangle(gpu.Rect(width = width, height = height), theme.background)
     if numbers or folding:
         try painter.rectangle(gpu.Rect(width = gutter, height = height), theme.gutter)
+    let rows = projection.visible_count()
     let first_row = (usize)(scroll_y / font.value().line_height())
-    var offset = projection.line(projection.physical_row(first_row)).start
+    var offset = projection.row(first_row if first_row < rows else 0).start
     var row = first_row
     var y = vertical_padding(font) + (f64)row * font.value().line_height() - scroll_y
     let current = projection.visual_row(document.caret())
     var style: usize = 0
     while style < highlights.length and highlights[style].end <= (i64)offset:
         style += 1
-    let rows = projection.visible_count()
     while y < height and row < rows:
-        let physical = projection.physical_row(row)
-        let line = projection.line(physical)
-        offset = line.start
-        let end = line.end
+        let segment = projection.row(row)
+        let line = projection.line(segment.physical)
         let row_top = y - vertical_padding(font)
         if row == current:
             try painter.rectangle(gpu.Rect(0.0, row_top, gutter, font.value().line_height()), theme.gutter_active)
@@ -55,20 +53,21 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
         if focused and row == current:
             try painter.rectangle(gpu.Rect(gutter, row_top, math.max(0.0, width - gutter), font.value().line_height()), theme.current_line)
         let number_color = theme.active_line_number if row == current or hovered_row == row else theme.line_number
-        if numbers:
+        if numbers and segment.leading:
             var label: u8[32]
-            let text = try format(label, f"{physical + 1}")
+            let text = try format(label, f"{segment.physical + 1}")
             let extent = try font.value().measure(text)
             try painter.text(text, gutter - extent - font.value().advance() * (3.0 if folding else 1.0), y, number_color, font)
-        try paint_line(document, painter, offset, end, y, width, scroll_x, gutter,
-            focused, caret_visible, font, theme, highlights, &style)
-        if let index = folds.at(offset):
-            let fold = folds.values()[index]
-            try painter.text("+" if fold.collapsed else "-", gutter - font.value().advance() * 1.5, y, number_color, font)
-            if fold.collapsed:
-                let x = gutter + font.value().advance() * (f64)(line.columns + 2) - scroll_x
-                if x >= gutter and x < width - 8.0:
-                    try painter.text("...", x, y, theme.line_number, font)
+        try paint_line(document, painter, segment.start, segment.end, segment.column, segment.end == line.end,
+            y, width, scroll_x, gutter, focused, caret_visible, font, theme, highlights, &style)
+        if segment.leading:
+            if let index = folds.at(line.start):
+                let fold = folds.values()[index]
+                try painter.text("+" if fold.collapsed else "-", gutter - font.value().advance() * 1.5, y, number_color, font)
+                if fold.collapsed:
+                    let x = gutter + font.value().advance() * (f64)(line.columns + 2) - scroll_x
+                    if x >= gutter and x < width - 8.0:
+                        try painter.text("...", x, y, theme.line_number, font)
         row += 1
         y += font.value().line_height()
     let total = (f64)rows * font.value().line_height() + vertical_padding(font) * 2.0
@@ -77,21 +76,26 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
         let position = scroll_y / math.max(1.0, total - height) * math.max(0.0, height - thumb)
         try painter.rectangle(gpu.Rect(math.max(0.0, width - 6.0), position, 4.0, thumb), theme.scrollbar)
 
+## Paint one visual row: the scalar range [start, end). `start_column` is the
+## display column at `start`, so a wrapped segment draws left-aligned yet keeps
+## its tab stops; `last` marks a physical line's final segment, which alone draws
+## the trailing newline selection and accepts a caret at `end`.
 func paint_line(document: const Document*, painter: Painter*, start: usize, end: usize,
-                y: f64, width: f64, scroll_x: f64, gutter: f64, focused: bool,
-                caret_visible: bool, font: interop.Reference[Font], theme: EditorTheme,
-                highlights: const Highlight[], style: usize*) -> !:
+                start_column: usize, last: bool, y: f64, width: f64, scroll_x: f64,
+                gutter: f64, focused: bool, caret_visible: bool, font: interop.Reference[Font],
+                theme: EditorTheme, highlights: const Highlight[], style: usize*) -> !:
     let advance = font.value().advance()
-    var column: usize = 0
+    let origin = gutter + advance - scroll_x - (f64)start_column * advance
+    var column = start_column
     var bytes: u8[2048]
     var used: usize = 0
     var run_x: f64 = 0.0
     var run_color = theme.foreground
-    var cursor_x = gutter + font.value().advance() - scroll_x
+    var cursor_x = gutter + advance - scroll_x
     for index in start..<end:
         let scalar = document.scalar(index)
         let cells = 4 - column % 4 if scalar == 9 else 1
-        let x = gutter + font.value().advance() + (f64)column * advance - scroll_x
+        let x = origin + (f64)column * advance
         let visible = x + (f64)cells * advance > gutter and x < width - 8.0
         if index == document.caret():
             cursor_x = x
@@ -113,14 +117,14 @@ func paint_line(document: const Document*, painter: Painter*, start: usize, end:
             used += utf8.encode(scalar, bytes[used..]) else trap("invalid document scalar")
         column += cells
         if index + 1 == document.caret():
-            cursor_x = gutter + font.value().advance() + (f64)column * advance - scroll_x
+            cursor_x = origin + (f64)column * advance
     if used > 0:
         try painter.text((str)bytes[..<used], run_x, y, run_color, font)
-    if document.last() > end and document.first() <= end:
-        let x = gutter + font.value().advance() + (f64)column * advance - scroll_x
+    if last and document.last() > end and document.first() <= end:
+        let x = origin + (f64)column * advance
         if x >= gutter and x < width:
             try painter.rectangle(gpu.Rect(x, y - 2.0, advance, font.value().line_height()), theme.selection)
-    if focused and caret_visible and document.caret() >= start and document.caret() <= end and cursor_x >= gutter and cursor_x < width - 6.0:
+    if focused and caret_visible and document.caret() >= start and (document.caret() < end or (last and document.caret() == end)) and cursor_x >= gutter and cursor_x < width - 6.0:
         try painter.rectangle(gpu.Rect(cursor_x, y - 2.0, theme.caret_width, font.value().height() + 2.0), theme.caret)
 
 func same_color(a: gpu.Color, b: gpu.Color) -> bool:
