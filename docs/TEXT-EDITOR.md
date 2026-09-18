@@ -7,7 +7,7 @@ ranges. `read_only = true` provides a selectable output or document viewer.
 `Highlight(start, end, color)` uses half-open scalar offsets. Supply ordered,
 non-overlapping ranges to `set_highlights`; language analysis belongs to the app.
 `on_change` fires after a document edit. Applications register Save, Build and
-Run with `Application.set_actions`; the editor never opens files or launches
+Run with `Application.set_commands`; the editor never opens files or launches
 processes. `version()` changes when its content changes.
 
 Native committed Unicode enters through standard `window`/`input`; keyboard
@@ -105,7 +105,7 @@ behavior through `read_only=true`.
 `copy`, `cut`, `paste`, `select_all`, `undo` and `redo` expose the same operations
 used by keyboard editing. `has_selection`, `is_read_only`, `can_undo` and
 `can_redo` let menus update availability. Cut and paste leave read-only content
-unchanged. The application owns Action instances and may wrap the editor in a
+unchanged. The application owns Command instances and may wrap the editor in a
 ContextMenu; clipboard and document logic remain inside the text control.
 
 The gutter marks the caret's visible row with `EditorTheme.gutter_active` and

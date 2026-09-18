@@ -35,7 +35,7 @@ context; a layout may override it for one subtree. No global mutable theme is
 shared between windows. Metrics are measured in font lines and cells while layout
 and rendering remain continuous logical coordinates, including images and 3D.
 
-Actions own intent and enabled state; buttons, menus and window shortcuts share
+Commands own intent and enabled state; buttons, menus and window shortcuts share
 those objects. A Toolbar supplies compact row composition. Menu popup subtrees
 are measured normally but excluded from surrounding flow, clipped to the window,
 drawn after ordinary content and given modal dispatch. The tree restores focus
@@ -58,7 +58,7 @@ Fold publication does not alter the document. Language-specific range discovery
 belongs alongside the application's incremental lexer.
 
 Context menus are widget decorators. Tree dispatch selects the clicked content,
-then delivers the request to its nearest provider. Action availability can be
+then delivers the request to its nearest provider. Command availability can be
 updated immediately before presentation. Ordinary menus and command search use
 one shared action popup; search and prompts reuse a Unicode single-line input
 model. Placement, focus restoration and modal routing stay in the tree.

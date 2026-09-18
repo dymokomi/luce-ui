@@ -19,13 +19,13 @@ All objects and callbacks belong to the main thread.
 | `Icon` | `Icon(kind, font=...)`; vector symbol sized to its font, `set_kind`, `layout` |
 | `SplitView` | Two widgets, `axis`, preferred `fraction`, `handle_width`; `fraction`, `set_fraction`, `layout` |
 | `Viewport` | Preferred minimum width/height; `on_render`, `layout` |
-| `Application` | Content, title and dimensions; `run`, `stop`, `close`, `on_frame`, `layout`, `dispatch`, `render` |
+| `Application` | Content, title and dimensions; `run`, `stop`, `close`, `on_frame`, `set_commands`, `command`, `layout`, `dispatch`, `render` |
 | `Painter` | Checked GPU target; `rectangle(rect, color, opacity=1.0)`, `triangle(a, b, c, color)`, `line(a, b, width, color)`, `text`, `target` |
 | `Font` | Installed monospace family and size; `measure`, `advance`, `height`, `line_height` |
-| `Action` | Label and `Shortcut`; `on_trigger`, `trigger`, `set_enabled`, `set_text` |
+| `Command` | Optional registry `id`, label and `Shortcut`; `id`, `on_trigger`, `trigger`, `set_enabled`, `set_text` |
 | `Toolbar` | Heterogeneous children and shared font; compact row, `set_children` |
 | `Menu` | Label, actions and shared font; `open`, `is_open`, `layout` |
-| `ContextMenu` | Decorate a widget with actions; `open_at`, `on_open`, `set_actions`, `is_open`, `layout` |
+| `ContextMenu` | Decorate a widget with actions; `open_at`, `on_open`, `set_commands`, `is_open`, `layout` |
 | `CommandPalette` | Searchable actions; `open`, `query`, `result_count`, `is_open`, `layout` |
 | `TextPrompt` | Text entry or confirmation; `open`, `value`, `on_submit`, `is_open`, `layout` |
 | `Theme` | Semantic colors, `control_lines`, `inset_cells`, `header_inset_cells`, `row_height`, `inset` |
@@ -102,13 +102,15 @@ active_border, gutter, shadow. The interaction states `hover()`, `hover_border()
 Defaults give controls one text line vertically and one glyph advance of inset.
 `TextEditor(theme=EditorTheme(...))` can override editor-specific colors.
 
-An `Action(text, shortcut=Shortcut())` owns its label, enabled state and signal.
-A button may own its text or reference an action. `click` and `on_click` on an
-action button use that action's signal. `set_actions` copies the application's
-shortcut collection. A disabled action never invokes its callback, and matching
+A `Command(text, shortcut=Shortcut(), id="")` owns its label, enabled state and
+signal, plus an optional registry id. `set_commands` registers the application's
+commands, and `Application.command(id)` resolves one by id so a keymap or script
+can invoke the same commands the UI does. A button may own its text or reference a
+command. `click` and `on_click` on a command button use that command's signal.
+A disabled command never invokes its callback, and matching
 repeated key-down events are consumed without repeating invocation. Editing
 shortcuts stay with TextEditor; application shortcuts run before focused-widget
-input. Action collections are bounded to 128 entries.
+input. Command collections are bounded to 128 entries.
 
 `Menu(text, actions, font=...)` needs at least one action. Pointer release opens
 it; Enter, Space or Down opens a focused menu. Up/Down and Tab/Shift-Tab move its
@@ -261,7 +263,7 @@ a right-click or Shift+F10. Right-clicking a ListView selects that row without
 activating it; empty list space clears selection. TextEditor preserves a selection
 when clicked inside it and otherwise moves the caret to the clicked position.
 `on_open(callback)` runs after that selection change and before presentation, so
-the application can update action availability or call `set_actions(...)` to swap
+the application can update action availability or call `set_commands(...)` to swap
 the entries for what was clicked. `open_at(x, y)` uses local points.
 
 The window clips and positions popups; they cannot escape its bounds. Menu,
@@ -272,7 +274,7 @@ application. Popup text events preserve Unicode codepoints. Application shortcut
 remain suspended during modal input.
 
 `CommandPalette(actions, font=...)` is a popup Widget. Add it as a child of the
-application's content, then call `open()` from an Action. Its input filters caption
+application's content, then call `open()` from an Command. Its input filters caption
 words with ASCII case-insensitive matching; Unicode is matched literally.
 Up/Down, Tab/Shift+Tab and the wheel navigate results; Enter invokes. No matches
 leave the palette open. Input supports Unicode, selection, mouse placement and
