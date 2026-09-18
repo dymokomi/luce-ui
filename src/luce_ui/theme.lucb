@@ -68,7 +68,7 @@ pub struct Theme:
         return EditorTheme(background = self.background, foreground = self.foreground,
             gutter = self.gutter, line_number = self.muted, current_line = self.panel,
             gutter_active = self.gutter_active(), gutter_hover = self.gutter_hover(), active_line_number = self.foreground,
-            selection = self.selection, caret = self.accent, caret_width = self.caret_width, scrollbar = self.border)
+            selection = lift(self.selection, self.foreground, 0.28), caret = lift(self.accent, self.foreground, 0.6), caret_width = self.caret_width, scrollbar = self.border)
 
 ## Perceptual lift of a surface toward a reference lightness, keeping its hue.
 func lift(base: gpu.Color, reference: gpu.Color, amount: f64) -> gpu.Color:
