@@ -166,6 +166,26 @@ pub struct Application:
         arranged.release()
         return self.tree.draw(target)
 
+    ## Repaint one frame at the current window size during a live resize, when the OS
+    ## modal resize loop starves the event pump. Best effort: reentrancy or a
+    ## transient surface fault simply leaves the last frame until the loop resumes.
+    mutating func draw_resized(surface: gpu.Surface*) -> interop.Outcome[unit]:
+        if not self.running:
+            return result.success[unit](())
+        let frame = surface.frame() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer frame.release()
+        let target = frame.value().target() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer target.release()
+        let rendered = self.render(target)
+        if not rendered.is_success():
+            return rendered
+        rendered.release()
+        discard(frame.value().present(self.tree.theme().background) catch failure:
+            return result.failure[unit](failure.code, failure.message))
+        return result.success[unit](())
+
     pub mutating func run(frame_limit: i64 = 0) -> interop.Outcome[unit]:
         self.check() catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -186,6 +206,12 @@ pub struct Application:
             return result.failure[unit](failure.code, failure.message)
         self.running = true
         defer self.stop()
+        # Repaint from inside the OS live-resize loop so the window tracks the drag
+        # instead of stretching its last frame. The bridge lives on this stack for
+        # the window's whole lifetime, so its pointers stay valid for the callback.
+        var bridge = ResizeBridge(application = &self, surface = &surface)
+        host.set_redraw(resize_redraw, (void*)&bridge) catch failure:
+            return result.failure[unit](failure.code, failure.message)
         var previous = time.now()
         var count: i64 = 0
         while self.running:
@@ -308,3 +334,14 @@ pub struct Application:
         self.title.trace(visit, context)
 
 pub let application_type: interop.Type[Application] = interop.Type[Application]("UI application", Application.dispose, Application.trace, main_thread = true)
+
+## Carries the running application and its surface to the window's live-resize
+## callback. It lives on run's stack, which stays alive for the callback's lifetime.
+struct ResizeBridge:
+    var application: Application*
+    var surface: gpu.Surface*
+
+func resize_redraw(context: void*):
+    let bridge = (ResizeBridge*)context
+    let outcome = bridge.application.draw_resized(bridge.surface)
+    outcome.release()
