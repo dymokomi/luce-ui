@@ -40,6 +40,9 @@ pub struct TextEditor: Widget:
     var preferred_column: usize
     var vertical_move: bool
     var active_since: u64
+    var last_click: u64
+    var last_offset: usize
+    var clicks: i64
 
     pub func init(text: str = "", read_only: bool = false, line_numbers: bool = true,
                   font: interop.Reference[Font]? = none, theme: EditorTheme? = none) -> !:
@@ -80,6 +83,9 @@ pub struct TextEditor: Widget:
         self.preferred_column = 0
         self.vertical_move = false
         self.active_since = time.now()
+        self.last_click = 0
+        self.last_offset = 0
+        self.clicks = 0
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -157,6 +163,8 @@ pub struct TextEditor: Widget:
     pub mutating func set_selection(anchor: i64, caret: i64) -> !:
         if anchor < 0 or caret < 0:
             error(result.invalid, "selection offsets must be nonnegative")
+        # A programmatic selection interrupts any in-progress multi-click gesture.
+        self.clicks = 0
         try self.document.select((usize)anchor, (usize)caret)
         try self.reveal_caret()
         self.box.value().invalidate()
@@ -342,7 +350,15 @@ pub struct TextEditor: Widget:
                 self.scroll_to_pointer(event.y)
             else:
                 let position = self.position_at(event.x, event.y)
-                try self.document.select(self.document.anchor() if event.shift else position, position)
+                let now = time.now()
+                self.clicks = self.clicks + 1 if now - self.last_click < 400000000 and position == self.last_offset and not event.shift else 1
+                self.last_click = now
+                self.last_offset = position
+                if self.clicks >= 2:
+                    try editing.select_word(&self.document, position)
+                    self.dragging = false
+                else:
+                    try self.document.select(self.document.anchor() if event.shift else position, position)
                 self.active_since = time.now()
             self.vertical_move = false
             return

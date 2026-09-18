@@ -29,6 +29,30 @@ pub func word_right(document: const Document*, position: usize) -> usize:
         index += 1
     return index
 
+## Select the run at `position` for a double-click: a word of letters, or a run of
+## whitespace, or a run of punctuation, whichever the position sits on.
+pub func select_word(document: Document*, position: usize) -> !:
+    let length = document.length()
+    if length == 0:
+        try document.select(0, 0)
+        return
+    let pivot = position if position < length else length - 1
+    let target = document.scalar(pivot)
+    var start = pivot
+    var end = pivot + 1
+    if whitespace(target):
+        while start > 0 and whitespace(document.scalar(start - 1)):
+            start -= 1
+        while end < length and whitespace(document.scalar(end)):
+            end += 1
+    else:
+        let letters = word_character(target)
+        while start > 0 and not whitespace(document.scalar(start - 1)) and word_character(document.scalar(start - 1)) == letters:
+            start -= 1
+        while end < length and not whitespace(document.scalar(end)) and word_character(document.scalar(end)) == letters:
+            end += 1
+    try document.select(start, end)
+
 pub func erase(document: Document*, backwards: bool, word: bool = false) -> !:
     if document.first() == document.last():
         let caret = document.caret()
@@ -180,3 +204,23 @@ test "newline and Unicode word commands preserve scalar boundaries":
     let normalized = try normalize_lines("one\r\ntwo\rthree\n")
     defer normalized.release()
     assert(normalized.value == "one\ntwo\nthree\n")
+
+test "select_word spans a word, a run of spaces, or punctuation":
+    var document = try Document("hi  there(x)")
+    defer document.close()
+    try select_word(&document, 1)
+    let word = try document.text(document.first(), document.last())
+    defer word.release()
+    assert(word.value == "hi")
+    try select_word(&document, 3)
+    let spaces = try document.text(document.first(), document.last())
+    defer spaces.release()
+    assert(spaces.value == "  ")
+    try select_word(&document, 5)
+    let other = try document.text(document.first(), document.last())
+    defer other.release()
+    assert(other.value == "there")
+    try select_word(&document, 9)
+    let punctuation = try document.text(document.first(), document.last())
+    defer punctuation.release()
+    assert(punctuation.value == "(")
