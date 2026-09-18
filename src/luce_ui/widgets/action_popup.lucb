@@ -100,12 +100,15 @@ pub struct ActionPopup: Widget:
         let query = try self.query.text()
         defer query.release()
         self.count = 0
-        for index in 0..<self.actions.values().length:
-            let text = self.actions.values()[index].value().text()
-            defer text.release()
-            if matches_query(text.value, query.value):
-                self.matches[self.count] = index
-                self.count += 1
+        # A searchable palette lists nothing until a character is typed, then narrows
+        # to the matches; an ordinary menu always lists all of its actions.
+        if not self.searchable or query.value.length > 0:
+            for index in 0..<self.actions.values().length:
+                let text = self.actions.values()[index].value().text()
+                defer text.release()
+                if matches_query(text.value, query.value):
+                    self.matches[self.count] = index
+                    self.count += 1
         self.selected = -1
         self.first = 0
         self.pressed = -1
@@ -113,7 +116,7 @@ pub struct ActionPopup: Widget:
         self.first = 0
 
     func header_height() -> f64:
-        return self.row_height() * 2.0 if self.searchable else 0.0
+        return self.row_height() if self.searchable else 0.0
 
     func row_height() -> f64:
         return self.box.value().theme().row_height(self.font)
@@ -139,8 +142,9 @@ pub struct ActionPopup: Widget:
             let measured = self.font.value().measure(text.value) catch failure:
                 return result.failure[Size](failure.code, failure.message)
             width = math.max(width, measured)
-        return result.success[Size](Size(600.0 if self.searchable else width + self.pad_x() * 2.0,
-            self.header_height() + self.pad_y() * 2.0 + self.row_height() * (math.clamp((f64)self.count, 1.0, 10.0) if self.searchable else (f64)self.count)))
+        let rows = math.clamp((f64)self.count, 0.0, 10.0) if self.searchable else (f64)self.count
+        let items = self.pad_y() * 2.0 + self.row_height() * rows if rows > 0.0 else 0.0
+        return result.success[Size](Size(600.0 if self.searchable else width + self.pad_x() * 2.0, self.header_height() + items))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
@@ -154,11 +158,10 @@ pub struct ActionPopup: Widget:
         let theme = self.box.value().theme()
         try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.panel)
         if self.searchable:
-            try painter.text("Search commands", self.pad_x(), 0.0, theme.muted, self.font)
-            try self.query.paint(&painter, self.font, theme, self.pad_x(), self.row_height(), size.width - self.pad_x() * 2.0)
-            try painter.rectangle(gpu.Rect(y = self.header_height() - 1.0, width = size.width, height = 1.0), theme.border)
-            if self.count == 0:
-                try painter.text("No matching commands", self.pad_x(), self.top(), theme.muted, self.font)
+            let center = math.max(0.0, (self.row_height() - self.font.value().height()) * 0.5)
+            try self.query.paint(&painter, self.font, theme, self.pad_x(), center, size.width - self.pad_x() * 2.0)
+            if self.count > 0:
+                try painter.rectangle(gpu.Rect(y = self.header_height() - 1.0, width = size.width, height = 1.0), theme.border)
         var index = self.first
         while index < (i64)self.count:
             let y = self.top() + (f64)(index - self.first) * self.row_height()
@@ -210,7 +213,7 @@ pub struct ActionPopup: Widget:
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         if self.searchable:
             let inset = self.pad_x()
-            self.query.pointer(event, self.font, inset, self.row_height(), self.box.value().bounds().width - inset * 2.0, self.row_height()) catch failure:
+            self.query.pointer(event, self.font, inset, 0.0, self.box.value().bounds().width - inset * 2.0, self.row_height()) catch failure:
                 return result.failure[unit](failure.code, failure.message)
             let changed = self.query.event(event) catch failure:
                 return result.failure[unit](failure.code, failure.message)

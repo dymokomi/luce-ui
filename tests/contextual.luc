@@ -46,6 +46,10 @@ pub func contextual() -> unit!:
     assert(editor.layout().is_focused())
     palette.open()
     app.layout(640.0, 360.0)
+    # An empty palette lists nothing, so a query selects the command before Enter.
+    for scalar in [83, 101, 116]:
+        app.dispatch(Event(kind = EventKind.text_input, codepoint = scalar))
+    assert(palette.result_count() == 1)
     app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
     assert(invoked == 2 and editor.layout().is_focused())
     var submitted = ""
