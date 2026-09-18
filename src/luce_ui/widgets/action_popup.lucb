@@ -11,14 +11,14 @@ import luce_ui.layout as layout
 import luce_ui.result as result
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.font import Font, selected_font
-from luce_ui.action import Action, Actions
+from luce_ui.command import Command, Commands
 from luce_ui.painter import Painter
 from luce_ui.text.line_input import LineInput
 
 pub struct ActionPopup: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]
-    var actions: Actions
+    var actions: Commands
     var selected: i64
     var first: i64
     var pressed: i64
@@ -27,10 +27,10 @@ pub struct ActionPopup: Widget:
     var matches: usize[128]
     var count: usize
 
-    pub func init(actions: const interop.Reference[Action][], font: interop.Reference[Font], searchable: bool = false) -> !:
+    pub func init(actions: const interop.Reference[Command][], font: interop.Reference[Font], searchable: bool = false) -> !:
         if actions.length == 0:
             error(result.invalid, "a menu needs at least one action")
-        var copied = Actions()
+        var copied = Commands()
         errdefer copied.close()
         try copied.set(actions)
         let box = try layout.make_layout()
@@ -63,7 +63,7 @@ pub struct ActionPopup: Widget:
 
     ## Replace the presented actions, for a context menu whose entries depend on
     ## what was clicked. Any open filtering and selection reset with the new set.
-    pub mutating func set_actions(actions: const interop.Reference[Action][]) -> !:
+    pub mutating func set_actions(actions: const interop.Reference[Command][]) -> !:
         if actions.length == 0:
             error(result.invalid, "a menu needs at least one action")
         try self.actions.set(actions)

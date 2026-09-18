@@ -8,7 +8,7 @@ import memory
 import native
 import ui
 import window
-from ui import Application, Action, Menu, Pane, PaneHeader, IconKind, SplitView, TextEditor, Button, Widget, Event
+from ui import Application, Command, Menu, Pane, PaneHeader, IconKind, SplitView, TextEditor, Button, Widget, Event
 
 pub func render(app: interop.Reference[Application], host: window.Window, surface: gpu.Surface) -> !:
     while let event = try host.poll(): discard(event)
@@ -73,7 +73,7 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
         pixel(scale, 105.0, 90.0, 0, 0, 0)
         pixel(scale, 3.0, 4.0, 255, 0, 0)
         pixel(scale, 3.0, 1.0 + font.value().line_height() + 2.0, 0 if phase == 2 else 255, 255, 0 if phase == 2 else 255)
-    let action = try interop.Reference[Action].adopt(new Action("Shadow") in memory.heap, ui.action_type, memory.heap)
+    let action = try interop.Reference[Command].adopt(new Command("Shadow") in memory.heap, ui.action_type, memory.heap)
     defer action.release()
     let menu = try interop.Reference[Menu].adopt(new Menu("File", [action], font = font) in memory.heap, ui.menu_type, memory.heap)
     defer menu.release()

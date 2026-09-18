@@ -1,17 +1,17 @@
-from ui import Application, Action, CommandPalette, ContextMenu, TextPrompt, TextEditor, ListView, VStack, Pane, Event, Font, Theme
+from ui import Application, Command, CommandPalette, ContextMenu, TextPrompt, TextEditor, ListView, VStack, Pane, Event, Font, Theme
 from input import EventKind, Key
 from ui import ListItem
 
 pub func contextual() -> unit!:
     let font = Font()
     let editor = TextEditor("selected text", font = font)
-    let action = Action("Edit Settings")
+    let action = Command("Edit Settings")
     var invoked = 0
     let connection = action.on_trigger(func (): invoked += 1)
     let context = ContextMenu(editor, [action], font = font)
     assert(context.layout().minimum_size().width == editor.layout().minimum_size().width)
     let pane = Pane(context)
-    let palette = CommandPalette([action, Action("Edit Theme"), Action("Build Source")], font = font)
+    let palette = CommandPalette([action, Command("Edit Theme"), Command("Build Source")], font = font)
     let prompt = TextPrompt(font = font)
     let root = VStack([pane, palette, prompt], spacing = 0.0)
     let app = Application(root)
@@ -68,7 +68,7 @@ pub func contextual() -> unit!:
     let listing = ListView([ListItem("one"), ListItem("two")], font = font)
     var activated = -1
     let selected = listing.on_activate(func (index: int): activated = index)
-    let list_context = ContextMenu(listing, [Action("Duplicate")], font = font)
+    let list_context = ContextMenu(listing, [Command("Duplicate")], font = font)
     let lists = Application(list_context)
     lists.layout(320.0, 200.0)
     lists.dispatch(Event(kind = EventKind.pointer_down, button = 1, x = 20.0, y = font.line_height() + 2.0))

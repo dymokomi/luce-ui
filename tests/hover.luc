@@ -1,20 +1,20 @@
-from ui import Application, Action, Menu, Toolbar, Button, TextEditor, Pane, VStack, SplitView, CommandPalette, Event, Font
+from ui import Application, Command, Menu, Toolbar, Button, TextEditor, Pane, VStack, SplitView, CommandPalette, Event, Font
 from input import EventKind, Key
 
 pub func hover() -> unit!:
     let font = Font()
-    let first = Menu("File", [Action("Save")], font = font)
-    let second = Menu("Edit", [Action("Copy")], font = font)
-    let disabled = Menu("Disabled", [Action("Unavailable")], font = font)
+    let first = Menu("File", [Command("Save")], font = font)
+    let second = Menu("Edit", [Command("Copy")], font = font)
+    let disabled = Menu("Disabled", [Command("Unavailable")], font = font)
     disabled.layout().set_enabled(false)
-    let third = Menu("View", [Action("Panels")], font = font)
+    let third = Menu("View", [Command("Panels")], font = font)
     let bar = Toolbar([first, second, disabled, third], font = font)
     let editor = TextEditor("one\ntwo\nthree", font = font)
     let left = Pane(editor)
     let other = Button("Other pane", font = font)
     let right = Pane(other)
     let split = SplitView(left, right)
-    let palette = CommandPalette([Action("Find")], font = font)
+    let palette = CommandPalette([Command("Find")], font = font)
     let root = VStack([bar, split, palette], spacing = 0.0)
     let app = Application(root)
     app.layout(800.0, 360.0)

@@ -6,13 +6,13 @@ import memory
 import ownership
 from luce_ui.layout import Widget, Layout, Constraints, Size, Event
 from luce_ui.font import Font, selected_font
-from luce_ui.action import Action
+from luce_ui.command import Command
 from luce_ui.widgets.action_popup import ActionPopup, action_popup_type
 
 pub struct CommandPalette: Widget:
     let popup: interop.Reference[ActionPopup]
 
-    pub func init(actions: const interop.Reference[Action][], font: interop.Reference[Font]? = none) -> !:
+    pub func init(actions: const interop.Reference[Command][], font: interop.Reference[Font]? = none) -> !:
         let selected = try selected_font(font)
         defer selected.release()
         self.popup = try interop.Reference[ActionPopup].adopt(new ActionPopup(actions, selected, searchable = true) in memory.heap, action_popup_type, memory.heap)

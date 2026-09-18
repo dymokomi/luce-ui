@@ -10,14 +10,14 @@ import luce_ui.result as result
 import luce_ui.layout as layout
 from luce_ui.layout import Widget, Tree, Event
 from luce_ui.theme import Theme
-from luce_ui.action import Action, Actions
+from luce_ui.command import Command, Commands
 
 ## Construction is platform-independent. run acquires native resources and owns
 ## their complete lifetime, including error unwinding and callback-driven stop.
 pub struct Application:
     let title: interop.Owned[str]
     var tree: Tree
-    var actions: Actions
+    var commands: Commands
     let frames: interop.Signal[f64]
     var close_handler: interop.Callback[unit, bool]?
     var error_handler: interop.Callback[str, unit]?
@@ -40,7 +40,7 @@ pub struct Application:
         let frames = try interop.Signal[f64]()
         self.title = copied
         self.tree = tree
-        self.actions = Actions()
+        self.commands = Commands()
         self.frames = frames
         self.close_handler = none
         self.error_handler = none
@@ -86,9 +86,14 @@ pub struct Application:
             previous.release()
         self.error_handler = replacement
 
-    pub mutating func set_actions(actions: const interop.Reference[Action][]) -> !:
+    pub mutating func set_commands(commands: const interop.Reference[Command][]) -> !:
         try self.check()
-        try self.actions.set(actions)
+        try self.commands.set(commands)
+
+    ## The registered command with this id, or none — for a keymap or script that
+    ## drives the same commands the UI does. Trigger it, then release the reference.
+    pub func command(id: str) -> interop.Reference[Command]?:
+        return self.commands.find(id)
 
     pub mutating func set_theme(theme: Theme) -> !:
         try self.check()
@@ -144,9 +149,9 @@ pub struct Application:
             return arranged
         arranged.release()
         if not self.tree.has_popup():
-            let action = self.actions.dispatch(event)
-            defer action.release()
-            let handled = action.get() catch failure:
+            let dispatched = self.commands.dispatch(event)
+            defer dispatched.release()
+            let handled = dispatched.get() catch failure:
                 return result.failure[unit](failure.code, failure.message)
             if handled:
                 return result.success[unit](())
@@ -317,7 +322,7 @@ pub struct Application:
         if let handler = self.error_handler:
             self.error_handler = none
             handler.release()
-        self.actions.close()
+        self.commands.close()
         self.frames.close()
         self.frames.release()
         self.tree.close()
@@ -328,7 +333,7 @@ pub struct Application:
             handler.trace(visit, context)
         if let handler = self.error_handler:
             handler.trace(visit, context)
-        self.actions.trace(visit, context)
+        self.commands.trace(visit, context)
         self.frames.trace(visit, context)
         self.tree.trace(visit, context)
         self.title.trace(visit, context)

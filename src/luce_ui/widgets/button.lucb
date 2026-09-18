@@ -9,16 +9,16 @@ from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 import input
 from luce_ui.font import Font, selected_font
-from luce_ui.action import Action
+from luce_ui.command import Command
 from luce_ui.cursor import CursorSource
 from luce_ui.geometry import Point
 
 ## Query shared action state without forcing a layout pass when it is enabled
 ## or disabled. The layout owns this policy; the action owns no widget edges.
 struct ActionCursor: CursorSource:
-    let action: interop.Reference[Action]
+    let action: interop.Reference[Command]
 
-    pub func init(action: interop.Reference[Action]):
+    pub func init(action: interop.Reference[Command]):
         self.action = action.clone()
 
     pub func cursor(position: Point, captured: bool) -> input.Cursor:
@@ -30,18 +30,18 @@ struct ActionCursor: CursorSource:
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
         self.action.trace(visit, context)
 
-let action_cursor_type: interop.Type[ActionCursor] = interop.Type[ActionCursor]("Action cursor", ActionCursor.close, ActionCursor.trace, closeable = true, main_thread = true)
+let action_cursor_type: interop.Type[ActionCursor] = interop.Type[ActionCursor]("Command cursor", ActionCursor.close, ActionCursor.trace, closeable = true, main_thread = true)
 
 pub struct Button: Widget:
     let box: interop.Reference[Layout]
     var caption: interop.Owned[str]
     let font: interop.Reference[Font]
     let clicked: interop.Signal[unit]
-    let action: interop.Reference[Action]?
+    let action: interop.Reference[Command]?
     var pressed: bool
     var pressed_key: input.Key
 
-    pub func init(text: str = "", font: interop.Reference[Font]? = none, action: interop.Reference[Action]? = none) -> !:
+    pub func init(text: str = "", font: interop.Reference[Font]? = none, action: interop.Reference[Command]? = none) -> !:
         if action != none and text != "":
             error(result.invalid, "a button takes either text or an action")
         var selected = try selected_font(font)

@@ -1,4 +1,4 @@
-from ui import Application, Action, Button, Cursor, CursorSource, DStack, Panel, Point, Size, TextEditor, Event, DockPosition
+from ui import Application, Command, Button, Cursor, CursorSource, DStack, Panel, Point, Size, TextEditor, Event, DockPosition
 from input import EventKind, Key
 
 class Regions: CursorSource:
@@ -6,7 +6,7 @@ class Regions: CursorSource:
         return Cursor.grabbing if captured else (Cursor.pointer if position.x < 30.0 else Cursor.text)
 
 pub func cursors() -> unit!:
-    let action = Action("click")
+    let action = Command("click")
     let button = Button(action = action)
     let app = Application(button)
     app.layout(240.0, 80.0)

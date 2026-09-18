@@ -1,5 +1,7 @@
-## Application intent shared by toolbars, menus and window shortcuts. Actions
-## know nothing about files or editors; the connected callback supplies behavior.
+## Application intent shared by toolbars, menus and window shortcuts. A command
+## knows nothing about files or editors; the connected callback supplies behavior.
+## An optional id lets a registry find and invoke a command by name, so shortcuts,
+## scripts and other tools can drive the same commands the UI does.
 import input
 import interop
 import ownership
@@ -15,25 +17,33 @@ pub struct Shortcut:
     func matches(event: input.Event) -> bool:
         return self.key != input.Key.unknown and event.kind == input.EventKind.key_down and event.key == self.key and (event.modifiers.control or event.modifiers.super) == self.primary and event.modifiers.shift == self.shift and event.modifiers.alt == self.alt
 
-pub struct Action:
+pub struct Command:
+    let name: interop.Owned[str]
     var caption: interop.Owned[str]
     let triggered: interop.Signal[unit]
     let binding: Shortcut
     var enabled: bool
 
-    pub func init(text: str, shortcut: Shortcut = Shortcut()) -> !:
+    pub func init(text: str, shortcut: Shortcut = Shortcut(), id: str = "") -> !:
+        let name = try interop.copy_text(id)
+        errdefer name.release()
         let caption = try interop.copy_text(text)
         errdefer caption.release()
         let triggered = try interop.Signal[unit]()
+        self.name = name
         self.caption = caption
         self.triggered = triggered
         self.binding = shortcut
         self.enabled = true
 
+    ## The registry name, empty for an anonymous command.
+    pub func id() -> str:
+        return self.name.value
+
     pub func text() -> interop.Owned[str]:
         return self.caption.clone()
 
-    ## Relabel a live action, for a command whose caption reflects its state.
+    ## Relabel a live command, for one whose caption reflects its state.
     pub mutating func set_text(text: str) -> !:
         let replacement = try interop.copy_text(text)
         self.caption.release()
@@ -58,33 +68,45 @@ pub struct Action:
         self.triggered.close()
         self.triggered.release()
         self.caption.release()
+        self.name.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.name.trace(visit, context)
         self.caption.trace(visit, context)
         self.triggered.trace(visit, context)
 
-pub let action_type: interop.Type[Action] = interop.Type[Action]("Action", Action.close, Action.trace, closeable = true, main_thread = true)
+pub let command_type: interop.Type[Command] = interop.Type[Command]("Command", Command.close, Command.trace, closeable = true, main_thread = true)
 
-## Owning action collection used by applications and menus. Replacement is
-## atomic and callbacks retain their selected action across reentrant changes.
-pub struct Actions:
-    var items: interop.Reference[Action][]
+## An owning command registry used by applications and menus. Replacement is
+## atomic and callbacks retain their selected command across reentrant changes.
+## `find` resolves a command by id so a keymap or script can invoke it.
+pub struct Commands:
+    var items: interop.Reference[Command][]
 
     pub func init():
-        var empty: interop.Reference[Action][]
+        var empty: interop.Reference[Command][]
         self.items = empty
 
-    pub func values() -> const interop.Reference[Action][]:
+    pub func values() -> const interop.Reference[Command][]:
         return self.items
 
-    pub mutating func set(items: const interop.Reference[Action][]) -> !:
+    ## The command with this id, or none. An empty id never matches.
+    pub func find(id: str) -> interop.Reference[Command]?:
+        if id == "":
+            return none
+        for item in self.items:
+            if item.value().id() == id:
+                return item.clone()
+        return none
+
+    pub mutating func set(items: const interop.Reference[Command][]) -> !:
         if items.length > 128:
-            error(result.invalid, "an action collection supports at most 128 entries")
+            error(result.invalid, "a command registry supports at most 128 entries")
         for item in items:
             discard(try item.get())
-        var copied: interop.Reference[Action][]
+        var copied: interop.Reference[Command][]
         if items.length > 0:
-            copied = try alloc interop.Reference[Action][items.length] in memory.heap
+            copied = try alloc interop.Reference[Command][items.length] in memory.heap
             for index in 0..<items.length:
                 copied[index] = items[index].clone()
         self.close()
@@ -108,7 +130,7 @@ pub struct Actions:
             item.release()
         if self.items.length > 0:
             free(self.items) in memory.heap
-        var empty: interop.Reference[Action][]
+        var empty: interop.Reference[Command][]
         self.items = empty
 
     pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):

@@ -11,7 +11,7 @@ import luce_ui.layout as layout
 import luce_ui.result as result
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.font import Font, selected_font
-from luce_ui.action import Action, Actions
+from luce_ui.command import Command, Commands
 from luce_ui.painter import Painter
 
 from luce_ui.widgets.action_popup import ActionPopup, action_popup_type
@@ -23,7 +23,7 @@ pub struct Menu: Widget:
     let popup: interop.Reference[ActionPopup]
     var pressed: bool
 
-    pub func init(text: str, actions: const interop.Reference[Action][], font: interop.Reference[Font]? = none) -> !:
+    pub func init(text: str, actions: const interop.Reference[Command][], font: interop.Reference[Font]? = none) -> !:
         let selected = try selected_font(font)
         errdefer selected.release()
         discard(try selected.value().measure(text))

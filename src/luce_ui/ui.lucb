@@ -69,10 +69,10 @@ pub type TextChange = document.TextChange
 import luce_ui.theme as theme
 pub type Theme = theme.Theme
 
-import luce_ui.action as action
-pub type Action = action.Action
-pub type Shortcut = action.Shortcut
-pub let action_type = action.action_type
+import luce_ui.command as command
+pub type Command = command.Command
+pub type Shortcut = command.Shortcut
+pub let command_type = command.command_type
 import luce_ui.widgets.toolbar as toolbar
 pub type Toolbar = toolbar.Toolbar
 pub let toolbar_type = toolbar.toolbar_type

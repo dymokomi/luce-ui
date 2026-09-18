@@ -12,7 +12,7 @@ from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.arrangement import Arrangement
 from luce_ui.cursor import CursorSource
 from luce_ui.font import Font, selected_font
-from luce_ui.action import Action, action_type
+from luce_ui.command import Command, command_type
 from luce_ui.widgets.panel import Panel
 from luce_ui.widgets.action_popup import ActionPopup, action_popup_type
 from luce_ui.docking.state import State, DockRequest, state_type
@@ -77,11 +77,11 @@ pub struct DStack: Widget:
         defer overlay.release()
         let overlay_widget = overlay.as_interface[Widget](overlay.value())
         defer overlay_widget.release()
-        let tab = try interop.Reference[Action].adopt(new Action("Add Tab") in memory.heap, action_type, memory.heap)
+        let tab = try interop.Reference[Command].adopt(new Command("Add Tab") in memory.heap, command_type, memory.heap)
         defer tab.release()
-        let vertical = try interop.Reference[Action].adopt(new Action("Split Vertical") in memory.heap, action_type, memory.heap)
+        let vertical = try interop.Reference[Command].adopt(new Command("Split Vertical") in memory.heap, command_type, memory.heap)
         defer vertical.release()
-        let horizontal = try interop.Reference[Action].adopt(new Action("Split Horizontal") in memory.heap, action_type, memory.heap)
+        let horizontal = try interop.Reference[Command].adopt(new Command("Split Horizontal") in memory.heap, command_type, memory.heap)
         defer horizontal.release()
         let add_tab = try interop.Callback[unit, unit].bind_mutating(state, State.add_tab)
         defer add_tab.release()

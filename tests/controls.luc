@@ -5,7 +5,7 @@ import math
 import ui
 from interop import Connection
 from input import EventKind, Key
-from ui import Action, Shortcut, Toolbar, Menu, Theme
+from ui import Command, Shortcut, Toolbar, Menu, Theme
 from text_views import text_views
 from panes import panes
 from contextual import contextual
@@ -246,8 +246,8 @@ func cyclic_editor() -> unit!:
 func commands_and_themes() -> unit!:
     let font = Font()
     let counter = Counter()
-    let save = Action("Save", Shortcut(Key.s, primary = true))
-    let disabled = Action("Disabled")
+    let save = Command("Save", Shortcut(Key.s, primary = true))
+    let disabled = Command("Disabled")
     disabled.set_enabled(false)
     let invoked = save.on_trigger(counter.add)
     let button = Button(action = save, font = font)
@@ -256,7 +256,7 @@ func commands_and_themes() -> unit!:
     let editor = TextEditor("let text = 1", font = font)
     let content = VStack([bar, editor], spacing = 0.0)
     let app = Application(content)
-    app.set_actions([save])
+    app.set_commands([save])
     app.layout(400.0, 300.0)
     assert(bar.layout().bounds().height == font.line_height())
     assert(button.layout().bounds().height == font.line_height())

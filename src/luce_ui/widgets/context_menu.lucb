@@ -8,7 +8,7 @@ import input
 import luce_ui.layout as layout
 import luce_ui.result as result
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
-from luce_ui.action import Action
+from luce_ui.command import Command
 from luce_ui.font import Font, selected_font
 from luce_ui.widgets.action_popup import ActionPopup, action_popup_type
 
@@ -17,7 +17,7 @@ pub struct ContextMenu: Widget:
     let popup: interop.Reference[ActionPopup]
     let opening: interop.Signal[unit]
 
-    pub func init(content: interop.Interface[Widget], actions: const interop.Reference[Action][],
+    pub func init(content: interop.Interface[Widget], actions: const interop.Reference[Command][],
                   font: interop.Reference[Font]? = none) -> !:
         let selected = try selected_font(font)
         defer selected.release()
@@ -45,7 +45,7 @@ pub struct ContextMenu: Widget:
 
     ## Choose the entries for the next opening, typically from an `on_open` handler
     ## that inspects the current selection before the menu is placed and shown.
-    pub mutating func set_actions(actions: const interop.Reference[Action][]) -> !:
+    pub mutating func set_actions(actions: const interop.Reference[Command][]) -> !:
         try self.popup.value().set_actions(actions)
 
     pub mutating func open_at(x: f64, y: f64) -> !:
