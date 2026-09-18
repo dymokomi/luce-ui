@@ -17,7 +17,7 @@ pub struct ContextMenu: Widget:
     let popup: interop.Reference[ActionPopup]
     let opening: interop.Signal[unit]
 
-    pub func init(content: interop.Interface[Widget], actions: const interop.Reference[Command][],
+    pub func init(content: interop.Interface[Widget], commands: const interop.Reference[Command][],
                   font: interop.Reference[Font]? = none) -> !:
         let selected = try selected_font(font)
         defer selected.release()
@@ -27,7 +27,7 @@ pub struct ContextMenu: Widget:
         defer content_box.release()
         try box.value().copy_sizing_from(content_box)
         box.value().set_context_menu(true)
-        let popup = try interop.Reference[ActionPopup].adopt(new ActionPopup(actions, selected) in memory.heap, action_popup_type, memory.heap)
+        let popup = try interop.Reference[ActionPopup].adopt(new ActionPopup(commands, selected) in memory.heap, action_popup_type, memory.heap)
         errdefer popup.release()
         let widget = popup.as_interface[Widget](popup.value())
         defer widget.release()
@@ -45,8 +45,8 @@ pub struct ContextMenu: Widget:
 
     ## Choose the entries for the next opening, typically from an `on_open` handler
     ## that inspects the current selection before the menu is placed and shown.
-    pub mutating func set_actions(actions: const interop.Reference[Command][]) -> !:
-        try self.popup.value().set_actions(actions)
+    pub mutating func set_commands(commands: const interop.Reference[Command][]) -> !:
+        try self.popup.value().set_commands(commands)
 
     pub mutating func open_at(x: f64, y: f64) -> !:
         let notified = self.opening.emit(())

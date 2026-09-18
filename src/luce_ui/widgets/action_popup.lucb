@@ -18,7 +18,7 @@ from luce_ui.text.line_input import LineInput
 pub struct ActionPopup: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]
-    var actions: Commands
+    var commands: Commands
     var selected: i64
     var first: i64
     var pressed: i64
@@ -27,12 +27,12 @@ pub struct ActionPopup: Widget:
     var matches: usize[128]
     var count: usize
 
-    pub func init(actions: const interop.Reference[Command][], font: interop.Reference[Font], searchable: bool = false) -> !:
-        if actions.length == 0:
+    pub func init(commands: const interop.Reference[Command][], font: interop.Reference[Font], searchable: bool = false) -> !:
+        if commands.length == 0:
             error(result.invalid, "a menu needs at least one action")
         var copied = Commands()
         errdefer copied.close()
-        try copied.set(actions)
+        try copied.set(commands)
         let box = try layout.make_layout()
         errdefer box.release()
         try box.value().set_shrink(vertical = 0.0)
@@ -44,8 +44,8 @@ pub struct ActionPopup: Widget:
         self.searchable = searchable
         self.query = query
         var matches: usize[128]
-        self.count = actions.length
-        for index in 0..<actions.length:
+        self.count = commands.length
+        for index in 0..<commands.length:
             matches[index] = index
         self.matches = matches
         if searchable:
@@ -53,7 +53,7 @@ pub struct ActionPopup: Widget:
             box.value().set_popup_placement(layout.PopupPlacement.window_top)
         self.box = box
         self.font = font.clone()
-        self.actions = copied
+        self.commands = copied
         self.selected = -1
         self.first = 0
         self.pressed = -1
@@ -61,14 +61,14 @@ pub struct ActionPopup: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
-    ## Replace the presented actions, for a context menu whose entries depend on
+    ## Replace the presented commands, for a context menu whose entries depend on
     ## what was clicked. Any open filtering and selection reset with the new set.
-    pub mutating func set_actions(actions: const interop.Reference[Command][]) -> !:
-        if actions.length == 0:
+    pub mutating func set_commands(commands: const interop.Reference[Command][]) -> !:
+        if commands.length == 0:
             error(result.invalid, "a menu needs at least one action")
-        try self.actions.set(actions)
-        self.count = actions.length
-        for index in 0..<actions.length:
+        try self.commands.set(commands)
+        self.count = commands.length
+        for index in 0..<commands.length:
             self.matches[index] = index
         self.selected = -1
         self.first = 0
@@ -101,10 +101,10 @@ pub struct ActionPopup: Widget:
         defer query.release()
         self.count = 0
         # A searchable palette lists nothing until a character is typed, then narrows
-        # to the matches; an ordinary menu always lists all of its actions.
+        # to the matches; an ordinary menu always lists all of its commands.
         if not self.searchable or query.value.length > 0:
-            for index in 0..<self.actions.values().length:
-                let text = self.actions.values()[index].value().text()
+            for index in 0..<self.commands.values().length:
+                let text = self.commands.values()[index].value().text()
                 defer text.release()
                 if matches_query(text.value, query.value):
                     self.matches[self.count] = index
@@ -136,7 +136,7 @@ pub struct ActionPopup: Widget:
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         var width: f64 = 0.0
-        for action in self.actions.values():
+        for action in self.commands.values():
             let text = action.value().text()
             defer text.release()
             let measured = self.font.value().measure(text.value) catch failure:
@@ -167,7 +167,7 @@ pub struct ActionPopup: Widget:
             let y = self.top() + (f64)(index - self.first) * self.row_height()
             if y >= size.height:
                 break
-            let action = self.actions.values()[self.matches[(usize)index]]
+            let action = self.commands.values()[self.matches[(usize)index]]
             if index == self.selected:
                 try painter.rectangle(gpu.Rect(y = y, width = size.width, height = self.row_height()), theme.selection)
             let caption = action.value().text()
@@ -187,7 +187,7 @@ pub struct ActionPopup: Widget:
         var index = self.selected
         for visited in 0..<count:
             index = (index + direction + count) % count
-            if self.actions.values()[self.matches[(usize)index]].value().is_enabled():
+            if self.commands.values()[self.matches[(usize)index]].value().is_enabled():
                 self.selected = index
                 let rows = (i64)math.max(1.0, (self.box.value().bounds().height - self.top() - self.pad_y()) / self.row_height())
                 if index < self.first:
@@ -200,7 +200,7 @@ pub struct ActionPopup: Widget:
     mutating func activate() -> interop.Outcome[unit]:
         if self.selected < 0:
             return result.success[unit](())
-        let action = self.actions.values()[self.matches[(usize)self.selected]].clone()
+        let action = self.commands.values()[self.matches[(usize)self.selected]].clone()
         defer action.release()
         if not action.value().is_enabled():
             return result.success[unit](())
@@ -252,12 +252,12 @@ pub struct ActionPopup: Widget:
 
     pub mutating func close():
         self.query.close()
-        self.actions.close()
+        self.commands.close()
         self.font.release()
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
-        self.actions.trace(visit, context)
+        self.commands.trace(visit, context)
         self.font.trace(visit, context)
         self.box.trace(visit, context)
 
