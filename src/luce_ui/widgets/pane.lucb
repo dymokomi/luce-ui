@@ -43,7 +43,7 @@ pub struct Pane: Widget:
         defer painter.close()
         let size = try target.get().size()
         let theme = self.box.value().theme()
-        let border = theme.active_border if self.box.value().contains_focus() else (theme.hover_border if self.box.value().contains_pointer() else theme.border)
+        let border = theme.active_border if self.box.value().contains_focus() else (theme.hover_border() if self.box.value().contains_pointer() else theme.border)
         try painter.rectangle(gpu.Rect(width = size.width, height = size.height), border)
         var top = 1.0
         if self.has_header and self.box.value().child_count() > 0:

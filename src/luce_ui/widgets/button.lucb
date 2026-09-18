@@ -121,7 +121,7 @@ pub struct Button: Widget:
         let size = try target.get().size()
         let theme = self.box.value().theme()
         let pressing = self.pressed and (self.pressed_key != input.Key.unknown or self.box.value().contains_pointer())
-        let color = theme.pressed if pressing and self.is_enabled() else (theme.hover if self.is_enabled() and self.box.value().contains_pointer() else theme.button)
+        let color = theme.pressed if pressing and self.is_enabled() else (theme.hover() if self.is_enabled() and self.box.value().contains_pointer() else theme.button)
         try painter.rectangle(gpu.Rect(width = size.width, height = size.height), color)
         if self.box.value().is_focused():
             try painter.rectangle(gpu.Rect(width = size.width, height = 2.0), theme.accent)

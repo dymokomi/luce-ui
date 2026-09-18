@@ -65,6 +65,9 @@ pub struct ListView: Widget:
     pub func selected_index() -> i64:
         return self.selection
 
+    pub func scroll_offset() -> f64:
+        return self.scroll
+
     pub mutating func set_items(items: const ListItem[]) -> !:
         let copies = try copy_items(items, self.font)
         release_items(self.items)
@@ -80,7 +83,9 @@ pub struct ListView: Widget:
         if index >= 0:
             let y = (f64)index * self.row_height()
             let height = self.box.value().bounds().height
-            if y < self.scroll:
+            if height <= 0.0:
+                self.scroll = 0.0
+            elif y < self.scroll:
                 self.scroll = y
             elif y + self.row_height() > self.scroll + height:
                 self.scroll = math.max(0.0, y + self.row_height() - height)
@@ -111,7 +116,7 @@ pub struct ListView: Widget:
                 try painter.rectangle(gpu.Rect(y = y, width = size.width, height = self.row_height()), self.box.value().theme().selection)
                 try painter.rectangle(gpu.Rect(y = y, width = 2.0, height = self.row_height()), self.box.value().theme().accent)
             elif self.box.value().contains_pointer() and self.box.value().pointer_position().y >= y and self.box.value().pointer_position().y < y + self.row_height():
-                try painter.rectangle(gpu.Rect(y = y, width = size.width, height = self.row_height()), self.box.value().theme().hover)
+                try painter.rectangle(gpu.Rect(y = y, width = size.width, height = self.row_height()), self.box.value().theme().hover())
             let theme = self.box.value().theme()
             let item = self.items[index]
             var x = theme.inset(self.font)

@@ -2,5 +2,8 @@
 name = "luce_ui"
 source = "src"
 
+[dependencies]
+luce_color = "../luce-color"
+
 [exports]
 ui = "luce_ui.ui"

@@ -3,6 +3,7 @@
 import gpu
 import interop
 import math
+import color
 from luce_ui.font import Font
 from luce_ui.text.style import EditorTheme
 import luce_ui.result as result
@@ -19,9 +20,6 @@ pub struct Theme:
     pub var border: gpu.Color = gpu.Color(0.06, 0.085, 0.12)
     pub var active_border: gpu.Color = gpu.Color(0.10, 0.22, 0.32)
     pub var gutter: gpu.Color = gpu.Color(0.021, 0.028, 0.041)
-    pub var hover: gpu.Color = gpu.Color(0.045, 0.065, 0.09)
-    pub var hover_border: gpu.Color = gpu.Color(0.09, 0.14, 0.19)
-    pub var gutter_active: gpu.Color = gpu.Color(0.055, 0.10, 0.16)
     pub var shadow: gpu.Color = gpu.Color()
     pub var shadow_offset: f64 = 4.0
     pub var shadow_opacity: f64 = 0.35
@@ -47,8 +45,38 @@ pub struct Theme:
     pub func inset(font: interop.Reference[Font]) -> f64:
         return math.ceil(font.value().advance() * self.inset_cells)
 
+    ## Interaction states are derived, not stored, so a palette cannot fall out of
+    ## step with itself. Each lifts a surface toward the foreground in perceptual
+    ## lightness, keeping its hue: a grayscale theme stays gray, a tinted one tints.
+    pub func hover() -> gpu.Color:
+        return lift(self.panel, self.foreground, 0.1)
+
+    ## A hovered frame border sits partway from its resting to its focused color.
+    pub func hover_border() -> gpu.Color:
+        return between(self.border, self.active_border, 0.5)
+
+    pub func gutter_active() -> gpu.Color:
+        return lift(self.gutter, self.foreground, 0.12)
+
+    pub func gutter_hover() -> gpu.Color:
+        return lift(self.gutter, self.foreground, 0.06)
+
     pub func editor() -> EditorTheme:
         return EditorTheme(background = self.background, foreground = self.foreground,
             gutter = self.gutter, line_number = self.muted, current_line = self.panel,
-            gutter_active = self.gutter_active, gutter_hover = self.hover, active_line_number = self.foreground,
+            gutter_active = self.gutter_active(), gutter_hover = self.gutter_hover(), active_line_number = self.foreground,
             selection = self.selection, caret = self.accent, scrollbar = self.border)
+
+## Perceptual lift of a surface toward a reference lightness, keeping its hue.
+func lift(base: gpu.Color, reference: gpu.Color, amount: f64) -> gpu.Color:
+    let shade = color.elevate(carry(base), carry(reference), amount)
+    return gpu.Color(shade.red, shade.green, shade.blue)
+
+## A perceptual blend between two colors, for a midpoint state like a hovered border.
+func between(first: gpu.Color, second: gpu.Color, amount: f64) -> gpu.Color:
+    let shade = color.blend(carry(first), carry(second), amount)
+    return gpu.Color(shade.red, shade.green, shade.blue)
+
+## Both models are linear-light sRGB triples, so bridging is a field-wise copy.
+func carry(value: gpu.Color) -> color.Color:
+    return color.Color(value.red, value.green, value.blue)

@@ -37,8 +37,9 @@ pub func draw(state: State*, target: interop.View[gpu.RenderTarget]) -> !:
                 try painter.rectangle(line, theme.accent)
             continue
         let bounds = geometry.panes[group]
-        let border = theme.active_border if focused and active_group == group else (theme.hover_border if hovered and strip.contains(bounds, pointer.x, pointer.y) else theme.border)
+        let border = theme.active_border if focused and active_group == group else (theme.hover_border() if hovered and strip.contains(bounds, pointer.x, pointer.y) else theme.border)
         try painter.rectangle(bounds, border)
+        try painter.rectangle(gpu.Rect(bounds.x + 1.0, bounds.y + 1.0, math.max(0.0, bounds.width - 2.0), state.height()), theme.panel)
         try painter.rectangle(gpu.Rect(bounds.x + 1.0, bounds.y + state.height() + 1.0, math.max(0.0, bounds.width - 2.0), math.max(0.0, bounds.height - state.height() - 2.0)), theme.background)
         let header = state.strip(group, bounds)
         for order in header.first..<header.first + header.count:
@@ -46,8 +47,8 @@ pub func draw(state: State*, target: interop.View[gpu.RenderTarget]) -> !:
             let rectangle = header.tab(order)
             if rectangle.width == 0.0: continue
             let selected = node.selected == index
-            let color = border if selected else theme.panel
-            try painter.rectangle(rectangle, theme.hover if hovered and not selected and strip.contains(rectangle, pointer.x, pointer.y) else color)
+            let color = theme.background if selected else theme.panel
+            try painter.rectangle(rectangle, theme.hover() if hovered and not selected and strip.contains(rectangle, pointer.x, pointer.y) else color)
             try tab(state, target, index, rectangle, pointer, hovered)
         try button(state, &painter, header.previous, "<", pointer, hovered)
         try button(state, &painter, header.next, ">", pointer, hovered)
@@ -93,7 +94,7 @@ func tab(state: State*, target: interop.View[gpu.RenderTarget], index: usize, bo
         defer controls.close()
         let rectangle = gpu.Rect(end, bounds.y, close_width, bounds.height)
         if hovered and strip.contains(rectangle, pointer.x, pointer.y):
-            try controls.rectangle(rectangle, theme.hover)
+            try controls.rectangle(rectangle, theme.hover())
         let middle = Point(end + close_width * 0.5, bounds.y + bounds.height * 0.5)
         let extent = font.value().advance() * 0.3
         try controls.line(Point(middle.x - extent, middle.y - extent), Point(middle.x + extent, middle.y + extent), 1.0, theme.muted)
@@ -103,7 +104,7 @@ func button(state: State*, painter: Painter*, bounds: gpu.Rect, label: str, poin
     if bounds.width == 0.0 or bounds.height == 0.0: return
     let theme = state.theme()
     if hovered and strip.contains(bounds, pointer.x, pointer.y):
-        try painter.rectangle(bounds, theme.hover)
+        try painter.rectangle(bounds, theme.hover())
     try painter.text(label, bounds.x + (bounds.width - (try state.font.value().measure(label))) * 0.5,
         bounds.y + (bounds.height - state.font.value().height()) * 0.5, theme.foreground, state.font)
 

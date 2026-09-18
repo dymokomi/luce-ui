@@ -103,7 +103,7 @@ pub struct TextPrompt: Widget:
         let pointer = self.box.value().pointer_position()
         if self.box.value().contains_pointer() and pointer.y >= y:
             let button = 0 if pointer.x < size.width * 0.5 else 1
-            try painter.rectangle(gpu.Rect((f64)button * size.width * 0.5, y, size.width * 0.5, self.row_height()), theme.pressed if self.pressed == button else theme.hover)
+            try painter.rectangle(gpu.Rect((f64)button * size.width * 0.5, y, size.width * 0.5, self.row_height()), theme.pressed if self.pressed == button else theme.hover())
         try painter.text("Cancel (Esc)", inset, y, theme.foreground, self.font)
         try painter.text(self.accept.value, size.width * 0.5 + inset, y, theme.foreground, self.font)
         try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.active_border)
