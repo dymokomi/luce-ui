@@ -24,6 +24,9 @@ pub type Alignment = layout.Alignment
 pub type PopupPlacement = layout.PopupPlacement
 pub type Rect = layout.Rect
 pub type Painter = painter.Painter
+import luce_ui.raster as raster
+pub type Raster = raster.Raster
+pub let raster_type = raster.raster_type
 pub type Text = text.Text
 pub type Button = button.Button
 pub type Spacer = spacer.Spacer

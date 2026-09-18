@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory(prefix="luce-ui-tests-") as temporary:
             subprocess.run([str(compiler.resolve()), "build", str(ROOT / "tests" / entry),
                             *flags, "-o", str(binary)], check=True, env=env, timeout=180)
             subprocess.run([str(binary)], check=True, timeout=30)
-    for module in ["text/editing", "text/projection_tests", "docking/model_tests"]:
+    for module in ["text/editing", "text/projection_tests", "docking/model_tests", "raster"]:
         for flags in [["--native"], ["--backend=c"]]:
             subprocess.run([str(args.base.resolve()), "test",
                             str(ROOT / "src/luce_ui" / (module + ".lucb")), *flags],

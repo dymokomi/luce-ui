@@ -45,6 +45,17 @@ func draw_coverage(target: interop.View[gpu.RenderTarget]) -> !:
     partial[0] = 255
     try target.get().mask([(u8)0], 1, 1, Rect(24.0, 8.0, 8.0, 8.0), white)
     try target.get().mask([(u8)255], 1, 1, Rect(32.0, 8.0, 8.0, 8.0), white)
+    let source = try interop.Reference[ui.Raster].adopt(new ui.Raster(2, 1) in memory.heap, ui.raster_type, memory.heap)
+    defer source.release()
+    try source.value().dab(0.5, 0.5, 1.0, 1.0, gpu.Color(0.0, 0.0, 1.0))
+    var raster = try ui.Raster(2, 1)
+    defer raster.close()
+    try raster.composite(source, 0.5)
+    try raster.draw(target, Rect(8.0, 24.0, 16.0, 8.0))
+    var batched = try ui.Raster(1, 257)
+    defer batched.close()
+    try batched.dab(0.5, 128.5, 512.0, 1.0, gpu.Color(0.0, 1.0, 0.0))
+    try batched.draw(target, Rect(40.0, 8.0, 8.0, 32.0))
 
 func frame(app: interop.Reference[Application], host: window.Window, surface: gpu.Surface) -> !:
     while let event = try host.poll():
@@ -69,6 +80,10 @@ func frame(app: interop.Reference[Application], host: window.Window, surface: gp
     native.pixel((u64)(100.0 * size.scale), (u64)(20.0 * size.scale), 255, 156, 156)
     native.pixel((u64)(108.0 * size.scale), (u64)(20.0 * size.scale), 255, 0, 0)
     native.pixel((u64)(116.0 * size.scale), (u64)(20.0 * size.scale), 255, 255, 255)
+    native.pixel((u64)(92.0 * size.scale), (u64)(36.0 * size.scale), 187, 0, 188)
+    native.pixel((u64)(100.0 * size.scale), (u64)(36.0 * size.scale), 255, 0, 0)
+    native.pixel((u64)(124.0 * size.scale), (u64)(20.0 * size.scale), 0, 255, 0)
+    native.pixel((u64)(124.0 * size.scale), (u64)(47.0 * size.scale), 0, 255, 0)
 
 pub func main(arguments: str[]) -> i32!:
     let pool = native.pool()
