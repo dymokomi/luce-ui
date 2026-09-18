@@ -136,6 +136,36 @@ pub struct DStack: Widget:
         let chosen = next if next != 0 else wrap
         try state.select(state.model.nodes[chosen].selected)
 
+    ## Focus the nearest visible pane in a direction: (-1, 0) left, (1, 0) right,
+    ## (0, -1) up, (0, 1) down. Chooses the pane whose center lies furthest along
+    ## the direction and least off its axis, so the jump stays predictable; does
+    ## nothing when no pane sits that way.
+    pub mutating func focus_direction(dx: f64, dy: f64) -> !:
+        let state = self.state.value()
+        state.cancel()
+        if state.model.root == 0: return
+        let geometry = state.geometry(state.size())
+        let current = state.model.tabs[state.active()].group
+        let origin = geometry.panes[current]
+        let cx = origin.x + origin.width * 0.5
+        let cy = origin.y + origin.height * 0.5
+        var best: usize = 0
+        var best_score: f64 = 0.0
+        for group in 1..<state.model.nodes.length:
+            if not state.model.nodes[group].used or state.model.nodes[group].first != 0 or group == current: continue
+            let bounds = geometry.panes[group]
+            let ox = bounds.x + bounds.width * 0.5 - cx
+            let oy = bounds.y + bounds.height * 0.5 - cy
+            let along = ox * dx + oy * dy
+            if along <= 0.0: continue
+            let across = math.abs(ox * dy - oy * dx)
+            let score = along + across * 2.0
+            if best == 0 or score < best_score:
+                best = group
+                best_score = score
+        if best != 0:
+            try state.select(state.model.nodes[best].selected)
+
     pub func active_panel() -> interop.Reference[Panel]?!:
         let index = self.state.value().active()
         return none if index == 0 else try self.state.value().panel(index)

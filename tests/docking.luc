@@ -90,6 +90,40 @@ pub func docking() -> unit!:
     assert(stack.panel_bounds(first).width >= 102.0)
     app.close()
     overflow()
+    directional()
+
+## Ctrl/Cmd+Alt+arrows move to the nearest pane along an axis: with a left column
+## and a stacked right column, each arrow lands on the neighbor a user would expect.
+func directional() -> unit!:
+    let left = Panel("Left", TextEditor("left"), minimum = Size(100.0, 60.0))
+    let top = Panel("Top", TextEditor("top"), minimum = Size(100.0, 60.0))
+    let bottom = Panel("Bottom", TextEditor("bottom"), minimum = Size(100.0, 60.0))
+    let stack = DStack([left, top, bottom])
+    let app = Application(stack)
+    stack.move(top, left, DockPosition.right)
+    stack.move(bottom, top, DockPosition.bottom)
+    app.layout(805.0, 505.0)
+    stack.select(top)
+    app.layout(805.0, 505.0)
+    stack.focus_direction(-1.0, 0.0)
+    app.layout(805.0, 505.0)
+    assert(left.layout().contains_focus() and not top.layout().contains_focus())
+    stack.select(bottom)
+    app.layout(805.0, 505.0)
+    stack.focus_direction(0.0, -1.0)
+    app.layout(805.0, 505.0)
+    assert(top.layout().contains_focus())
+    stack.focus_direction(0.0, 1.0)
+    app.layout(805.0, 505.0)
+    assert(bottom.layout().contains_focus())
+    stack.focus_direction(-1.0, 0.0)
+    app.layout(805.0, 505.0)
+    assert(left.layout().contains_focus())
+    # No pane lies further left, so focus stays put.
+    stack.focus_direction(-1.0, 0.0)
+    app.layout(805.0, 505.0)
+    assert(left.layout().contains_focus())
+    app.close()
 
 func overflow() -> unit!:
     var panels: list[Panel] = []
