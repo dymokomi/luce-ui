@@ -17,11 +17,38 @@ pub struct Shortcut:
     func matches(event: input.Event) -> bool:
         return self.key != input.Key.unknown and event.kind == input.EventKind.key_down and event.key == self.key and (event.modifiers.control or event.modifiers.super) == self.primary and event.modifiers.shift == self.shift and event.modifiers.alt == self.alt
 
+    ## Parse a chord like "cmd+shift+s", "f5" or "cmd+alt+[" into a shortcut. The
+    ## `+`-separated tokens are case-insensitive: `cmd`/`ctrl`/`super` map to the
+    ## primary modifier, plus `shift` and `alt`; the final token names the key.
+    ## An empty chord (or "none") is unbound.
+    pub static func parse(text: str) -> Shortcut!:
+        var primary = false
+        var shift = false
+        var alt = false
+        var key = input.Key.unknown
+        var start: usize = 0
+        for index in 0..<text.length + 1:
+            if index == text.length or text.bytes[index] == 43:
+                if index > start:
+                    let token = (str)text.bytes[start..<index]
+                    if fold_equal(token, "cmd") or fold_equal(token, "ctrl") or fold_equal(token, "control") or fold_equal(token, "super") or fold_equal(token, "meta") or fold_equal(token, "primary"):
+                        primary = true
+                    elif fold_equal(token, "shift"):
+                        shift = true
+                    elif fold_equal(token, "alt") or fold_equal(token, "option") or fold_equal(token, "opt"):
+                        alt = true
+                    elif not (fold_equal(token, "none") or fold_equal(token, "unbound")):
+                        key = key_from_name(token)
+                start = index + 1
+        if key == input.Key.unknown and not (fold_equal(text, "") or fold_equal(text, "none") or fold_equal(text, "unbound")):
+            error(result.invalid, "a shortcut chord names an unknown key")
+        return Shortcut(key = key, primary = primary, shift = shift, alt = alt)
+
 pub struct Command:
     let name: interop.Owned[str]
     var caption: interop.Owned[str]
     let triggered: interop.Signal[unit]
-    let binding: Shortcut
+    var binding: Shortcut
     var enabled: bool
 
     pub func init(text: str, shortcut: Shortcut = Shortcut(), id: str = "") -> !:
@@ -51,6 +78,10 @@ pub struct Command:
 
     pub func shortcut() -> Shortcut:
         return self.binding
+
+    ## Rebind this command, for a keymap loaded from settings.
+    pub mutating func set_shortcut(shortcut: Shortcut):
+        self.binding = shortcut
 
     pub func is_enabled() -> bool:
         return self.enabled
@@ -136,3 +167,79 @@ pub struct Commands:
     pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
         for item in self.items:
             item.trace(visit, context)
+
+## Case-insensitive ASCII compare of a chord token against a lowercase literal.
+func fold_equal(text: str, lower: str) -> bool:
+    if text.length != lower.length:
+        return false
+    for index in 0..<text.length:
+        var byte = text.bytes[index]
+        if byte >= 65 and byte <= 90:
+            byte += 32
+        if byte != lower.bytes[index]:
+            return false
+    return true
+
+## Map a key name to a physical key: a letter, a digit, a punctuation symbol, a
+## function key `f1`..`f12`, or a named editing key. Unknown names are rejected.
+func key_from_name(name: str) -> input.Key:
+    if name.length == 1:
+        var byte = name.bytes[0]
+        if byte >= 65 and byte <= 90:
+            byte += 32
+        if byte >= 97 and byte <= 122:
+            return (input.Key)((u16)input.Key.a + (u16)byte - 97)
+        if byte >= 49 and byte <= 57:
+            return (input.Key)((u16)input.Key.digit_1 + (u16)byte - 49)
+        if byte == 48: return input.Key.digit_0
+        if byte == 91: return input.Key.left_bracket
+        if byte == 93: return input.Key.right_bracket
+        if byte == 45: return input.Key.minus
+        if byte == 61: return input.Key.equal
+        if byte == 44: return input.Key.comma
+        if byte == 46: return input.Key.period
+        if byte == 47: return input.Key.slash
+        if byte == 59: return input.Key.semicolon
+        if byte == 39: return input.Key.apostrophe
+        if byte == 96: return input.Key.grave
+        if byte == 92: return input.Key.backslash
+        return input.Key.unknown
+    if fold_equal(name, "enter") or fold_equal(name, "return"): return input.Key.enter
+    if fold_equal(name, "escape") or fold_equal(name, "esc"): return input.Key.escape
+    if fold_equal(name, "tab"): return input.Key.tab
+    if fold_equal(name, "space"): return input.Key.space
+    if fold_equal(name, "backspace"): return input.Key.backspace
+    if fold_equal(name, "delete") or fold_equal(name, "del"): return input.Key.delete
+    if fold_equal(name, "left"): return input.Key.left
+    if fold_equal(name, "right"): return input.Key.right
+    if fold_equal(name, "up"): return input.Key.up
+    if fold_equal(name, "down"): return input.Key.down
+    if fold_equal(name, "home"): return input.Key.home
+    if fold_equal(name, "end"): return input.Key.end
+    if fold_equal(name, "page_up") or fold_equal(name, "pageup"): return input.Key.page_up
+    if fold_equal(name, "page_down") or fold_equal(name, "pagedown"): return input.Key.page_down
+    if name.length >= 2 and (name.bytes[0] == 102 or name.bytes[0] == 70):
+        var number: u16 = 0
+        for index in 1..<name.length:
+            let digit = name.bytes[index]
+            if digit < 48 or digit > 57:
+                return input.Key.unknown
+            number = number * 10 + (u16)digit - 48
+        if number >= 1 and number <= 12:
+            return (input.Key)((u16)input.Key.f1 + number - 1)
+    return input.Key.unknown
+
+test "Shortcut.parse reads modifiers, letters, digits, symbols and function keys":
+    let save = try Shortcut.parse("cmd+s")
+    assert(save.key == input.Key.s and save.primary and not save.shift and not save.alt)
+    let all_mods = try Shortcut.parse("Cmd+Shift+Alt+[")
+    assert(all_mods.key == input.Key.left_bracket and all_mods.primary and all_mods.shift and all_mods.alt)
+    assert((try Shortcut.parse("f5")).key == input.Key.f5)
+    assert((try Shortcut.parse("shift+f12")).key == input.Key.f12)
+    assert((try Shortcut.parse("cmd+1")).key == input.Key.digit_1)
+    assert((try Shortcut.parse("none")).key == input.Key.unknown)
+    var rejected = false
+    discard(Shortcut.parse("cmd+nope") catch failure:
+        rejected = true
+        recover Shortcut())
+    assert(rejected)
