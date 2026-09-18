@@ -22,10 +22,10 @@ All objects and callbacks belong to the main thread.
 | `Application` | Content, title and dimensions; `run`, `stop`, `close`, `on_frame`, `layout`, `dispatch`, `render` |
 | `Painter` | Checked GPU target; `rectangle(rect, color, opacity=1.0)`, `triangle(a, b, c, color)`, `line(a, b, width, color)`, `text`, `target` |
 | `Font` | Installed monospace family and size; `measure`, `advance`, `height`, `line_height` |
-| `Action` | Label and `Shortcut`; `on_trigger`, `trigger`, `set_enabled` |
+| `Action` | Label and `Shortcut`; `on_trigger`, `trigger`, `set_enabled`, `set_text` |
 | `Toolbar` | Heterogeneous children and shared font; compact row, `set_children` |
 | `Menu` | Label, actions and shared font; `open`, `is_open`, `layout` |
-| `ContextMenu` | Decorate a widget with actions; `open_at`, `on_open`, `is_open`, `layout` |
+| `ContextMenu` | Decorate a widget with actions; `open_at`, `on_open`, `set_actions`, `is_open`, `layout` |
 | `CommandPalette` | Searchable actions; `open`, `query`, `result_count`, `is_open`, `layout` |
 | `TextPrompt` | Text entry or confirmation; `open`, `value`, `on_submit`, `is_open`, `layout` |
 | `Theme` | Semantic colors, `control_lines`, `inset_cells`, `header_inset_cells`, `row_height`, `inset` |
@@ -78,6 +78,9 @@ extension point for the separate 3D package. Applications use `run`; the explici
 tests. `on_frame` supplies elapsed seconds for animation. `run(frame_limit=0)`
 continues until stop/close or a native close request. `close` requests shutdown
 without destroying storage beneath an active callback; subsequent calls fail.
+While the window is being live-resized the OS runs a modal loop that starves that
+frame pump, so `run` registers a redraw the window invokes from inside it: the
+content repaints at each intermediate size instead of stretching the last frame.
 
 `Font` uses installed native monospace faces and caches antialiased coverage at
 backing scale. The default is 14 points on every control. Share a Font explicitly
@@ -91,7 +94,10 @@ bidi, grapheme navigation and arbitrary font-file loading are not yet provided.
 changes that application's inherited values. A layout's `set_theme` overrides
 its subtree; `inherit_theme` removes the override. Values resolve parent-first
 before measurement, including newly inserted children. Colors are semantic:
-background, panel, foreground, muted, selection, accent, button, pressed, border.
+background, panel, foreground, muted, selection, accent, button, pressed, border,
+active_border, gutter, shadow. The interaction states `hover()`, `hover_border()`,
+`gutter_active()` and `gutter_hover()` are derived from those base colors through
+`luce_color` (Oklab), so a palette is always internally consistent.
 `control_lines` accepts 1..4 and `inset_cells` accepts 0..4; all values must be finite.
 Defaults give controls one text line vertically and one glyph advance of inset.
 `TextEditor(theme=EditorTheme(...))` can override editor-specific colors.
@@ -255,7 +261,8 @@ a right-click or Shift+F10. Right-clicking a ListView selects that row without
 activating it; empty list space clears selection. TextEditor preserves a selection
 when clicked inside it and otherwise moves the caret to the clicked position.
 `on_open(callback)` runs after that selection change and before presentation, so
-the application can update action availability. `open_at(x, y)` uses local points.
+the application can update action availability or call `set_actions(...)` to swap
+the entries for what was clicked. `open_at(x, y)` uses local points.
 
 The window clips and positions popups; they cannot escape its bounds. Menu,
 ContextMenu and CommandPalette share action-list selection and invocation. Arrow
@@ -296,14 +303,17 @@ after changing it. An invalid face leaves the previous font usable.
 `Layout.is_hovered()` identifies the deepest visible, enabled widget under the
 pointer. `contains_pointer()` also includes hovered descendants. While it is
 true, `pointer_position()` returns a local `Point(x, y)`. Hover follows clipping
-and popup occlusion, independently of keyboard focus and drag capture. Layout
+and popup occlusion, independently of keyboard focus and drag capture. A
+decorative layer over content, such as a drag preview, calls
+`set_hover_transparent(true)` so the widgets beneath it keep hovering. Layout
 changes recompute it beneath a stationary pointer; pointer leave, focus loss and
 input overflow clear it. Passive hover does not invalidate measured geometry.
 
-Buttons and menu titles use `Theme.hover`; list rows use it without changing the
-selected item. Panes use `hover_border`, with `active_border` taking precedence
-for keyboard focus. Editor gutters use `gutter_active` for the caret row and
-`hover` for a different hovered row; active/hovered line numbers brighten.
+Buttons and menu titles use the derived `hover()` state; list rows use it without
+changing the selected item. Panes use `hover_border()`, with `active_border`
+taking precedence for keyboard focus. Editor gutters use `gutter_active()` for the
+caret row and `gutter_hover()` for a different hovered row; active/hovered line
+numbers brighten.
 The number column fits the largest line number in the document, with one font
 cell of leading and trailing padding. Edits, undo and replacement grow or shrink
 it across digit boundaries. Fold controls have their own space; scrolling and

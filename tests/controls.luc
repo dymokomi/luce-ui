@@ -1,6 +1,7 @@
 from ui import Application, Font, Button, Text, TextEditor, ListView, Highlight, VStack, Spacer, Widget, Layout, Size, Constraints, Event, Painter
 from gpu import Frame, RenderTarget, Rect, Color
 import window
+import math
 import ui
 from interop import Connection
 from input import EventKind, Key
@@ -37,7 +38,27 @@ class Counter:
     pub func add(self):
         self.count += 1
 
+func raster_surface() -> unit!:
+    let raster = ui.Raster(2, 2)
+    assert(raster.width() == 2 and raster.height() == 2)
+    raster.dab(0.5, 0.5, 1.0, 1.0, Color(1.0, 0.0, 0.0))
+    let copied = raster.copy()
+    let grown = raster.resized(3, 3)
+    raster.clear()
+    raster.composite(copied)
+    assert(raster.alpha_at(0, 0) == 1.0 and grown.alpha_at(2, 2) == 0.0)
+    raster.dab(0.5, 0.5, 1.0, 1.0, Color(), erase = true)
+    raster.composite(copied, opacity = 0.5)
+    assert(raster.alpha_at(0, 0) == 0.5)
+    let frame = Frame(window.Size(20.0, 20.0, 20.0, 20.0, 1.0))
+    raster.draw(frame.target(), Rect(0.0, 0.0, 20.0, 20.0))
+    frame.close()
+    raster.close()
+    copied.close()
+    grown.close()
+
 pub func main(arguments: list[str]) -> int!:
+    raster_surface()
     contextual()
     hover()
     headers()
@@ -87,6 +108,7 @@ pub func main(arguments: list[str]) -> int!:
     commands_and_themes()
     cyclic_editor()
     editor_controls()
+    early_selection()
     mutations()
     signals()
     print("ok Luce controls and custom widget")
@@ -164,6 +186,14 @@ func signals() -> unit!:
         rejected = true
     assert(rejected)
     failure.disconnect()
+
+func early_selection() -> unit!:
+    let listing = ListView([ListItem("only")])
+    listing.select(0)
+    let app = Application(VStack([listing]))
+    app.layout(200.0, 100.0)
+    assert(listing.scroll_offset() == 0.0)
+    app.close()
 
 func editor_controls() -> unit!:
     let editor = TextEditor("héllo")
@@ -246,8 +276,10 @@ func commands_and_themes() -> unit!:
     menu.open()
     app.layout(400.0, 300.0)
     let popup = menu.layout().child(0).layout()
+    # The popup insets its rows from the frame by a vertical margin on each side.
+    let menu_pad = math.ceil(font.advance() * 0.6)
     assert(popup.is_focused() and popup.bounds().y >= bar.layout().bounds().height)
-    assert(popup.bounds().height == font.line_height() * 2.0)
+    assert(popup.bounds().height == font.line_height() * 2.0 + menu_pad * 2.0)
     app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
     assert(counter.count == 3 and not menu.is_open() and editor.layout().is_focused())
     menu.open()
@@ -261,7 +293,7 @@ func commands_and_themes() -> unit!:
     assert(not menu.is_open() and counter.count == 3)
     menu.open()
     app.layout(400.0, 300.0)
-    let item_y = popup.bounds().y + font.line_height() * 1.5
+    let item_y = popup.bounds().y + menu_pad + font.line_height() * 1.5
     app.dispatch(Event(kind = EventKind.pointer_down, x = 10.0, y = item_y))
     app.dispatch(Event(kind = EventKind.pointer_up, x = 10.0, y = item_y))
     assert(counter.count == 4 and not menu.is_open())
