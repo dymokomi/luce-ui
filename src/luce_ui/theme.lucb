@@ -26,6 +26,7 @@ pub struct Theme:
     pub var control_lines: f64 = 1.0
     pub var inset_cells: f64 = 1.0
     pub var header_inset_cells: f64 = 1.5
+    pub var caret_width: f64 = 2.0
 
     pub func validate() -> !:
         if not math.is_finite(self.header_inset_cells) or self.header_inset_cells < 0.0 or self.header_inset_cells > 4.0:
@@ -38,6 +39,8 @@ pub struct Theme:
             error(result.invalid, "control height must be in 1..4 text lines")
         if not math.is_finite(self.inset_cells) or self.inset_cells < 0.0 or self.inset_cells > 4.0:
             error(result.invalid, "control inset must be in 0..4 character cells")
+        if not math.is_finite(self.caret_width) or self.caret_width < 1.0 or self.caret_width > 8.0:
+            error(result.invalid, "caret width must be in 1..8 points")
 
     pub func row_height(font: interop.Reference[Font]) -> f64:
         return math.ceil(font.value().line_height() * self.control_lines)
@@ -65,7 +68,7 @@ pub struct Theme:
         return EditorTheme(background = self.background, foreground = self.foreground,
             gutter = self.gutter, line_number = self.muted, current_line = self.panel,
             gutter_active = self.gutter_active(), gutter_hover = self.gutter_hover(), active_line_number = self.foreground,
-            selection = self.selection, caret = self.accent, scrollbar = self.border)
+            selection = self.selection, caret = self.accent, caret_width = self.caret_width, scrollbar = self.border)
 
 ## Perceptual lift of a surface toward a reference lightness, keeping its hue.
 func lift(base: gpu.Color, reference: gpu.Color, amount: f64) -> gpu.Color:

@@ -121,7 +121,7 @@ func paint_line(document: const Document*, painter: Painter*, start: usize, end:
         if x >= gutter and x < width:
             try painter.rectangle(gpu.Rect(x, y - 2.0, advance, font.value().line_height()), theme.selection)
     if focused and caret_visible and document.caret() >= start and document.caret() <= end and cursor_x >= gutter and cursor_x < width - 6.0:
-        try painter.rectangle(gpu.Rect(cursor_x, y - 2.0, 1.0, font.value().height() + 2.0), theme.caret)
+        try painter.rectangle(gpu.Rect(cursor_x, y - 2.0, theme.caret_width, font.value().height() + 2.0), theme.caret)
 
 func same_color(a: gpu.Color, b: gpu.Color) -> bool:
     return a.red == b.red and a.green == b.green and a.blue == b.blue
