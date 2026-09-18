@@ -116,6 +116,7 @@ pub struct Layout:
     var pointer_within: bool
     var pointer: Point
     var editing: bool
+    var hover_transparent: bool
 
     pub func init(axis: Axis = Axis.overlay, spacing: f64 = 0.0, padding: f64 = 0.0,
                   alignment: Alignment = Alignment.stretch) -> !:
@@ -163,6 +164,7 @@ pub struct Layout:
         self.pointer_within = false
         self.pointer = Point()
         self.editing = false
+        self.hover_transparent = false
 
     pub func is_visible() -> bool:
         return self.visible
@@ -273,6 +275,12 @@ pub struct Layout:
 
     pub mutating func set_interactive(interactive: bool):
         self.accepts_pointer = interactive
+        self.invalidate()
+
+    ## A decorative layer that lies over content, such as a drag preview, opts out
+    ## of hover so the interactive widgets beneath it still light up under the pointer.
+    pub mutating func set_hover_transparent(value: bool):
+        self.hover_transparent = value
         self.invalidate()
 
     ## Text controls receive committed Unicode and may reserve Tab for indentation.
@@ -946,7 +954,7 @@ pub struct Tree:
             while index > 0:
                 index -= 1
                 let box = self.entries[index].box.value()
-                if (popup == none or in_popup(self.entries, index)) and path_enabled(self.entries, index) and inside(box.clipping, self.pointer_x, self.pointer_y):
+                if (popup == none or in_popup(self.entries, index)) and path_enabled(self.entries, index) and not box.hover_transparent and inside(box.clipping, self.pointer_x, self.pointer_y):
                     hovered = index
                     break
         let index = hovered else return

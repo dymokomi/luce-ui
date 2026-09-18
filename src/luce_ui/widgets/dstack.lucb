@@ -23,7 +23,9 @@ struct Overlay: Widget:
     let state: interop.WeakReference[State]
 
     pub func init(state: interop.Reference[State]) -> !:
-        self.box = try layout.make_layout()
+        let box = try layout.make_layout()
+        box.value().set_hover_transparent(true)
+        self.box = box
         self.state = interop.WeakReference[State](state)
 
     pub func layout() -> interop.Reference[Layout]:
