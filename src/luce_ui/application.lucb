@@ -220,6 +220,7 @@ pub struct Application:
         var previous = time.now()
         var count: i64 = 0
         while self.running:
+            let frame_start = time.now()
             let size = host.size() catch failure:
                 return result.failure[unit](failure.code, failure.message)
             let arranged = self.layout(size.width, size.height)
@@ -295,7 +296,13 @@ pub struct Application:
             count += 1
             if frame_limit > 0 and count >= frame_limit:
                 self.stop()
-            thread.sleep(8)
+            # Cap the loop near 120 Hz, but never stack a sleep on top of the
+            # present's own vsync wait: sleep only the time the frame came in under
+            # target, so a visible window renders at the display rate and the hover
+            # highlight tracks the cursor instead of trailing it by frames.
+            let spent = time.now() - frame_start
+            if spent < 8000000:
+                thread.sleep((8000000 - spent) // 1000000)
         surface.wait_idle() catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
