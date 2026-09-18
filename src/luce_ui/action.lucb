@@ -16,7 +16,7 @@ pub struct Shortcut:
         return self.key != input.Key.unknown and event.kind == input.EventKind.key_down and event.key == self.key and (event.modifiers.control or event.modifiers.super) == self.primary and event.modifiers.shift == self.shift and event.modifiers.alt == self.alt
 
 pub struct Action:
-    let caption: interop.Owned[str]
+    var caption: interop.Owned[str]
     let triggered: interop.Signal[unit]
     let binding: Shortcut
     var enabled: bool
@@ -32,6 +32,12 @@ pub struct Action:
 
     pub func text() -> interop.Owned[str]:
         return self.caption.clone()
+
+    ## Relabel a live action, for a command whose caption reflects its state.
+    pub mutating func set_text(text: str) -> !:
+        let replacement = try interop.copy_text(text)
+        self.caption.release()
+        self.caption = replacement
 
     pub func shortcut() -> Shortcut:
         return self.binding

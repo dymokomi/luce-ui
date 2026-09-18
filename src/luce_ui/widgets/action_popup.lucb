@@ -61,6 +61,20 @@ pub struct ActionPopup: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
+    ## Replace the presented actions, for a context menu whose entries depend on
+    ## what was clicked. Any open filtering and selection reset with the new set.
+    pub mutating func set_actions(actions: const interop.Reference[Action][]) -> !:
+        if actions.length == 0:
+            error(result.invalid, "a menu needs at least one action")
+        try self.actions.set(actions)
+        self.count = actions.length
+        for index in 0..<actions.length:
+            self.matches[index] = index
+        self.selected = -1
+        self.first = 0
+        self.pressed = -1
+        self.box.value().invalidate()
+
     pub func is_open() -> bool:
         return self.box.value().is_visible()
 
@@ -104,6 +118,19 @@ pub struct ActionPopup: Widget:
     func row_height() -> f64:
         return self.box.value().theme().row_height(self.font)
 
+    ## Interior padding so captions do not crowd the popup's border. The vertical
+    ## margin lifts the first and last rows off the frame; the horizontal margin
+    ## insets every caption evenly on both sides.
+    func pad_x() -> f64:
+        return math.ceil(self.font.value().advance() * 1.5)
+
+    func pad_y() -> f64:
+        return math.ceil(self.font.value().advance() * 0.6)
+
+    ## The y of the first item row, below any search header and the top margin.
+    func top() -> f64:
+        return self.header_height() + self.pad_y()
+
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         var width: f64 = 0.0
         for action in self.actions.values():
@@ -112,8 +139,8 @@ pub struct ActionPopup: Widget:
             let measured = self.font.value().measure(text.value) catch failure:
                 return result.failure[Size](failure.code, failure.message)
             width = math.max(width, measured)
-        return result.success[Size](Size(600.0 if self.searchable else width + self.box.value().theme().inset(self.font) * 4.0,
-            self.header_height() + self.row_height() * (math.clamp((f64)self.count, 1.0, 10.0) if self.searchable else (f64)self.count)))
+        return result.success[Size](Size(600.0 if self.searchable else width + self.pad_x() * 2.0,
+            self.header_height() + self.pad_y() * 2.0 + self.row_height() * (math.clamp((f64)self.count, 1.0, 10.0) if self.searchable else (f64)self.count)))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
@@ -127,14 +154,14 @@ pub struct ActionPopup: Widget:
         let theme = self.box.value().theme()
         try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.panel)
         if self.searchable:
-            try painter.text("Search commands", theme.inset(self.font), 0.0, theme.muted, self.font)
-            try self.query.paint(&painter, self.font, theme, theme.inset(self.font), self.row_height(), size.width - theme.inset(self.font) * 2.0)
+            try painter.text("Search commands", self.pad_x(), 0.0, theme.muted, self.font)
+            try self.query.paint(&painter, self.font, theme, self.pad_x(), self.row_height(), size.width - self.pad_x() * 2.0)
             try painter.rectangle(gpu.Rect(y = self.header_height() - 1.0, width = size.width, height = 1.0), theme.border)
             if self.count == 0:
-                try painter.text("No matching commands", theme.inset(self.font), self.header_height(), theme.muted, self.font)
+                try painter.text("No matching commands", self.pad_x(), self.top(), theme.muted, self.font)
         var index = self.first
         while index < (i64)self.count:
-            let y = self.header_height() + (f64)(index - self.first) * self.row_height()
+            let y = self.top() + (f64)(index - self.first) * self.row_height()
             if y >= size.height:
                 break
             let action = self.actions.values()[self.matches[(usize)index]]
@@ -142,7 +169,7 @@ pub struct ActionPopup: Widget:
                 try painter.rectangle(gpu.Rect(y = y, width = size.width, height = self.row_height()), theme.selection)
             let caption = action.value().text()
             defer caption.release()
-            try painter.text(caption.value, theme.inset(self.font), y + (self.row_height() - self.font.value().height()) * 0.5,
+            try painter.text(caption.value, self.pad_x(), y + (self.row_height() - self.font.value().height()) * 0.5,
                 theme.foreground if action.value().is_enabled() else theme.muted, self.font)
             index += 1
         try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.border)
@@ -159,7 +186,7 @@ pub struct ActionPopup: Widget:
             index = (index + direction + count) % count
             if self.actions.values()[self.matches[(usize)index]].value().is_enabled():
                 self.selected = index
-                let rows = (i64)math.max(1.0, (self.box.value().bounds().height - self.header_height()) / self.row_height())
+                let rows = (i64)math.max(1.0, (self.box.value().bounds().height - self.top() - self.pad_y()) / self.row_height())
                 if index < self.first:
                     self.first = index
                 elif index >= self.first + rows:
@@ -182,7 +209,7 @@ pub struct ActionPopup: Widget:
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         if self.searchable:
-            let inset = self.box.value().theme().inset(self.font)
+            let inset = self.pad_x()
             self.query.pointer(event, self.font, inset, self.row_height(), self.box.value().bounds().width - inset * 2.0, self.row_height()) catch failure:
                 return result.failure[unit](failure.code, failure.message)
             let changed = self.query.event(event) catch failure:
@@ -206,15 +233,15 @@ pub struct ActionPopup: Widget:
         elif event.kind == input.EventKind.scroll:
             self.move(1 if event.scroll_y < 0.0 else -1)
         elif event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_down:
-            let index = self.first + (i64)((event.y - self.header_height()) / self.row_height())
-            if event.inside and event.y >= self.header_height() and index >= 0 and index < (i64)self.count:
+            let index = self.first + (i64)((event.y - self.top()) / self.row_height())
+            if event.inside and event.y >= self.top() and index >= 0 and index < (i64)self.count:
                 self.selected = index
                 if event.kind == input.EventKind.pointer_down and event.button == 0:
                     self.pressed = index
                 self.box.value().invalidate()
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
-            let index = self.first + (i64)((event.y - self.header_height()) / self.row_height())
-            let activate = event.inside and event.y >= self.header_height() and self.pressed >= 0 and index == self.pressed
+            let index = self.first + (i64)((event.y - self.top()) / self.row_height())
+            let activate = event.inside and event.y >= self.top() and self.pressed >= 0 and index == self.pressed
             self.pressed = -1
             if activate:
                 return self.activate()

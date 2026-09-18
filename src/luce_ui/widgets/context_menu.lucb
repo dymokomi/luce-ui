@@ -43,6 +43,11 @@ pub struct ContextMenu: Widget:
     pub func on_open(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         return try self.opening.connect(callback)
 
+    ## Choose the entries for the next opening, typically from an `on_open` handler
+    ## that inspects the current selection before the menu is placed and shown.
+    pub mutating func set_actions(actions: const interop.Reference[Action][]) -> !:
+        try self.popup.value().set_actions(actions)
+
     pub mutating func open_at(x: f64, y: f64) -> !:
         let notified = self.opening.emit(())
         defer notified.release()
