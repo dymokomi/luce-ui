@@ -100,6 +100,30 @@ the caret; vertical extent uses visible rows. `scroll_offset()` returns the
 clamped offsets as `Size(width=x, height=y)`. The output viewer uses this same
 behavior through `read_only=true`.
 
+## Soft wrap
+
+`set_wrap(enabled)` toggles soft wrap; `wrapping()` reports it. `TextEditor(…,
+wrap=true)` starts wrapped. When on, each physical line becomes one or more visual
+rows split to the viewport width, and horizontal scrolling is disabled. The
+projection layers wrap over folding: a wrapped row keeps its physical line's tab
+stops and carries the line number and fold marker only on its first segment.
+Wrapping breaks at the last space that fits, falling back to a hard break for a
+word wider than the pane, so it always advances. `visible_line_count()` counts
+visual rows, and vertical navigation, hit testing and the caret follow them.
+
+## Change bars
+
+`set_baseline(text)` records a saved version to diff against; `clear_baseline()`
+removes it, and `has_changes()` reports whether the buffer currently differs. A
+Myers line diff classifies each current line as unchanged, added or modified and
+marks where baseline lines were deleted, drawn as gutter bars in
+`EditorTheme.diff_added`, `diff_modified` and `diff_deleted`. The diff recomputes
+only when the document revision changes, and its cost scales with the number of
+changed lines, so a few edits in a large file stay cheap; a very divergent file
+falls back to a coarse whole-region mark. Pass the current text (as after a save)
+to clear the bars. luced sets the baseline to the file on disk and re-baselines on
+save.
+
 ## Editing commands and context menus
 
 `copy`, `cut`, `paste`, `select_all`, `undo` and `redo` expose the same operations
