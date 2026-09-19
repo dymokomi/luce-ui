@@ -6,6 +6,7 @@ import math
 import utf8
 from luce_ui.font import Font
 from luce_ui.painter import Painter
+from luce_ui.geometry import Point
 from luce_ui.text.document import Document
 from luce_ui.text.projection import Projection
 from luce_ui.text.folding import Folding
@@ -25,10 +26,23 @@ pub func gutter_width(numbers: bool, font: interop.Reference[Font], line_count: 
         digits += 1
     return font.value().advance() * (((f64)digits + 2.0 if numbers else 0.0) + (2.0 if folding else 0.0))
 
+## Fill a rectangle with thin 45° stripes clipped to [x, x+w], for marking a gutter
+## region the AI is working on. Each diagonal runs up-right and is trimmed to the rect.
+func stripes(painter: Painter*, x: f64, y: f64, w: f64, h: f64, spacing: f64, color: gpu.Color) -> !:
+    let bottom = y + h
+    var base = x - h
+    while base <= x + w:
+        let start = math.max(0.0, x - base)
+        let finish = math.min(h, x + w - base)
+        if finish > start:
+            try painter.line(Point(base + start, bottom - start), Point(base + finish, bottom - finish), 1.0, color)
+        base += spacing
+
 pub func paint(document: const Document*, painter: Painter*, width: f64, height: f64,
                scroll_x: f64, scroll_y: f64, numbers: bool, focused: bool,
                caret_visible: bool, font: interop.Reference[Font], theme: EditorTheme,
-               highlights: const Highlight[], projection: const Projection*, folds: const Folding*, diff: const LineDiff*, hovered_row: usize? = none) -> !:
+               highlights: const Highlight[], projection: const Projection*, folds: const Folding*, diff: const LineDiff*, hovered_row: usize? = none,
+               ai_first: usize = 0, ai_last: usize = 0) -> !:
     let folding = folds.values().length > 0
     let gutter = gutter_width(numbers, font, projection.line_count(), folding)
     try painter.rectangle(gpu.Rect(width = width, height = height), theme.background)
@@ -51,6 +65,9 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
             try painter.rectangle(gpu.Rect(0.0, row_top, gutter, font.value().line_height()), theme.gutter_active)
         elif hovered_row == row:
             try painter.rectangle(gpu.Rect(0.0, row_top, gutter, font.value().line_height()), theme.gutter_hover)
+        if ai_first > 0 and segment.physical + 1 >= ai_first and segment.physical + 1 <= ai_last and gutter > 0.0:
+            try stripes(painter, 0.0, row_top, gutter, font.value().line_height(),
+                math.max(4.0, font.value().advance() * 0.8), theme.line_number)
         if focused and row == current:
             try painter.rectangle(gpu.Rect(gutter, row_top, math.max(0.0, width - gutter), font.value().line_height()), theme.current_line)
         if diff.present():
