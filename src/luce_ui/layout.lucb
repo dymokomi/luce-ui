@@ -37,6 +37,7 @@ pub enum PopupPlacement as u8:
     below = 0
     point = 1
     window_top = 2
+    window_center = 3
 
 ## Coordinates are local to the receiving widget. Cancellation clears any press.
 pub struct Event:
@@ -623,6 +624,9 @@ pub struct Tree:
                 elif box.popup_placement == PopupPlacement.window_top:
                     x = (bounds.width - popup_width) * 0.5
                     y = math.min(math.min(40.0, bounds.height * 0.1), bounds.height - popup_height)
+                elif box.popup_placement == PopupPlacement.window_center:
+                    x = (bounds.width - popup_width) * 0.5
+                    y = math.max(0.0, (bounds.height - popup_height) * 0.5)
                 let position = find_entry(replacement, count, box.identifier) else trap("popup missing from tree")
                 place(replacement, position, Rect(x, y, popup_width, popup_height), bounds) catch failure:
                     return result.failure[unit](failure.code, failure.message)
@@ -726,10 +730,14 @@ pub struct Tree:
             return
         var painter = try Painter(target)
         defer painter.close()
-        let layers = 6
-        let step = theme.shadow_offset * 0.6
-        let bias = theme.shadow_offset * 0.5
-        let per = theme.shadow_opacity / (f64)layers
+        # Many thin nested layers feather smoothly instead of banding. Each adds the
+        # same alpha, chosen so the layers composite to shadow_opacity right at the box
+        # and fall off across `spread`; a downward bias reads as a lifted surface.
+        let layers = 24
+        let spread = theme.shadow_offset * 6.0
+        let step = spread / (f64)layers
+        let bias = theme.shadow_offset * 0.6
+        let per = 1.0 - math.pow(1.0 - theme.shadow_opacity, 1.0 / (f64)layers)
         for ring in 0..<layers:
             let grow = step * (f64)(ring + 1)
             try painter.rectangle(Rect(bounds.x - grow, bounds.y - grow + bias,
