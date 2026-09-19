@@ -650,12 +650,11 @@ pub struct Tree:
                 var placed = Rect(x, y, popup_width, popup_height)
                 if box.animate_open and box.visible:
                     if box.opening:
-                        # Start a touch smaller and lower, then ease up to full size and
-                        # centered so the popup rises into place instead of snapping.
+                        # Grow downward from the pinned top: start at half height with the
+                        # same top and width, so the search field never moves — only the
+                        # bottom eases open. Height changes while open animate the same way.
                         box.opening = false
-                        let ix = placed.width * 0.04
-                        let iy = placed.height * 0.04
-                        box.rectangle = Rect(placed.x + ix, placed.y + iy + 10.0, placed.width - ix * 2.0, placed.height - iy * 2.0)
+                        box.rectangle = Rect(placed.x, placed.y, placed.width, placed.height * 0.5)
                     let eased = ease_rect(box.rectangle, placed, 0.22)
                     if not settled(eased, placed):
                         placed = eased

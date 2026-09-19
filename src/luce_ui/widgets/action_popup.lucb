@@ -50,7 +50,7 @@ pub struct ActionPopup: Widget:
         self.matches = matches
         if searchable:
             box.value().set_text_input(true)
-            box.value().set_popup_placement(layout.PopupPlacement.window_center)
+            box.value().set_popup_placement(layout.PopupPlacement.window_top)
             box.value().set_animate_open(true)
         self.box = box
         self.font = font.clone()
