@@ -79,23 +79,23 @@ pub struct Application:
 
     ## Run a callback once, `seconds` from now, on the main loop. A UI change it
     ## makes is presented on its own, since mutating a widget marks the tree dirty.
-    pub mutating func after(seconds: f64, callback: interop.Callback[unit, unit]) -> u64!:
+    pub mutating func after(seconds: f64, callback: interop.Callback[unit, unit]) -> i64!:
         try self.check()
         return try self.timers.after(seconds, callback)
 
     ## Run a callback every `seconds` on the main loop, until it is canceled. Drives
     ## periodic work — polling a file, checking a background task — without spinning.
-    pub mutating func every(seconds: f64, callback: interop.Callback[unit, unit]) -> u64!:
+    pub mutating func every(seconds: f64, callback: interop.Callback[unit, unit]) -> i64!:
         try self.check()
         return try self.timers.every(seconds, callback)
 
     ## Run a callback on the next serviced turn, to defer work back to the main loop.
-    pub mutating func post(callback: interop.Callback[unit, unit]) -> u64!:
+    pub mutating func post(callback: interop.Callback[unit, unit]) -> i64!:
         try self.check()
         return try self.timers.post(callback)
 
     ## Stop a scheduled callback by the handle after/every/post returned.
-    pub mutating func cancel(id: u64):
+    pub mutating func cancel(id: i64):
         self.timers.cancel(id)
 
     ## Frame callbacks receive elapsed seconds since the preceding iteration.

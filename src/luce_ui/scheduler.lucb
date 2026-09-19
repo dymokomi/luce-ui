@@ -11,7 +11,7 @@ import time
 import luce_ui.result as result
 
 struct Timer:
-    var id: u64
+    var id: i64
     var deadline: u64
     var interval: u64
     var callback: interop.Callback[unit, unit]?
@@ -19,7 +19,7 @@ struct Timer:
 
 pub struct Scheduler:
     var timers: Timer[]
-    var next_id: u64
+    var next_id: i64
 
     pub func init():
         var empty: Timer[]
@@ -28,7 +28,7 @@ pub struct Scheduler:
 
     ## Append one armed timer and return its handle. Growing copies the edges into
     ## the new backing and frees only the old memory, so each timer keeps one edge.
-    mutating func schedule(deadline: u64, interval: u64, callback: interop.Callback[unit, unit]) -> u64!:
+    mutating func schedule(deadline: u64, interval: u64, callback: interop.Callback[unit, unit]) -> i64!:
         if self.timers.length >= 256:
             error(result.limit, "a scheduler holds at most 256 timers")
         self.next_id = self.next_id +? 1 else error(result.limit, "timer identities exhausted")
@@ -44,24 +44,24 @@ pub struct Scheduler:
         return id
 
     ## Run `callback` once, `seconds` from now.
-    pub mutating func after(seconds: f64, callback: interop.Callback[unit, unit]) -> u64!:
+    pub mutating func after(seconds: f64, callback: interop.Callback[unit, unit]) -> i64!:
         let delay = 0.0 if seconds < 0.0 else seconds
         return try self.schedule(time.now() + (u64)(delay * 1000000000.0), 0, callback)
 
     ## Run `callback` every `seconds`, starting one interval from now.
-    pub mutating func every(seconds: f64, callback: interop.Callback[unit, unit]) -> u64!:
+    pub mutating func every(seconds: f64, callback: interop.Callback[unit, unit]) -> i64!:
         if seconds <= 0.0:
             error(result.invalid, "a repeating timer needs a positive interval")
         let interval = (u64)(seconds * 1000000000.0)
         return try self.schedule(time.now() + interval, interval, callback)
 
     ## Run `callback` on the next serviced turn, to defer work back to the main loop.
-    pub mutating func post(callback: interop.Callback[unit, unit]) -> u64!:
+    pub mutating func post(callback: interop.Callback[unit, unit]) -> i64!:
         return try self.schedule(time.now(), 0, callback)
 
     ## Stop a timer by its handle. Canceling one from inside a callback is safe: the
     ## slot is emptied now and packed away after the current service pass finishes.
-    pub mutating func cancel(id: u64):
+    pub mutating func cancel(id: i64):
         for index in 0..<self.timers.length:
             if self.timers[index].id == id and self.timers[index].active:
                 if let callback = self.timers[index].callback:
