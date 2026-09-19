@@ -254,8 +254,22 @@ pub struct Application:
             return result.failure[unit](failure.code, failure.message)
         var previous = time.now()
         var count: i64 = 0
+        var blocking = false
         while self.running:
-            let frame_start = time.now()
+            # Block until an event, a timer deadline, a blinking caret, or a wake() from
+            # a worker thread — so an idle window costs no CPU. The first pass renders at
+            # once, and a frame_limit run never blocks so tests stay deterministic.
+            if blocking:
+                let woke = host.wait(self.wait_budget(frame_limit)) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                if let event = woke:
+                    let handled = self.handle_event(host, event)
+                    if not handled.is_success():
+                        return handled
+                    handled.release()
+                if not self.running:
+                    break
+            blocking = true
             let size = host.size() catch failure:
                 return result.failure[unit](failure.code, failure.message)
             let arranged = self.layout(size.width, size.height)
@@ -271,38 +285,10 @@ pub struct Application:
                 let polled = host.poll() catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 let event = polled else break
-                self.dirty = true
-                if event.kind == input.EventKind.close_requested:
-                    if let handler = self.close_handler:
-                        let permission = handler.invoke(())
-                        defer permission.release()
-                        let allowed = permission.get() catch failure:
-                            return result.failure[unit](failure.code, failure.message)
-                        if allowed:
-                            self.stop()
-                    else:
-                        self.stop()
-                elif event.kind == input.EventKind.resized:
-                    let resized = host.size() catch failure:
-                        return result.failure[unit](failure.code, failure.message)
-                    let resized_layout = self.layout(resized.width, resized.height)
-                    if not resized_layout.is_success():
-                        return resized_layout
-                    resized_layout.release()
-                else:
-                    let dispatched = self.dispatch_native(event)
-                    if not dispatched.is_success():
-                        if let handler = self.error_handler:
-                            # Copy the message into the handler before releasing its owner.
-                            let notified = self.report_input_failure(dispatched, handler)
-                            dispatched.release()
-                            if not notified.is_success():
-                                return notified
-                            notified.release()
-                        else:
-                            return dispatched
-                    else:
-                        dispatched.release()
+                let handled = self.handle_event(host, event)
+                if not handled.is_success():
+                    return handled
+                handled.release()
                 events += 1
             if not self.running:
                 break
@@ -348,13 +334,6 @@ pub struct Application:
             count += 1
             if frame_limit > 0 and count >= frame_limit:
                 self.stop()
-            # Cap the loop near 120 Hz, but never stack a sleep on top of the
-            # present's own vsync wait: sleep only the time the frame came in under
-            # target, so a visible window renders at the display rate and the hover
-            # highlight tracks the cursor instead of trailing it by frames.
-            let spent = time.now() - frame_start
-            if spent < 8000000:
-                thread.sleep((8000000 - spent) // 1000000)
         surface.wait_idle() catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -363,6 +342,55 @@ pub struct Application:
         discard(outcome.get() catch failure:
             return handler.invoke(failure.message))
         return result.success[unit](())
+
+    ## Apply one event: request a close (honoring the close handler), re-layout on a
+    ## resize, or dispatch it to the tree — routing a dispatch failure to the error
+    ## handler when one is set. Every event marks the frame dirty so it is presented.
+    mutating func handle_event(host: window.Window, event: input.Event) -> interop.Outcome[unit]:
+        self.dirty = true
+        if event.kind == input.EventKind.close_requested:
+            if let handler = self.close_handler:
+                let permission = handler.invoke(())
+                defer permission.release()
+                let allowed = permission.get() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                if allowed:
+                    self.stop()
+            else:
+                self.stop()
+            return result.success[unit](())
+        if event.kind == input.EventKind.resized:
+            let resized = host.size() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            return self.layout(resized.width, resized.height)
+        let dispatched = self.dispatch_native(event)
+        if dispatched.is_success():
+            return dispatched
+        if let handler = self.error_handler:
+            # Copy the message into the handler before releasing its owner.
+            let notified = self.report_input_failure(dispatched, handler)
+            dispatched.release()
+            return notified
+        return dispatched
+
+    ## How long the loop may block before it must run again: nothing when a frame is
+    ## already pending or a frame_limit run wants every frame, otherwise the soonest of
+    ## a timer deadline, a blinking caret's cadence, and a one-second safety ceiling. A
+    ## wake() or an OS event ends the wait early.
+    func wait_budget(frame_limit: i64) -> u64:
+        if frame_limit > 0 or self.dirty:
+            return 0
+        let now = time.now()
+        var budget: u64 = 1000000000
+        if let deadline = self.timers.next_deadline():
+            if deadline <= now:
+                return 0
+            let delta = deadline - now
+            if delta < budget:
+                budget = delta
+        if self.tree.wants_text_input() and 30000000 < budget:
+            budget = 30000000
+        return budget
 
     pub mutating func stop():
         self.running = false
