@@ -52,7 +52,10 @@ pub struct Command:
     var enabled: bool
     var divider: bool
 
-    pub func init(text: str, shortcut: Shortcut = Shortcut(), id: str = "") -> !:
+    ## `divider` makes a non-selectable separator that groups the items around it in a
+    ## menu: it carries no caption or action, draws as a line, and is skipped for
+    ## selection and search. Build one with `Command("", divider = true)`.
+    pub func init(text: str, shortcut: Shortcut = Shortcut(), id: str = "", divider: bool = false) -> !:
         let name = try interop.copy_text(id)
         errdefer name.release()
         let caption = try interop.copy_text(text)
@@ -62,16 +65,8 @@ pub struct Command:
         self.caption = caption
         self.triggered = triggered
         self.binding = shortcut
-        self.enabled = true
-        self.divider = false
-
-    ## A non-selectable divider that groups the items around it in a menu. It carries no
-    ## caption or action; menus draw it as a line and skip it for selection and search.
-    pub static func separator() -> Command!:
-        var command = try Command("", id = "")
-        command.divider = true
-        command.enabled = false
-        return command
+        self.enabled = not divider
+        self.divider = divider
 
     pub func is_divider() -> bool:
         return self.divider
