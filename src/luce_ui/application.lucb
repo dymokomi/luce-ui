@@ -8,6 +8,7 @@ import utf8
 import window
 import luce_ui.result as result
 import luce_ui.layout as layout
+import luce_ui.scheduler as scheduler
 from luce_ui.layout import Widget, Tree, Event
 from luce_ui.theme import Theme
 from luce_ui.command import Command, Commands
@@ -29,6 +30,7 @@ pub struct Application:
     var dirty: bool
     var last_epoch: u64
     var last_render: u64
+    var timers: scheduler.Scheduler
 
     pub func init(content: interop.Interface[Widget], title: str = "Luce", width: i64 = 800, height: i64 = 600, theme: Theme = Theme()) -> !:
         if not thread.is_main():
@@ -55,6 +57,7 @@ pub struct Application:
         self.dirty = true
         self.last_epoch = 0
         self.last_render = 0
+        self.timers = scheduler.Scheduler()
 
     func check() -> !:
         if self.closed:
@@ -73,6 +76,27 @@ pub struct Application:
     ## input event announced — a timer, a background result, or a script mutation.
     pub mutating func invalidate():
         self.dirty = true
+
+    ## Run a callback once, `seconds` from now, on the main loop. A UI change it
+    ## makes is presented on its own, since mutating a widget marks the tree dirty.
+    pub mutating func after(seconds: f64, callback: interop.Callback[unit, unit]) -> u64!:
+        try self.check()
+        return try self.timers.after(seconds, callback)
+
+    ## Run a callback every `seconds` on the main loop, until it is canceled. Drives
+    ## periodic work — polling a file, checking a background task — without spinning.
+    pub mutating func every(seconds: f64, callback: interop.Callback[unit, unit]) -> u64!:
+        try self.check()
+        return try self.timers.every(seconds, callback)
+
+    ## Run a callback on the next serviced turn, to defer work back to the main loop.
+    pub mutating func post(callback: interop.Callback[unit, unit]) -> u64!:
+        try self.check()
+        return try self.timers.post(callback)
+
+    ## Stop a scheduled callback by the handle after/every/post returned.
+    pub mutating func cancel(id: u64):
+        self.timers.cancel(id)
 
     ## Frame callbacks receive elapsed seconds since the preceding iteration.
     pub func on_frame(callback: interop.Callback[f64, unit]) -> interop.Reference[interop.Connection]!:
@@ -282,6 +306,12 @@ pub struct Application:
                 events += 1
             if not self.running:
                 break
+            let serviced = self.timers.service(time.now())
+            if not serviced.is_success():
+                return serviced
+            serviced.release()
+            if not self.running:
+                break
             let current = time.now()
             let elapsed = (f64)(current - previous) / 1000000000.0
             previous = current
@@ -352,6 +382,7 @@ pub struct Application:
             self.error_handler = none
             handler.release()
         self.commands.close()
+        self.timers.close()
         self.frames.close()
         self.frames.release()
         self.tree.close()
@@ -363,6 +394,7 @@ pub struct Application:
         if let handler = self.error_handler:
             handler.trace(visit, context)
         self.commands.trace(visit, context)
+        self.timers.trace(visit, context)
         self.frames.trace(visit, context)
         self.tree.trace(visit, context)
         self.title.trace(visit, context)
