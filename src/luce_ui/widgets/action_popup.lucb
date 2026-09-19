@@ -136,6 +136,40 @@ pub struct ActionPopup: Widget:
     func top() -> f64:
         return self.header_height() + self.pad_y()
 
+    ## A divider is a slim row — just a line with a little breathing room — rather than
+    ## a full item's height, so grouped menus read as tight clusters, not a sparse list.
+    func separator_height() -> f64:
+        return math.ceil(self.row_height() * 0.5)
+
+    ## The height of display row `index`: slim for a divider, a full row otherwise.
+    func extent(index: i64) -> f64:
+        return self.separator_height() if self.commands.values()[self.matches[(usize)index]].value().is_divider() else self.row_height()
+
+    ## The display row whose band contains `y`, or -1 when `y` falls on no row. Walks
+    ## the visible rows since divider rows are shorter, so a fixed stride would be wrong.
+    func index_at(y: f64) -> i64:
+        var band = self.top()
+        var index = self.first
+        while index < (i64)self.count:
+            let height = self.extent(index)
+            if y >= band and y < band + height:
+                return index
+            band += height
+            index += 1
+        return -1
+
+    ## Total height of the listed rows plus their top and bottom margin.
+    func stack_height() -> f64:
+        if self.count == 0:
+            return 0.0
+        var total = self.pad_y() * 2.0
+        if self.searchable:
+            total += self.row_height() * math.clamp((f64)self.count, 0.0, 10.0)
+        else:
+            for index in 0..<(i64)self.count:
+                total += self.extent(index)
+        return total
+
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         var width: f64 = 0.0
         for action in self.commands.values():
@@ -152,9 +186,7 @@ pub struct ActionPopup: Widget:
                     return result.failure[Size](failure.code, failure.message)
                 measured += self.font.value().advance() * 2.0 + chord_width
             width = math.max(width, measured)
-        let rows = math.clamp((f64)self.count, 0.0, 10.0) if self.searchable else (f64)self.count
-        let items = self.pad_y() * 2.0 + self.row_height() * rows if rows > 0.0 else 0.0
-        return result.success[Size](Size(600.0 if self.searchable else width + self.pad_x() * 2.0, self.header_height() + items))
+        return result.success[Size](Size(600.0 if self.searchable else width + self.pad_x() * 2.0, self.header_height() + self.stack_height()))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
@@ -172,22 +204,24 @@ pub struct ActionPopup: Widget:
             try self.query.paint(&painter, self.font, theme, self.pad_x(), center, size.width - self.pad_x() * 2.0)
             if self.count > 0:
                 try painter.rectangle(gpu.Rect(y = self.header_height() - 1.0, width = size.width, height = 1.0), theme.border)
+        var y = self.top()
         var index = self.first
         while index < (i64)self.count:
-            let y = self.top() + (f64)(index - self.first) * self.row_height()
             if y >= size.height:
                 break
             let action = self.commands.values()[self.matches[(usize)index]]
+            let height = self.extent(index)
             if action.value().is_divider():
-                let divider_y = math.ceil(y + self.row_height() * 0.5)
+                let divider_y = math.ceil(y + height * 0.5)
                 try painter.rectangle(gpu.Rect(self.pad_x(), divider_y, math.max(0.0, size.width - self.pad_x() * 2.0), 1.0), theme.border)
+                y += height
                 index += 1
                 continue
             if index == self.selected:
-                try painter.rectangle(gpu.Rect(y = y, width = size.width, height = self.row_height()), theme.selection)
+                try painter.rectangle(gpu.Rect(y = y, width = size.width, height = height), theme.selection)
             let caption = action.value().text()
             defer caption.release()
-            let text_y = y + (self.row_height() - self.font.value().height()) * 0.5
+            let text_y = y + (height - self.font.value().height()) * 0.5
             try painter.text(caption.value, self.pad_x(), text_y,
                 theme.foreground if action.value().is_enabled() else theme.muted, self.font)
             var chord: u8[32]
@@ -196,6 +230,7 @@ pub struct ActionPopup: Widget:
                 let label = (str)chord[..<chord_len]
                 let chord_width = try self.font.value().measure(label)
                 try painter.text(label, math.max(self.pad_x(), size.width - self.pad_x() - chord_width), text_y, theme.muted, self.font)
+            y += height
             index += 1
         try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.border)
         try painter.rectangle(gpu.Rect(y = math.max(0.0, size.height - 1.0), width = size.width, height = 1.0), theme.border)
@@ -258,15 +293,15 @@ pub struct ActionPopup: Widget:
         elif event.kind == input.EventKind.scroll:
             self.move(1 if event.scroll_y < 0.0 else -1)
         elif event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_down:
-            let index = self.first + (i64)((event.y - self.top()) / self.row_height())
-            if event.inside and event.y >= self.top() and index >= 0 and index < (i64)self.count and self.commands.values()[self.matches[(usize)index]].value().is_enabled():
+            let index = self.index_at(event.y)
+            if event.inside and index >= 0 and self.commands.values()[self.matches[(usize)index]].value().is_enabled():
                 self.selected = index
                 if event.kind == input.EventKind.pointer_down and event.button == 0:
                     self.pressed = index
                 self.box.value().invalidate()
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
-            let index = self.first + (i64)((event.y - self.top()) / self.row_height())
-            let activate = event.inside and event.y >= self.top() and self.pressed >= 0 and index == self.pressed
+            let index = self.index_at(event.y)
+            let activate = event.inside and index >= 0 and self.pressed >= 0 and index == self.pressed
             self.pressed = -1
             if activate:
                 return self.activate()
