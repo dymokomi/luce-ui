@@ -1,8 +1,13 @@
-## Small vector symbols use a 16-unit design grid. They do not depend on font
-## glyph coverage, platform emoji or private-use characters in patched fonts.
+## Editor icons are the shared luciaos rounded SVGs (24×24, currentColor), flattened by
+## luce-svg and drawn with the painter — strokes as thick lines, fills as triangle fans —
+## tinted with the given color. IconKind names the icon; the artwork lives in the embedded
+## icon_assets table. A blank kind draws nothing.
 import gpu
+import interop
 from luce_ui.geometry import Point
 from luce_ui.painter import Painter
+import svg
+import luce_ui.icon_assets as icon_assets
 
 pub enum IconKind as u8:
     blank = 0
@@ -13,46 +18,56 @@ pub enum IconKind as u8:
     terminal = 5
     settings = 6
 
+func name_of(kind: IconKind) -> str:
+    if kind == IconKind.folder:
+        return "folder"
+    if kind == IconKind.folder_open:
+        return "folder_open"
+    if kind == IconKind.file:
+        return "file"
+    if kind == IconKind.code:
+        return "code"
+    if kind == IconKind.terminal:
+        return "terminal"
+    if kind == IconKind.settings:
+        return "settings"
+    return ""
+
 pub func draw(painter: Painter*, kind: IconKind, bounds: gpu.Rect, color: gpu.Color) -> !:
-    if bounds.width <= 0.0 or bounds.height <= 0.0:
+    if bounds.width <= 0.0 or bounds.height <= 0.0 or kind == IconKind.blank:
         return
-    if kind == IconKind.folder or kind == IconKind.folder_open:
-        try rectangle(painter, bounds, gpu.Rect(1.0, 3.0, 6.0, 3.0), color)
-        try rectangle(painter, bounds, gpu.Rect(1.0, 5.0, 14.0, 8.0), color)
-        if kind == IconKind.folder_open:
-            # An offset front lip distinguishes the current/parent directory.
-            try polygon(painter, bounds, [Point(0.0, 8.0), Point(16.0, 8.0), Point(13.0, 14.0), Point(1.0, 14.0)], color)
-    elif kind == IconKind.file:
-        try path(painter, bounds, [Point(3.0, 1.0), Point(10.0, 1.0), Point(14.0, 5.0), Point(14.0, 15.0), Point(3.0, 15.0), Point(3.0, 1.0)], color)
-        try path(painter, bounds, [Point(10.0, 1.0), Point(10.0, 5.0), Point(14.0, 5.0)], color)
-        try path(painter, bounds, [Point(5.0, 9.0), Point(11.0, 9.0)], color)
-        try path(painter, bounds, [Point(5.0, 12.0), Point(10.0, 12.0)], color)
-    elif kind == IconKind.code:
-        try path(painter, bounds, [Point(5.0, 4.0), Point(1.0, 8.0), Point(5.0, 12.0)], color)
-        try path(painter, bounds, [Point(11.0, 4.0), Point(15.0, 8.0), Point(11.0, 12.0)], color)
-        try path(painter, bounds, [Point(9.0, 2.0), Point(7.0, 14.0)], color)
-    elif kind == IconKind.terminal:
-        try path(painter, bounds, [Point(1.0, 2.0), Point(15.0, 2.0), Point(15.0, 14.0), Point(1.0, 14.0), Point(1.0, 2.0)], color)
-        try path(painter, bounds, [Point(4.0, 5.0), Point(7.0, 8.0), Point(4.0, 11.0)], color)
-        try path(painter, bounds, [Point(9.0, 11.0), Point(12.0, 11.0)], color)
-    elif kind == IconKind.settings:
-        for index in 0..<3:
-            let y = 4.0 + (f64)index * 4.0
-            try path(painter, bounds, [Point(1.0, y), Point(15.0, y)], color)
-            try rectangle(painter, bounds, gpu.Rect(4.0 if index != 1 else 10.0, y - 2.0, 2.0, 4.0), color)
+    let source = icon_assets.source(name_of(kind))
+    if source == "":
+        return
+    let drawing = try svg.parse(source)
+    defer drawing.release()
+    try render(painter, try drawing.get(), bounds, color)
 
-func point(bounds: gpu.Rect, value: Point) -> Point:
-    return Point(bounds.x + value.x * bounds.width / 16.0, bounds.y + value.y * bounds.height / 16.0)
+## Scale the viewBox into `bounds` (uniform, centered), then draw every contour.
+func render(painter: Painter*, drawing: svg.Drawing*, bounds: gpu.Rect, color: gpu.Color) -> !:
+    let view_w = drawing.view_width()
+    let view_h = drawing.view_height()
+    if view_w <= 0.0 or view_h <= 0.0:
+        return
+    let scale = (bounds.width / view_w) if bounds.width / view_w < bounds.height / view_h else bounds.height / view_h
+    let origin_x = bounds.x + (bounds.width - view_w * scale) * 0.5
+    let origin_y = bounds.y + (bounds.height - view_h * scale) * 0.5
+    let stroke = 2.0 * scale if 2.0 * scale > 1.0 else 1.0
+    for index in 0..<drawing.contour_count():
+        let start = drawing.contour_start(index)
+        let count = drawing.contour_size(index)
+        if drawing.contour_filled(index) and count >= 3:
+            let anchor = mapped(drawing.point(start), origin_x, origin_y, scale)
+            for step in 1..<count - 1:
+                try painter.triangle(anchor, mapped(drawing.point(start + step), origin_x, origin_y, scale),
+                    mapped(drawing.point(start + step + 1), origin_x, origin_y, scale), color)
+        if drawing.contour_stroked(index) and count >= 2:
+            for step in 1..<count:
+                try painter.line(mapped(drawing.point(start + step - 1), origin_x, origin_y, scale),
+                    mapped(drawing.point(start + step), origin_x, origin_y, scale), stroke, color)
+            if drawing.contour_closed(index):
+                try painter.line(mapped(drawing.point(start + count - 1), origin_x, origin_y, scale),
+                    mapped(drawing.point(start), origin_x, origin_y, scale), stroke, color)
 
-func rectangle(painter: Painter*, bounds: gpu.Rect, value: gpu.Rect, color: gpu.Color) -> !:
-    try painter.rectangle(gpu.Rect(bounds.x + value.x * bounds.width / 16.0, bounds.y + value.y * bounds.height / 16.0,
-        value.width * bounds.width / 16.0, value.height * bounds.height / 16.0), color)
-
-func path(painter: Painter*, bounds: gpu.Rect, points: const Point[], color: gpu.Color) -> !:
-    for index in 1..<points.length:
-        try painter.line(point(bounds, points[index - 1]), point(bounds, points[index]), bounds.width / 16.0, color)
-
-## These internal silhouettes are convex; triangle fans preserve their edges.
-func polygon(painter: Painter*, bounds: gpu.Rect, points: const Point[], color: gpu.Color) -> !:
-    for index in 1..<points.length - 1:
-        try painter.triangle(point(bounds, points[0]), point(bounds, points[index]), point(bounds, points[index + 1]), color)
+func mapped(value: svg.Point, origin_x: f64, origin_y: f64, scale: f64) -> Point:
+    return Point(origin_x + value.x * scale, origin_y + value.y * scale)

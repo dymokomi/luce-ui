@@ -4,6 +4,7 @@ source = "src"
 
 [dependencies]
 luce_color = "../luce-color"
+luce_svg = "../luce-svg"
 
 [exports]
 ui = "luce_ui.ui"
