@@ -26,6 +26,9 @@ pub struct Application:
     var running: bool
     var operating: bool
     var closed: bool
+    var dirty: bool
+    var last_epoch: u64
+    var last_render: u64
 
     pub func init(content: interop.Interface[Widget], title: str = "Luce", width: i64 = 800, height: i64 = 600, theme: Theme = Theme()) -> !:
         if not thread.is_main():
@@ -49,6 +52,9 @@ pub struct Application:
         self.running = false
         self.operating = false
         self.closed = false
+        self.dirty = true
+        self.last_epoch = 0
+        self.last_render = 0
 
     func check() -> !:
         if self.closed:
@@ -62,6 +68,11 @@ pub struct Application:
 
     mutating func end_operation():
         self.operating = false
+
+    ## Request that the next loop iteration present a frame, for a change that no
+    ## input event announced — a timer, a background result, or a script mutation.
+    pub mutating func invalidate():
+        self.dirty = true
 
     ## Frame callbacks receive elapsed seconds since the preceding iteration.
     pub func on_frame(callback: interop.Callback[f64, unit]) -> interop.Reference[interop.Connection]!:
@@ -236,6 +247,7 @@ pub struct Application:
                 let polled = host.poll() catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 let event = polled else break
+                self.dirty = true
                 if event.kind == input.EventKind.close_requested:
                     if let handler = self.close_handler:
                         let permission = handler.invoke(())
@@ -279,20 +291,30 @@ pub struct Application:
             delivered.release()
             if not self.running:
                 break
-            let frame = surface.frame() catch failure:
-                return result.failure[unit](failure.code, failure.message)
-            defer frame.release()
-            let target = frame.value().target() catch failure:
-                return result.failure[unit](failure.code, failure.message)
-            defer target.release()
-            let rendered = self.render(target)
-            if not rendered.is_success():
-                return rendered
-            rendered.release()
-            self.update_cursor(host) catch failure:
-                return result.failure[unit](failure.code, failure.message)
-            discard(frame.value().present(self.tree.theme().background) catch failure:
-                return result.failure[unit](failure.code, failure.message))
+            # Present only when something changed: an input event marked us dirty, a
+            # widget bumped the layout epoch, or a focused caret is due to blink. An
+            # idle window with no focused editor renders nothing and rests the GPU.
+            let epoch_now = layout.epoch()
+            let moment = time.now()
+            let caret_due = self.tree.wants_text_input() and moment - self.last_render >= 30000000
+            if self.dirty or epoch_now != self.last_epoch or caret_due:
+                let frame = surface.frame() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                defer frame.release()
+                let target = frame.value().target() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                defer target.release()
+                let rendered = self.render(target)
+                if not rendered.is_success():
+                    return rendered
+                rendered.release()
+                self.update_cursor(host) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                discard(frame.value().present(self.tree.theme().background) catch failure:
+                    return result.failure[unit](failure.code, failure.message))
+                self.dirty = false
+                self.last_epoch = epoch_now
+                self.last_render = moment
             count += 1
             if frame_limit > 0 and count >= frame_limit:
                 self.stop()
