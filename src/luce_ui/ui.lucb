@@ -101,6 +101,10 @@ import luce_ui.widgets.text_prompt as text_prompt
 pub type TextPrompt = text_prompt.TextPrompt
 pub let text_prompt_type = text_prompt.text_prompt_type
 
+import luce_ui.widgets.confirm_dialog as confirm_dialog
+pub type ConfirmDialog = confirm_dialog.ConfirmDialog
+pub let confirm_dialog_type = confirm_dialog.confirm_dialog_type
+
 import luce_ui.icons as icons
 import luce_ui.widgets.icon as icon
 import luce_ui.widgets.pane_header as pane_header

@@ -1,0 +1,189 @@
+## A modal confirmation dialog: a message and up to three choices — a primary action,
+## a secondary action and cancel. It owns no application state; choosing hides the
+## dialog and emits the chosen role (0 primary, 1 secondary, 2 cancel) so a caller can
+## save, drop the changes or do nothing. Enter picks the primary, Escape cancels.
+import gpu
+import input
+import interop
+import math
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Constraints, Size, Event
+from luce_ui.font import Font, selected_font
+from luce_ui.painter import Painter
+
+pub struct ConfirmDialog: Widget:
+    let box: interop.Reference[Layout]
+    let font: interop.Reference[Font]
+    var message: interop.Owned[str]
+    var confirm: interop.Owned[str]
+    var secondary: interop.Owned[str]
+    var cancel: interop.Owned[str]
+    var pressed: i64
+    let chosen: interop.Signal[i64]
+
+    pub func init(font: interop.Reference[Font]? = none) -> !:
+        let selected = try selected_font(font)
+        errdefer selected.release()
+        let box = try layout.make_layout()
+        errdefer box.release()
+        box.value().set_popup(true)
+        box.value().set_popup_placement(layout.PopupPlacement.window_center)
+        box.value().set_focusable(true)
+        box.value().set_visible(false)
+        let message = try interop.copy_text("")
+        errdefer message.release()
+        let confirm = try interop.copy_text("OK")
+        errdefer confirm.release()
+        let secondary = try interop.copy_text("")
+        errdefer secondary.release()
+        let cancel = try interop.copy_text("Cancel")
+        errdefer cancel.release()
+        let chosen = try interop.Signal[i64]()
+        self.box = box
+        self.font = selected
+        self.message = message
+        self.confirm = confirm
+        self.secondary = secondary
+        self.cancel = cancel
+        self.pressed = -1
+        self.chosen = chosen
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    ## Connect a handler for the chosen role: 0 confirm, 1 secondary, 2 cancel.
+    pub func on_choose(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.chosen.connect(callback)
+
+    ## Show the dialog. An empty `secondary` label hides the middle button.
+    pub mutating func open(message: str, confirm: str, secondary: str, cancel: str = "Cancel") -> !:
+        let message_text = try interop.copy_text(message)
+        errdefer message_text.release()
+        let confirm_text = try interop.copy_text(confirm)
+        errdefer confirm_text.release()
+        let secondary_text = try interop.copy_text(secondary)
+        errdefer secondary_text.release()
+        let cancel_text = try interop.copy_text(cancel)
+        errdefer cancel_text.release()
+        self.message.release()
+        self.confirm.release()
+        self.secondary.release()
+        self.cancel.release()
+        self.message = message_text
+        self.confirm = confirm_text
+        self.secondary = secondary_text
+        self.cancel = cancel_text
+        self.pressed = -1
+        self.box.value().set_visible(true)
+
+    pub func is_open() -> bool:
+        return self.box.value().is_visible()
+
+    func row_height() -> f64:
+        return self.box.value().theme().row_height(self.font)
+
+    ## Left to right the cells are cancel, secondary, confirm, so cell `c` maps to role
+    ## `2 - c` and the primary (role 0) sits on the right where Enter would fall.
+    func label_for(role: i64) -> str:
+        if role == 0:
+            return self.confirm.value
+        if role == 1:
+            return self.secondary.value
+        return self.cancel.value
+
+    func has_role(role: i64) -> bool:
+        return self.label_for(role) != ""
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let width = self.font.value().measure(self.message.value) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        let inset = self.box.value().theme().inset(self.font)
+        return result.success[Size](Size(math.clamp(width + inset * 2.0, 420.0, 720.0), self.row_height() * 3.0))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        let inset = self.box.value().theme().inset(self.font)
+        let cell = size.width / 3.0
+        let row = self.row_height()
+        let button_y = size.height - row
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.panel)
+        try painter.text(self.message.value, inset, math.max(0.0, (button_y - self.font.value().height()) * 0.5), theme.foreground, self.font)
+        let pointer = self.box.value().pointer_position()
+        let over = self.box.value().contains_pointer() and pointer.y >= button_y
+        for slot in 0..<3:
+            let role = 2 - (i64)slot
+            if not self.has_role(role):
+                continue
+            let x = (f64)slot * cell
+            if role == 0:
+                try painter.rectangle(gpu.Rect(x, button_y, cell, row), theme.selection)
+            if self.pressed == role:
+                try painter.rectangle(gpu.Rect(x, button_y, cell, row), theme.pressed)
+            elif over and (i64)((pointer.x - 0.0) / cell) == (i64)slot:
+                try painter.rectangle(gpu.Rect(x, button_y, cell, row), theme.hover())
+            let label = self.label_for(role)
+            let label_width = try self.font.value().measure(label)
+            try painter.text(label, x + math.max(0.0, (cell - label_width) * 0.5), button_y + (row - self.font.value().height()) * 0.5, theme.foreground, self.font)
+        try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.active_border)
+        try painter.rectangle(gpu.Rect(y = size.height - 1.0, width = size.width, height = 1.0), theme.active_border)
+        try painter.rectangle(gpu.Rect(y = button_y - 1.0, width = size.width, height = 1.0), theme.border)
+
+    mutating func choose(role: i64) -> interop.Outcome[unit]:
+        self.box.value().set_visible(false)
+        self.pressed = -1
+        return self.chosen.emit(role)
+
+    ## The role of the button under `x`, or -1 when its label is empty (hidden).
+    func slot_role(x: f64) -> i64:
+        let width = self.box.value().bounds().width
+        let slot = math.clamp((f64)(i64)(x / (width / 3.0)), 0.0, 2.0)
+        let role = 2 - (i64)slot
+        return role if self.has_role(role) else -1
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if event.cancelled or (event.kind == input.EventKind.key_down and event.key == input.Key.escape):
+            return self.choose(2)
+        elif event.kind == input.EventKind.key_down and event.key == input.Key.enter and not event.repeated:
+            return self.choose(0)
+        elif event.kind == input.EventKind.pointer_down and event.button == 0:
+            let bounds = self.box.value().bounds()
+            self.pressed = self.slot_role(event.x) if event.inside and event.y >= bounds.height - self.row_height() else -1
+        elif event.kind == input.EventKind.pointer_up and event.button == 0:
+            let pressed = self.pressed
+            self.pressed = -1
+            let bounds = self.box.value().bounds()
+            if event.inside and event.y >= bounds.height - self.row_height() and pressed >= 0 and self.slot_role(event.x) == pressed:
+                return self.choose(pressed)
+        self.box.value().invalidate()
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.chosen.close()
+        self.chosen.release()
+        self.cancel.release()
+        self.secondary.release()
+        self.confirm.release()
+        self.message.release()
+        self.font.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.chosen.trace(visit, context)
+        self.message.trace(visit, context)
+        self.confirm.trace(visit, context)
+        self.secondary.trace(visit, context)
+        self.cancel.trace(visit, context)
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+
+pub let confirm_dialog_type: interop.Type[ConfirmDialog] = interop.Type[ConfirmDialog]("ConfirmDialog", ConfirmDialog.close, ConfirmDialog.trace, closeable = true, main_thread = true)
