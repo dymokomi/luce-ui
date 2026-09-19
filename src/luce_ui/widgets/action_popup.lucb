@@ -116,7 +116,7 @@ pub struct ActionPopup: Widget:
         self.first = 0
 
     func header_height() -> f64:
-        return self.row_height() if self.searchable else 0.0
+        return (self.pad_y() + self.row_height()) if self.searchable else 0.0
 
     func row_height() -> f64:
         return self.box.value().theme().row_height(self.font)
@@ -158,7 +158,7 @@ pub struct ActionPopup: Widget:
         let theme = self.box.value().theme()
         try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.panel)
         if self.searchable:
-            let center = math.max(0.0, (self.row_height() - self.font.value().height()) * 0.5)
+            let center = self.pad_y() + math.max(0.0, (self.row_height() - self.font.value().height()) * 0.5)
             try self.query.paint(&painter, self.font, theme, self.pad_x(), center, size.width - self.pad_x() * 2.0)
             if self.count > 0:
                 try painter.rectangle(gpu.Rect(y = self.header_height() - 1.0, width = size.width, height = 1.0), theme.border)
@@ -213,7 +213,7 @@ pub struct ActionPopup: Widget:
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         if self.searchable:
             let inset = self.pad_x()
-            self.query.pointer(event, self.font, inset, 0.0, self.box.value().bounds().width - inset * 2.0, self.row_height()) catch failure:
+            self.query.pointer(event, self.font, inset, self.pad_y(), self.box.value().bounds().width - inset * 2.0, self.row_height()) catch failure:
                 return result.failure[unit](failure.code, failure.message)
             let changed = self.query.event(event) catch failure:
                 return result.failure[unit](failure.code, failure.message)

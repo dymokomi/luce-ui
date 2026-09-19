@@ -718,13 +718,22 @@ pub struct Tree:
                 drawn.release()
         return result.success[unit](())
 
+    ## A soft drop shadow around the whole popup: several expanding layers, densest at
+    ## the box and fading outward, with a slight downward bias so the surface reads as
+    ## lifted off the content behind it. Drawn before the popup's own clip.
     func draw_shadow(target: interop.View[gpu.RenderTarget], bounds: Rect, theme: Theme) -> !:
         if theme.shadow_offset == 0.0 or theme.shadow_opacity == 0.0:
             return
         var painter = try Painter(target)
         defer painter.close()
-        try painter.rectangle(Rect(bounds.x + theme.shadow_offset, bounds.y + theme.shadow_offset,
-            bounds.width, bounds.height), theme.shadow, theme.shadow_opacity)
+        let layers = 6
+        let step = theme.shadow_offset * 0.6
+        let bias = theme.shadow_offset * 0.5
+        let per = theme.shadow_opacity / (f64)layers
+        for ring in 0..<layers:
+            let grow = step * (f64)(ring + 1)
+            try painter.rectangle(Rect(bounds.x - grow, bounds.y - grow + bias,
+                bounds.width + grow * 2.0, bounds.height + grow * 2.0), theme.shadow, per)
 
     pub mutating func dispatch(event: input.Event) -> interop.Outcome[unit]:
         let arranged = self.arrange(self.width, self.height)
