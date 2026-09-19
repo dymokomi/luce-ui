@@ -1,0 +1,372 @@
+## Line-level change tracking against a saved baseline, for gutter change bars.
+## A Myers shortest-edit-script diff over line hashes classifies each current line
+## as unchanged, added or modified, and records where lines were deleted. Cost
+## scales with the number of changed lines, so a few edits in a large file are
+## cheap; a very divergent file falls back to a coarse whole-region mark.
+import memory
+
+## The largest edit distance the precise diff computes before falling back. The
+## trace it keeps is O(distance^2), so this bounds memory to a few megabytes.
+let distance_cap: i64 = 1024
+
+pub enum ChangeKind as u8:
+    unchanged = 0
+    added = 1
+    modified = 2
+
+struct Row:
+    let start: usize
+    let end: usize
+    let digest: u64
+
+## Per current line: its change relative to the baseline, plus whether a run of
+## baseline lines was deleted just above it. `tail` marks a deletion after the end.
+pub struct LineDiff:
+    var marks: u8[]
+    var gaps: u8[]
+    var count: usize
+    var tail: bool
+    var active: bool
+    var changed: bool
+    var revision: i64
+
+    pub func init():
+        var marks: u8[]
+        var gaps: u8[]
+        self.marks = marks
+        self.gaps = gaps
+        self.count = 0
+        self.tail = false
+        self.active = false
+        self.changed = false
+        self.revision = -1
+
+    pub func present() -> bool:
+        return self.active and self.changed
+
+    pub func version() -> i64:
+        return self.revision
+
+    pub func has_baseline() -> bool:
+        return self.active
+
+    pub func mark(line: usize) -> ChangeKind:
+        if not self.active or line >= self.count:
+            return ChangeKind.unchanged
+        return (ChangeKind)self.marks[line]
+
+    pub func deletion_above(line: usize) -> bool:
+        return self.active and line < self.count and self.gaps[line] != 0
+
+    pub func tail_deletion() -> bool:
+        return self.active and self.tail
+
+    ## Diff the current text against the baseline, classifying every current line.
+    ## `revision` is stored so the caller can skip recomputing an unchanged version.
+    pub mutating func compute(baseline: str, current: str, revision: i64) -> !:
+        var scan_a: Row[]
+        var scan_b: Row[]
+        let n = split_rows(baseline, scan_a)
+        let m = split_rows(current, scan_b)
+        let a = try alloc Row[n if n > 0 else 1] in memory.heap
+        defer free(a) in memory.heap
+        let b = try alloc Row[m if m > 0 else 1] in memory.heap
+        defer free(b) in memory.heap
+        discard(split_rows(baseline, a))
+        discard(split_rows(current, b))
+        let marks = try alloc u8[m if m > 0 else 1] in memory.heap
+        errdefer free(marks) in memory.heap
+        let gaps = try alloc u8[m if m > 0 else 1] in memory.heap
+        errdefer free(gaps) in memory.heap
+        for i in 0..<m:
+            marks[i] = 0
+            gaps[i] = 0
+        var tail = false
+        var prefix: usize = 0
+        while prefix < n and prefix < m and equal_rows(a[prefix], b[prefix], baseline, current):
+            prefix += 1
+        var sn = n
+        var sm = m
+        while sn > prefix and sm > prefix and equal_rows(a[sn - 1], b[sm - 1], baseline, current):
+            sn -= 1
+            sm -= 1
+        let a_mid = sn - prefix
+        let b_mid = sm - prefix
+        if a_mid == 0 and b_mid > 0:
+            for j in prefix..<sm:
+                marks[j] = (u8)ChangeKind.added
+        elif b_mid == 0 and a_mid > 0:
+            if prefix < m:
+                gaps[prefix] = 1
+            else:
+                tail = true
+        elif a_mid > 0 and b_mid > 0:
+            try fill_middle(a[prefix..<sn], b[prefix..<sm], baseline, current, prefix, marks, gaps, &tail, m)
+        self.free_data()
+        self.marks = marks
+        self.gaps = gaps
+        self.count = m
+        self.tail = tail
+        self.active = true
+        self.revision = revision
+        var changed = tail
+        for i in 0..<m:
+            if marks[i] != 0 or gaps[i] != 0:
+                changed = true
+        self.changed = changed
+
+    pub mutating func clear():
+        self.free_data()
+        self.count = 0
+        self.tail = false
+        self.active = false
+        self.changed = false
+        self.revision = -1
+
+    mutating func free_data():
+        if self.marks.length > 0:
+            free(self.marks) in memory.heap
+            free(self.gaps) in memory.heap
+        var marks: u8[]
+        var gaps: u8[]
+        self.marks = marks
+        self.gaps = gaps
+
+    pub mutating func close():
+        self.free_data()
+
+## Split `text` into line rows with a digest of each line's bytes, or count the
+## lines when `out` is empty. A trailing newline yields a final empty line, so the
+## count matches the editor's physical line count.
+func split_rows(text: str, out: Row[]) -> usize:
+    var count: usize = 0
+    var start: usize = 0
+    var digest: u64 = 14695981039346656037
+    var index: usize = 0
+    while index <= text.length:
+        if index == text.length or text.bytes[index] == 10:
+            if out.length > 0:
+                out[count] = Row(start, index, digest)
+            count += 1
+            start = index + 1
+            digest = 14695981039346656037
+        else:
+            digest = (digest ^ (u64)text.bytes[index]) *% 1099511628211
+        index += 1
+    return count
+
+func equal_rows(a: Row, b: Row, at: str, bt: str) -> bool:
+    if a.digest != b.digest or a.end - a.start != b.end - b.start:
+        return false
+    for k in 0..<(a.end - a.start):
+        if at.bytes[a.start + k] != bt.bytes[b.start + k]:
+            return false
+    return true
+
+## Diff the changed middle a[..]/b[..] (the common prefix/suffix already removed)
+## and write marks for the current lines, offset by `offset` into the full arrays.
+func fill_middle(a: const Row[], b: const Row[], at: str, bt: str, offset: usize,
+                 marks: u8[], gaps: u8[], tail: bool*, count: usize) -> !:
+    let n = a.length
+    let m = b.length
+    let cap = distance_cap
+    let distance = try myers_distance(a, b, at, bt, cap)
+    if distance < 0:
+        for j in 0..<m:
+            marks[offset + j] = (u8)ChangeKind.modified
+        return
+    let max = (i64)(n + m)
+    let trace = try alloc i32[(usize)((distance + 1) * (distance + 1))] in memory.heap
+    defer free(trace) in memory.heap
+    try myers_trace(a, b, at, bt, distance, trace, max)
+    let ops = try alloc u8[n + m + 1] in memory.heap
+    defer free(ops) in memory.heap
+    let steps = backtrack(a, b, distance, trace, ops, max)
+    if steps > 1:
+        var lo: usize = 0
+        var hi = steps - 1
+        while lo < hi:
+            let swap = ops[lo]
+            ops[lo] = ops[hi]
+            ops[hi] = swap
+            lo += 1
+            hi -= 1
+    var cursor: usize = 0
+    var index: usize = 0
+    while index < steps:
+        if ops[index] == 0:
+            cursor += 1
+            index += 1
+        else:
+            var deletions: usize = 0
+            var insertions: usize = 0
+            let first = cursor
+            while index < steps and ops[index] != 0:
+                if ops[index] == 2:
+                    deletions += 1
+                else:
+                    insertions += 1
+                    cursor += 1
+                index += 1
+            if insertions > 0:
+                let kind: u8 = (u8)ChangeKind.modified if deletions > 0 else (u8)ChangeKind.added
+                for t in 0..<insertions:
+                    marks[offset + first + t] = kind
+            else:
+                let at_line = offset + cursor
+                if at_line < count:
+                    gaps[at_line] = 1
+                else:
+                    *tail = true
+
+## The Myers shortest edit distance between `a` and `b`, or -1 past `cap`.
+func myers_distance(a: const Row[], b: const Row[], at: str, bt: str, cap: i64) -> i64!:
+    let n = (i64)a.length
+    let m = (i64)b.length
+    let max = n + m
+    let v = try alloc i32[(usize)(2 * max + 1)] in memory.heap
+    defer free(v) in memory.heap
+    for i in 0..<(usize)(2 * max + 1):
+        v[i] = 0
+    var d: i64 = 0
+    while d <= max and d <= cap:
+        var k = -d
+        while k <= d:
+            var x: i64 = 0
+            if k == -d:
+                x = (i64)v[(usize)(max + k + 1)]
+            elif k == d:
+                x = (i64)v[(usize)(max + k - 1)] + 1
+            elif (i64)v[(usize)(max + k - 1)] < (i64)v[(usize)(max + k + 1)]:
+                x = (i64)v[(usize)(max + k + 1)]
+            else:
+                x = (i64)v[(usize)(max + k - 1)] + 1
+            var y = x - k
+            while x < n and y < m and equal_rows(a[(usize)x], b[(usize)y], at, bt):
+                x += 1
+                y += 1
+            v[(usize)(max + k)] = (i32)x
+            if x >= n and y >= m:
+                return d
+            k += 2
+        d += 1
+    return -1
+
+## Rerun the forward search to `distance`, snapshotting the frontier each step so
+## the path can be reconstructed. `trace[d*d + (k + d)]` holds V[k] before step d.
+func myers_trace(a: const Row[], b: const Row[], at: str, bt: str, distance: i64, trace: i32[], max: i64) -> !:
+    let n = (i64)a.length
+    let m = (i64)b.length
+    let v = try alloc i32[(usize)(2 * max + 1)] in memory.heap
+    defer free(v) in memory.heap
+    for i in 0..<(usize)(2 * max + 1):
+        v[i] = 0
+    var d: i64 = 0
+    while d <= distance:
+        var snap = -d
+        while snap <= d:
+            trace[(usize)(d * d + snap + d)] = v[(usize)(max + snap)]
+            snap += 1
+        var k = -d
+        while k <= d:
+            var x: i64 = 0
+            if k == -d:
+                x = (i64)v[(usize)(max + k + 1)]
+            elif k == d:
+                x = (i64)v[(usize)(max + k - 1)] + 1
+            elif (i64)v[(usize)(max + k - 1)] < (i64)v[(usize)(max + k + 1)]:
+                x = (i64)v[(usize)(max + k + 1)]
+            else:
+                x = (i64)v[(usize)(max + k - 1)] + 1
+            var y = x - k
+            while x < n and y < m and equal_rows(a[(usize)x], b[(usize)y], at, bt):
+                x += 1
+                y += 1
+            v[(usize)(max + k)] = (i32)x
+            if x >= n and y >= m:
+                return
+            k += 2
+        d += 1
+
+## Walk the snapshots back from the end, emitting operations in reverse:
+## 0 = keep a matching line, 1 = insert a current line, 2 = delete a baseline line.
+func backtrack(a: const Row[], b: const Row[], distance: i64, trace: i32[], ops: u8[], max: i64) -> usize:
+    var x = (i64)a.length
+    var y = (i64)b.length
+    var steps: usize = 0
+    var d = distance
+    while d > 0:
+        let base = d * d
+        let k = x - y
+        var previous: i64 = 0
+        if k == -d:
+            previous = k + 1
+        elif k == d:
+            previous = k - 1
+        elif (i64)trace[(usize)(base + k - 1 + d)] < (i64)trace[(usize)(base + k + 1 + d)]:
+            previous = k + 1
+        else:
+            previous = k - 1
+        let prev_x = (i64)trace[(usize)(base + previous + d)]
+        let prev_y = prev_x - previous
+        while x > prev_x and y > prev_y:
+            ops[steps] = 0
+            steps += 1
+            x -= 1
+            y -= 1
+        if x == prev_x:
+            ops[steps] = 1
+        else:
+            ops[steps] = 2
+        steps += 1
+        x = prev_x
+        y = prev_y
+        d -= 1
+    while x > 0:
+        ops[steps] = 0
+        steps += 1
+        x -= 1
+        y -= 1
+    return steps
+
+func run(diff: LineDiff*, baseline: str, current: str) -> !:
+    try diff.compute(baseline, current, 0)
+
+test "line diff classifies additions, modifications and deletions":
+    var diff = LineDiff()
+    defer diff.close()
+    # Identical text has no marks at all.
+    try run(&diff, "a\nb\nc", "a\nb\nc")
+    assert(not diff.present())
+    # One inserted line is an addition; its neighbours stay unchanged.
+    try run(&diff, "a\nb", "a\nX\nb")
+    assert(diff.present() and diff.mark(1) == ChangeKind.added)
+    assert(diff.mark(0) == ChangeKind.unchanged and diff.mark(2) == ChangeKind.unchanged)
+    # A replaced line is a modification.
+    try run(&diff, "a\nb\nc", "a\nB\nc")
+    assert(diff.mark(1) == ChangeKind.modified and diff.mark(0) == ChangeKind.unchanged)
+    # A removed interior line marks a deletion above the line that follows it.
+    try run(&diff, "a\nb\nc", "a\nc")
+    assert(diff.deletion_above(1) and diff.mark(0) == ChangeKind.unchanged and diff.mark(1) == ChangeKind.unchanged)
+    # A removed final line marks a trailing deletion.
+    try run(&diff, "a\nb", "a")
+    assert(diff.tail_deletion() and not diff.deletion_above(0))
+
+test "line diff keeps scattered edits in separate hunks":
+    var diff = LineDiff()
+    defer diff.close()
+    try run(&diff, "1\n2\n3\n4\n5", "1\nX\n3\n4\nY")
+    assert(diff.mark(0) == ChangeKind.unchanged)
+    assert(diff.mark(1) == ChangeKind.modified)
+    assert(diff.mark(2) == ChangeKind.unchanged and diff.mark(3) == ChangeKind.unchanged)
+    assert(diff.mark(4) == ChangeKind.modified)
+    # Trailing insertion is an addition, not a modification.
+    try run(&diff, "a", "a\nb")
+    assert(diff.mark(1) == ChangeKind.added)
+    # Recompute across many baseline/current pairs never traps.
+    let samples: str[6] = ["", "a\nb\nc\nd", "a\nB\nc\nd", "a\nc\nd", "a\nb\nc\nd\ne", "x\ny\nz"]
+    for turn in 0..<240:
+        let baseline = samples[(usize)turn % samples.length]
+        let current = samples[(usize)(turn * 7 + 3) % samples.length]
+        try run(&diff, baseline, current)
+        assert(diff.version() == 0 and diff.has_baseline())

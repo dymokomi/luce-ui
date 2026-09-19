@@ -20,3 +20,6 @@ pub struct EditorTheme:
     pub var caret: gpu.Color = gpu.Color(0.2, 0.66, 0.92)
     pub var caret_width: f64 = 1.0
     pub var scrollbar: gpu.Color = gpu.Color(0.09, 0.15, 0.23)
+    pub var diff_added: gpu.Color = gpu.Color(0.24, 0.63, 0.35)
+    pub var diff_modified: gpu.Color = gpu.Color(0.20, 0.55, 0.86)
+    pub var diff_deleted: gpu.Color = gpu.Color(0.82, 0.32, 0.32)

@@ -9,6 +9,31 @@ pub func text_views() -> unit!:
     folded_extents()
     gutter_edits()
     wrapping()
+    change_bars()
+
+func change_bars() -> unit!:
+    let font = Font()
+    let editor = TextEditor("alpha\nbeta\ngamma", font = font)
+    let app = Application(editor)
+    app.layout(320.0, 200.0)
+    # A baseline equal to the buffer shows no changes.
+    editor.set_baseline("alpha\nbeta\ngamma")
+    editor.set_selection(0, 0)
+    assert(not editor.has_changes())
+    # Editing a line diverges from the baseline.
+    editor.set_selection(6, 10)
+    editor.insert("BETA")
+    assert(editor.has_changes())
+    # Re-baselining to the current text (as a save would) clears the change state.
+    editor.set_baseline(editor.text())
+    editor.set_selection(0, 0)
+    assert(not editor.has_changes())
+    # Clearing the baseline entirely also removes any change bars.
+    editor.insert("!")
+    assert(editor.has_changes())
+    editor.clear_baseline()
+    assert(not editor.has_changes())
+    app.close()
 
 func wrapping() -> unit!:
     let font = Font()

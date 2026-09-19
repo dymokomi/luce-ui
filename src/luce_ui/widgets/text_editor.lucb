@@ -14,6 +14,7 @@ import luce_ui.text.editing as editing
 from luce_ui.text.decorations import Decorations
 from luce_ui.text.folding import FoldRange, Folding
 from luce_ui.text.projection import Projection
+from luce_ui.text.diff import LineDiff
 from luce_ui.font import Font, selected_font
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
@@ -44,6 +45,9 @@ pub struct TextEditor: Widget:
     var last_offset: usize
     var clicks: i64
     var wrap: bool
+    var baseline: interop.Owned[str]?
+    var diff: LineDiff
+    var diff_version: i64
 
     pub func init(text: str = "", read_only: bool = false, line_numbers: bool = true,
                   font: interop.Reference[Font]? = none, theme: EditorTheme? = none, wrap: bool = false) -> !:
@@ -88,6 +92,9 @@ pub struct TextEditor: Widget:
         self.last_offset = 0
         self.clicks = 0
         self.wrap = wrap
+        self.baseline = none
+        self.diff = LineDiff()
+        self.diff_version = -1
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -273,6 +280,28 @@ pub struct TextEditor: Widget:
     pub func wrapping() -> bool:
         return self.wrap
 
+    ## Set the saved text to diff against for gutter change bars, or clear it. The
+    ## bars update as the buffer diverges from this baseline; pass the current text
+    ## (for example after a save) to clear them.
+    pub mutating func set_baseline(text: str) -> !:
+        let replacement = try interop.copy_text(text)
+        if let previous = self.baseline:
+            previous.release()
+        self.baseline = replacement
+        self.diff_version = -1
+        self.box.value().invalidate()
+
+    pub mutating func clear_baseline():
+        if let previous = self.baseline:
+            previous.release()
+        self.baseline = none
+        self.diff.clear()
+        self.diff_version = -1
+        self.box.value().invalidate()
+
+    pub func has_changes() -> bool:
+        return self.diff.present()
+
     ## Soft wrap long lines to the viewport width, or restore horizontal scrolling.
     ## The caret keeps its place and is revealed on its new visual row.
     pub mutating func set_wrap(enabled: bool) -> !:
@@ -297,7 +326,17 @@ pub struct TextEditor: Widget:
 
     mutating func refresh_view() -> !:
         try self.projection.refresh(&self.document, &self.folds, self.wrap_columns())
+        try self.refresh_diff()
         self.clamp_scroll()
+
+    ## Recompute change bars only when the text changed since the last diff.
+    mutating func refresh_diff() -> !:
+        if let baseline = self.baseline:
+            if self.diff_version != (i64)self.document.version():
+                let current = try self.document.text()
+                defer current.release()
+                try self.diff.compute(baseline.value, current.value, (i64)self.document.version())
+                self.diff_version = (i64)self.document.version()
 
     mutating func finish_folding() -> !:
         try self.refresh_view()
@@ -327,7 +366,7 @@ pub struct TextEditor: Widget:
             hovered_row = (usize)((pointer.y + self.scroll_y) / self.font.value().line_height())
         try drawing.paint(&self.document, &painter, size.width, size.height, self.scroll_x, self.scroll_y,
             self.line_numbers, self.box.value().is_focused(), time.since(self.active_since) % 1000000000 < 600000000,
-            self.font, (self.theme else self.box.value().theme().editor()), self.highlights.values(), &self.projection, &self.folds, hovered_row)
+            self.font, (self.theme else self.box.value().theme().editor()), self.highlights.values(), &self.projection, &self.folds, &self.diff, hovered_row)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         # Passive hover is derived by Layout and rendered without remeasuring
@@ -559,6 +598,9 @@ pub struct TextEditor: Widget:
         self.highlights.close()
         self.folds.close()
         self.projection.close()
+        if let baseline = self.baseline:
+            baseline.release()
+        self.diff.close()
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
