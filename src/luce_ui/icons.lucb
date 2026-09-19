@@ -4,6 +4,7 @@
 ## icon_assets table. A blank kind draws nothing.
 import gpu
 import interop
+import math
 from luce_ui.geometry import Point
 from luce_ui.painter import Painter
 import svg
@@ -43,7 +44,10 @@ pub func draw(painter: Painter*, kind: IconKind, bounds: gpu.Rect, color: gpu.Co
     defer drawing.release()
     try render(painter, try drawing.get(), bounds, color)
 
-## Scale the viewBox into `bounds` (uniform, centered), then draw every contour.
+## Scale the viewBox into `bounds` (uniform, centered), accumulate every contour's
+## triangles into one buffer, and submit them as a SINGLE draw. One draw per icon keeps
+## a busy file tree well under the canvas's per-frame draw budget (the old one-draw-per-
+## segment cost blew past it on large folders and silently closed the window).
 func render(painter: Painter*, drawing: svg.Drawing*, bounds: gpu.Rect, color: gpu.Color) -> !:
     let view_w = drawing.view_width()
     let view_h = drawing.view_height()
@@ -53,21 +57,54 @@ func render(painter: Painter*, drawing: svg.Drawing*, bounds: gpu.Rect, color: g
     let origin_x = bounds.x + (bounds.width - view_w * scale) * 0.5
     let origin_y = bounds.y + (bounds.height - view_h * scale) * 0.5
     let stroke = 2.0 * scale if 2.0 * scale > 1.0 else 1.0
+    var mesh: Point[2048]
+    var used: usize = 0
     for index in 0..<drawing.contour_count():
         let start = drawing.contour_start(index)
         let count = drawing.contour_size(index)
         if drawing.contour_filled(index) and count >= 3:
             let anchor = mapped(drawing.point(start), origin_x, origin_y, scale)
             for step in 1..<count - 1:
-                try painter.triangle(anchor, mapped(drawing.point(start + step), origin_x, origin_y, scale),
-                    mapped(drawing.point(start + step + 1), origin_x, origin_y, scale), color)
+                used = add_triangle(mesh, used, anchor, mapped(drawing.point(start + step), origin_x, origin_y, scale),
+                    mapped(drawing.point(start + step + 1), origin_x, origin_y, scale))
         if drawing.contour_stroked(index) and count >= 2:
-            for step in 1..<count:
-                try painter.line(mapped(drawing.point(start + step - 1), origin_x, origin_y, scale),
-                    mapped(drawing.point(start + step), origin_x, origin_y, scale), stroke, color)
+            var step: usize = 1
+            while step < count:
+                used = add_segment(mesh, used, mapped(drawing.point(start + step - 1), origin_x, origin_y, scale),
+                    mapped(drawing.point(start + step), origin_x, origin_y, scale), stroke)
+                step += 1
             if drawing.contour_closed(index):
-                try painter.line(mapped(drawing.point(start + count - 1), origin_x, origin_y, scale),
-                    mapped(drawing.point(start), origin_x, origin_y, scale), stroke, color)
+                used = add_segment(mesh, used, mapped(drawing.point(start + count - 1), origin_x, origin_y, scale),
+                    mapped(drawing.point(start), origin_x, origin_y, scale), stroke)
+    if used >= 3:
+        try painter.mesh(mesh[..<used], color)
 
 func mapped(value: svg.Point, origin_x: f64, origin_y: f64, scale: f64) -> Point:
     return Point(origin_x + value.x * scale, origin_y + value.y * scale)
+
+func add_triangle(mesh: Point[], used: usize, a: Point, b: Point, c: Point) -> usize:
+    if used + 3 > mesh.length:
+        return used
+    mesh[used] = a
+    mesh[used + 1] = b
+    mesh[used + 2] = c
+    return used + 3
+
+## A stroke segment as a quad (two triangles), offset perpendicular by half the width.
+func add_segment(mesh: Point[], used: usize, a: Point, b: Point, width: f64) -> usize:
+    if used + 6 > mesh.length:
+        return used
+    let dx = b.x - a.x
+    let dy = b.y - a.y
+    let length = math.sqrt(dx * dx + dy * dy)
+    if length == 0.0:
+        return used
+    let ox = -dy * width * 0.5 / length
+    let oy = dx * width * 0.5 / length
+    mesh[used] = Point(a.x + ox, a.y + oy)
+    mesh[used + 1] = Point(b.x + ox, b.y + oy)
+    mesh[used + 2] = Point(b.x - ox, b.y - oy)
+    mesh[used + 3] = Point(a.x + ox, a.y + oy)
+    mesh[used + 4] = Point(b.x - ox, b.y - oy)
+    mesh[used + 5] = Point(a.x - ox, a.y - oy)
+    return used + 6

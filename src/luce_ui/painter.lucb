@@ -2,6 +2,7 @@ import gpu
 import interop
 import ownership
 import math
+import memory
 import luce_ui.result as result
 from luce_ui.font import Font, selected_font
 from luce_ui.geometry import Point
@@ -59,6 +60,25 @@ pub struct Painter:
                 y = (f32)(1.0 - point.y * 2.0 / size.height),
                 red = (f32)color.red, green = (f32)color.green, blue = (f32)color.blue)
             index += 1
+        try target.triangles(vertices)
+
+    ## Fill many triangles in a single draw. `points` are triangle vertices in logical
+    ## coordinates (every three make one triangle); a trailing partial triangle is
+    ## ignored. Batching keeps a shape of many segments to one canvas draw, not one each.
+    pub func mesh(points: const Point[], color: gpu.Color) -> !:
+        if points.length < 3:
+            return
+        let target = try self.target_view.get()
+        let size = try target.size()
+        if size.width <= 0.0 or size.height <= 0.0:
+            return
+        let count = points.length - points.length % 3
+        var vertices = try alloc gpu.Vertex[count] in memory.heap
+        defer free(vertices) in memory.heap
+        for index in 0..<count:
+            vertices[index] = gpu.Vertex(x = (f32)(points[index].x * 2.0 / size.width - 1.0),
+                y = (f32)(1.0 - points[index].y * 2.0 / size.height),
+                red = (f32)color.red, green = (f32)color.green, blue = (f32)color.blue)
         try target.triangles(vertices)
 
     pub func line(a: Point, b: Point, width: f64, color: gpu.Color) -> !:
