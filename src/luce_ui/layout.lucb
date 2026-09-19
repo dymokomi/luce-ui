@@ -104,6 +104,8 @@ pub struct Layout:
     var popup: bool
     var popup_placement: PopupPlacement
     var popup_point: Point
+    var animate_open: bool
+    var opening: bool
     var context_menu: bool
     var menu_trigger: bool
     var accepts_focus: bool
@@ -152,6 +154,8 @@ pub struct Layout:
         self.popup = false
         self.popup_placement = PopupPlacement.below
         self.popup_point = Point()
+        self.animate_open = false
+        self.opening = false
         self.context_menu = false
         self.menu_trigger = false
         self.accepts_focus = false
@@ -191,6 +195,14 @@ pub struct Layout:
 
     pub mutating func set_popup_placement(placement: PopupPlacement):
         self.popup_placement = placement
+
+    ## Let this popup ease to its placement instead of snapping. begin_open restarts
+    ## the entrance each time it is shown; a size or position change while open eases too.
+    pub mutating func set_animate_open(value: bool):
+        self.animate_open = value
+
+    pub mutating func begin_open():
+        self.opening = true
         self.invalidate()
 
     ## Context providers receive a secondary-click request after its target has
@@ -531,6 +543,7 @@ pub struct Tree:
     var pointer_present: bool
     var pointer_x: f64
     var pointer_y: f64
+    var animating: bool
 
     pub func init(content: interop.Interface[Widget], theme: Theme = Theme()) -> !:
         try require_main_thread()
@@ -552,6 +565,12 @@ pub struct Tree:
         self.pointer_present = false
         self.pointer_x = 0.0
         self.pointer_y = 0.0
+        self.animating = false
+
+    ## Whether a popup is still easing toward its placement, so the run loop keeps
+    ## drawing frames until it settles instead of blocking.
+    pub func is_animating() -> bool:
+        return self.animating
 
     pub func theme() -> Theme:
         return self.appearance
@@ -571,6 +590,7 @@ pub struct Tree:
             return result.failure[unit](failure.code, failure.message)
         if self.count > 0 and self.width == width and self.height == height and self.version == epoch():
             return result.success[unit](())
+        self.animating = false
         let replacement = alloc Entry[1024] in memory.heap catch failure:
             return result.failure[unit](failure.code, failure.message)
         var count: usize = 0
@@ -627,8 +647,22 @@ pub struct Tree:
                 elif box.popup_placement == PopupPlacement.window_center:
                     x = (bounds.width - popup_width) * 0.5
                     y = math.max(0.0, (bounds.height - popup_height) * 0.5)
+                var placed = Rect(x, y, popup_width, popup_height)
+                if box.animate_open and box.visible:
+                    if box.opening:
+                        # Start a touch smaller and lower, then ease up to full size and
+                        # centered so the popup rises into place instead of snapping.
+                        box.opening = false
+                        let ix = placed.width * 0.04
+                        let iy = placed.height * 0.04
+                        box.rectangle = Rect(placed.x + ix, placed.y + iy + 10.0, placed.width - ix * 2.0, placed.height - iy * 2.0)
+                    let eased = ease_rect(box.rectangle, placed, 0.22)
+                    if not settled(eased, placed):
+                        placed = eased
+                        self.animating = true
+                        revision = revision +? 1 else trap("UI revision exhausted")
                 let position = find_entry(replacement, count, box.identifier) else trap("popup missing from tree")
-                place(replacement, position, Rect(x, y, popup_width, popup_height), bounds) catch failure:
+                place(replacement, position, placed, bounds) catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 popup = box.identifier
         if popup != 0 and popup != self.focus:
@@ -1178,6 +1212,18 @@ func intersection(a: Rect, b: Rect) -> Rect:
 
 func along(size: Size, horizontal: bool) -> f64:
     return size.width if horizontal else size.height
+
+## One exponential step of `current` toward `target`; called each frame while a popup
+## animates, so the motion is fast at first and eases in as it approaches its place.
+func ease_rect(current: Rect, target: Rect, factor: f64) -> Rect:
+    return Rect(current.x + (target.x - current.x) * factor,
+        current.y + (target.y - current.y) * factor,
+        current.width + (target.width - current.width) * factor,
+        current.height + (target.height - current.height) * factor)
+
+## Within half a pixel on every side, so the ease can snap to the target and stop.
+func settled(a: Rect, b: Rect) -> bool:
+    return math.abs(a.x - b.x) < 0.5 and math.abs(a.y - b.y) < 0.5 and math.abs(a.width - b.width) < 0.5 and math.abs(a.height - b.height) < 0.5
 
 func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect) -> !:
     let box = entries[index].box.value()

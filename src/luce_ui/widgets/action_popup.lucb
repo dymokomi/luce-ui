@@ -51,6 +51,7 @@ pub struct ActionPopup: Widget:
         if searchable:
             box.value().set_text_input(true)
             box.value().set_popup_placement(layout.PopupPlacement.window_center)
+            box.value().set_animate_open(true)
         self.box = box
         self.font = font.clone()
         self.commands = copied
@@ -88,6 +89,7 @@ pub struct ActionPopup: Widget:
         # The initial popup has not been placed yet. Its previous (or zero)
         # height must not scroll leading disabled entries out of the new menu.
         self.first = 0
+        self.box.value().begin_open()
         self.box.value().set_visible(true)
 
     pub func query_text() -> interop.Owned[str]!:

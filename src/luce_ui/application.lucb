@@ -378,7 +378,7 @@ pub struct Application:
     ## a timer deadline, a blinking caret's cadence, and a one-second safety ceiling. A
     ## wake() or an OS event ends the wait early.
     func wait_budget(frame_limit: i64) -> u64:
-        if frame_limit > 0 or self.dirty:
+        if frame_limit > 0 or self.dirty or self.tree.is_animating():
             return 0
         let now = time.now()
         var budget: u64 = 1000000000
