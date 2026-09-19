@@ -50,6 +50,7 @@ pub struct Command:
     let triggered: interop.Signal[unit]
     var binding: Shortcut
     var enabled: bool
+    var divider: bool
 
     pub func init(text: str, shortcut: Shortcut = Shortcut(), id: str = "") -> !:
         let name = try interop.copy_text(id)
@@ -62,6 +63,18 @@ pub struct Command:
         self.triggered = triggered
         self.binding = shortcut
         self.enabled = true
+        self.divider = false
+
+    ## A non-selectable divider that groups the items around it in a menu. It carries no
+    ## caption or action; menus draw it as a line and skip it for selection and search.
+    pub static func separator() -> Command!:
+        var command = try Command("", id = "")
+        command.divider = true
+        command.enabled = false
+        return command
+
+    pub func is_divider() -> bool:
+        return self.divider
 
     ## The registry name, empty for an anonymous command.
     pub func id() -> str:
@@ -82,6 +95,11 @@ pub struct Command:
     ## Rebind this command, for a keymap loaded from settings.
     pub mutating func set_shortcut(shortcut: Shortcut):
         self.binding = shortcut
+
+    ## Write a display label for the shortcut into `buffer` (macOS modifier glyphs then
+    ## the key), returning the byte count; zero when the command has no binding.
+    pub func write_shortcut(buffer: u8[]) -> usize:
+        return write_chord(self.binding, buffer)
 
     pub func is_enabled() -> bool:
         return self.enabled
@@ -167,6 +185,75 @@ pub struct Commands:
     pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
         for item in self.items:
             item.trace(visit, context)
+
+## macOS modifier glyphs (⌥⇧⌘) then the key. Key names stay ASCII so the label reads
+## correctly even when the UI font lacks the fancier dedicated key glyphs.
+func write_chord(shortcut: Shortcut, buffer: u8[]) -> usize:
+    if shortcut.key == input.Key.unknown:
+        return 0
+    var pos: usize = 0
+    if shortcut.alt:
+        pos = put_bytes(buffer, pos, b"\xe2\x8c\xa5")
+    if shortcut.shift:
+        pos = put_bytes(buffer, pos, b"\xe2\x87\xa7")
+    if shortcut.primary:
+        pos = put_bytes(buffer, pos, b"\xe2\x8c\x98")
+    return write_key(shortcut.key, buffer, pos)
+
+func put_bytes(buffer: u8[], pos: usize, bytes: const u8[]) -> usize:
+    var p = pos
+    for index in 0..<bytes.length:
+        if p < buffer.length:
+            buffer[p] = bytes[index]
+            p += 1
+    return p
+
+func write_key(key: input.Key, buffer: u8[], pos: usize) -> usize:
+    let code = (u16)key
+    if code >= (u16)input.Key.a and code <= (u16)input.Key.z:
+        let letter: u8[1] = [(u8)((u16)'A' + code - (u16)input.Key.a)]
+        return put_bytes(buffer, pos, letter)
+    if key == input.Key.digit_0:
+        return put_bytes(buffer, pos, b"0")
+    if code >= (u16)input.Key.digit_1 and code <= (u16)input.Key.digit_9:
+        let digit: u8[1] = [(u8)((u16)'1' + code - (u16)input.Key.digit_1)]
+        return put_bytes(buffer, pos, digit)
+    if code >= (u16)input.Key.f1 and code <= (u16)input.Key.f12:
+        var p = put_bytes(buffer, pos, b"F")
+        let number = code - (u16)input.Key.f1 + 1
+        if number >= 10:
+            let tens: u8[1] = [(u8)((u16)'0' + number // 10)]
+            p = put_bytes(buffer, p, tens)
+        let ones: u8[1] = [(u8)((u16)'0' + number % 10)]
+        return put_bytes(buffer, p, ones)
+    return put_bytes(buffer, pos, key_word(key))
+
+func key_word(key: input.Key) -> const u8[]:
+    if key == input.Key.enter: return b"Enter"
+    if key == input.Key.escape: return b"Esc"
+    if key == input.Key.tab: return b"Tab"
+    if key == input.Key.space: return b"Space"
+    if key == input.Key.backspace or key == input.Key.delete: return b"Del"
+    if key == input.Key.left: return b"Left"
+    if key == input.Key.right: return b"Right"
+    if key == input.Key.up: return b"Up"
+    if key == input.Key.down: return b"Down"
+    if key == input.Key.home: return b"Home"
+    if key == input.Key.end: return b"End"
+    if key == input.Key.page_up: return b"PgUp"
+    if key == input.Key.page_down: return b"PgDn"
+    if key == input.Key.left_bracket: return b"["
+    if key == input.Key.right_bracket: return b"]"
+    if key == input.Key.minus: return b"-"
+    if key == input.Key.equal: return b"="
+    if key == input.Key.comma: return b","
+    if key == input.Key.period: return b"."
+    if key == input.Key.slash: return b"/"
+    if key == input.Key.semicolon: return b";"
+    if key == input.Key.apostrophe: return b"'"
+    if key == input.Key.grave: return b"`"
+    if key == input.Key.backslash: return b"\\"
+    return b"?"
 
 ## Case-insensitive ASCII compare of a chord token against a lowercase literal.
 func fold_equal(text: str, lower: str) -> bool:

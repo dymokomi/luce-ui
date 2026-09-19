@@ -139,10 +139,18 @@ pub struct ActionPopup: Widget:
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         var width: f64 = 0.0
         for action in self.commands.values():
+            if action.value().is_divider():
+                continue
             let text = action.value().text()
             defer text.release()
-            let measured = self.font.value().measure(text.value) catch failure:
+            var measured = self.font.value().measure(text.value) catch failure:
                 return result.failure[Size](failure.code, failure.message)
+            var chord: u8[32]
+            let chord_len = action.value().write_shortcut(chord)
+            if chord_len > 0:
+                let chord_width = self.font.value().measure((str)chord[..<chord_len]) catch failure:
+                    return result.failure[Size](failure.code, failure.message)
+                measured += self.font.value().advance() * 2.0 + chord_width
             width = math.max(width, measured)
         let rows = math.clamp((f64)self.count, 0.0, 10.0) if self.searchable else (f64)self.count
         let items = self.pad_y() * 2.0 + self.row_height() * rows if rows > 0.0 else 0.0
@@ -170,12 +178,24 @@ pub struct ActionPopup: Widget:
             if y >= size.height:
                 break
             let action = self.commands.values()[self.matches[(usize)index]]
+            if action.value().is_divider():
+                let divider_y = math.ceil(y + self.row_height() * 0.5)
+                try painter.rectangle(gpu.Rect(self.pad_x(), divider_y, math.max(0.0, size.width - self.pad_x() * 2.0), 1.0), theme.border)
+                index += 1
+                continue
             if index == self.selected:
                 try painter.rectangle(gpu.Rect(y = y, width = size.width, height = self.row_height()), theme.selection)
             let caption = action.value().text()
             defer caption.release()
-            try painter.text(caption.value, self.pad_x(), y + (self.row_height() - self.font.value().height()) * 0.5,
+            let text_y = y + (self.row_height() - self.font.value().height()) * 0.5
+            try painter.text(caption.value, self.pad_x(), text_y,
                 theme.foreground if action.value().is_enabled() else theme.muted, self.font)
+            var chord: u8[32]
+            let chord_len = action.value().write_shortcut(chord)
+            if chord_len > 0:
+                let label = (str)chord[..<chord_len]
+                let chord_width = try self.font.value().measure(label)
+                try painter.text(label, math.max(self.pad_x(), size.width - self.pad_x() - chord_width), text_y, theme.muted, self.font)
             index += 1
         try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.border)
         try painter.rectangle(gpu.Rect(y = math.max(0.0, size.height - 1.0), width = size.width, height = 1.0), theme.border)
@@ -239,7 +259,7 @@ pub struct ActionPopup: Widget:
             self.move(1 if event.scroll_y < 0.0 else -1)
         elif event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_down:
             let index = self.first + (i64)((event.y - self.top()) / self.row_height())
-            if event.inside and event.y >= self.top() and index >= 0 and index < (i64)self.count:
+            if event.inside and event.y >= self.top() and index >= 0 and index < (i64)self.count and self.commands.values()[self.matches[(usize)index]].value().is_enabled():
                 self.selected = index
                 if event.kind == input.EventKind.pointer_down and event.button == 0:
                     self.pressed = index
