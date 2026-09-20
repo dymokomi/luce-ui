@@ -18,6 +18,8 @@ input dispatch, focus, pointer capture, layout, recording and presentation. Inpu
 callbacks may change the tree. A retained snapshot protects active calls, and
 removed or disabled controls lose capture/focus before further input delivery.
 The event loop is bounded per frame so input cannot starve animation.
+Game mode keeps presenting at a requested fps so a software renderer can run
+without pretending to be a widget animation; it is still the same loop.
 
 `Viewport.on_render` receives a standard GPU render target scoped to its widget
 and clipped to its ancestors. Retaining it never extends the recording lifetime.

@@ -1,6 +1,7 @@
 import gpu
 import input
 import interop
+import math
 import ownership
 import thread
 import time
@@ -31,12 +32,17 @@ pub struct Application:
     var last_epoch: u64
     var last_render: u64
     var timers: scheduler.Scheduler
+    var game: bool
+    var target_fps: f64
+    var fullscreen: bool
+    var session_host: window.Window
 
-    pub func init(content: interop.Interface[Widget], title: str = "Luce", width: i64 = 800, height: i64 = 600, theme: Theme = Theme()) -> !:
+    pub func init(content: interop.Interface[Widget], title: str = "Luce", width: i64 = 800, height: i64 = 600, theme: Theme = Theme(), game: bool = false, fps: f64 = 70.0, fullscreen: bool = false) -> !:
         if not thread.is_main():
             error(interop.wrong_thread, "UI applications require the main thread")
         if width < 1 or width > 10000 or height < 1 or height > 10000 or not utf8.valid(title.bytes):
             error(result.invalid, "a window needs valid UTF-8 and dimensions in 1..10000")
+        try check_fps(fps)
         try theme.validate()
         let copied = try interop.copy_text(title)
         errdefer copied.release()
@@ -58,10 +64,44 @@ pub struct Application:
         self.last_epoch = 0
         self.last_render = 0
         self.timers = scheduler.Scheduler()
+        self.game = game
+        self.target_fps = fps
+        self.fullscreen = fullscreen
+        self.session_host = window.Window()
 
     func check() -> !:
         if self.closed:
             error(result.invalid, "the UI application is closed")
+
+    ## Present every frame and cap the loop to `fps` (0 is uncapped). This is a
+    ## run-loop mode, not a game engine: the application still owns simulation.
+    pub mutating func set_game(game: bool):
+        self.game = game
+        if game:
+            self.dirty = true
+
+    pub func is_game() -> bool:
+        return self.game
+
+    pub mutating func set_fps(fps: f64) -> !:
+        try check_fps(fps)
+        self.target_fps = fps
+
+    pub func fps() -> f64:
+        return self.target_fps
+
+    ## Applied on the next run, or immediately while the native window exists.
+    pub mutating func set_fullscreen(enabled: bool) -> !:
+        try self.check()
+        self.fullscreen = enabled
+        if self.running:
+            try self.session_host.set_fullscreen(enabled)
+
+    pub func is_fullscreen() -> bool:
+        if self.running:
+            return self.session_host.is_fullscreen() catch failure:
+                recover self.fullscreen
+        return self.fullscreen
 
     mutating func begin_operation() -> !:
         try self.check()
@@ -233,16 +273,16 @@ pub struct Application:
             return result.failure[unit](result.busy, "the application is already running")
         if frame_limit < 0:
             return result.failure[unit](result.invalid, "a frame limit must be nonnegative")
-        var host = window.Window.open(window.Options(title = self.title.value, width = (u32)self.width, height = (u32)self.height)) catch failure:
+        self.session_host = window.Window.open(window.Options(title = self.title.value, width = (u32)self.width, height = (u32)self.height, fullscreen = self.fullscreen)) catch failure:
             return result.failure[unit](failure.code, failure.message)
-        defer host.destroy()
+        defer self.session_host.destroy()
         var device = gpu.Device.open() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer device.destroy()
-        var surface = gpu.Surface.open(device, host) catch failure:
+        var surface = gpu.Surface.open(device, self.session_host) catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer surface.destroy()
-        host.show() catch failure:
+        self.session_host.show() catch failure:
             return result.failure[unit](failure.code, failure.message)
         self.running = true
         defer self.stop()
@@ -250,7 +290,7 @@ pub struct Application:
         # instead of stretching its last frame. The bridge lives on this stack for
         # the window's whole lifetime, so its pointers stay valid for the callback.
         var bridge = ResizeBridge(application = &self, surface = &surface)
-        host.set_redraw(resize_redraw, (void*)&bridge) catch failure:
+        self.session_host.set_redraw(resize_redraw, (void*)&bridge) catch failure:
             return result.failure[unit](failure.code, failure.message)
         var previous = time.now()
         var count: i64 = 0
@@ -260,17 +300,17 @@ pub struct Application:
             # a worker thread — so an idle window costs no CPU. The first pass renders at
             # once, and a frame_limit run never blocks so tests stay deterministic.
             if blocking:
-                let woke = host.wait(self.wait_budget(frame_limit)) catch failure:
+                let woke = self.session_host.wait(self.wait_budget(frame_limit)) catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 if let event = woke:
-                    let handled = self.handle_event(host, event)
+                    let handled = self.handle_event(self.session_host, event)
                     if not handled.is_success():
                         return handled
                     handled.release()
                 if not self.running:
                     break
             blocking = true
-            let size = host.size() catch failure:
+            let size = self.session_host.size() catch failure:
                 return result.failure[unit](failure.code, failure.message)
             let arranged = self.layout(size.width, size.height)
             if not arranged.is_success():
@@ -278,14 +318,14 @@ pub struct Application:
             arranged.release()
             var events: usize = 0
             while events < 512 and self.running:
-                self.update_cursor(host) catch failure:
+                self.update_cursor(self.session_host) catch failure:
                     return result.failure[unit](failure.code, failure.message)
-                host.set_text_input(self.tree.wants_text_input()) catch failure:
+                self.session_host.set_text_input(self.tree.wants_text_input()) catch failure:
                     return result.failure[unit](failure.code, failure.message)
-                let polled = host.poll() catch failure:
+                let polled = self.session_host.poll() catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 let event = polled else break
-                let handled = self.handle_event(host, event)
+                let handled = self.handle_event(self.session_host, event)
                 if not handled.is_success():
                     return handled
                 handled.release()
@@ -310,10 +350,12 @@ pub struct Application:
             # Present only when something changed: an input event marked us dirty, a
             # widget bumped the layout epoch, or a focused caret is due to blink. An
             # idle window with no focused editor renders nothing and rests the GPU.
+            # Game mode presents every serviced turn so a software renderer can run
+            # at the requested fps without a layout mutation each frame.
             let epoch_now = layout.epoch()
             let moment = time.now()
             let caret_due = self.tree.wants_text_input() and moment - self.last_render >= 30000000
-            if self.dirty or epoch_now != self.last_epoch or caret_due:
+            if self.game or self.dirty or epoch_now != self.last_epoch or caret_due:
                 let frame = surface.frame() catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 defer frame.release()
@@ -324,7 +366,7 @@ pub struct Application:
                 if not rendered.is_success():
                     return rendered
                 rendered.release()
-                self.update_cursor(host) catch failure:
+                self.update_cursor(self.session_host) catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 discard(frame.value().present(self.tree.theme().background) catch failure:
                     return result.failure[unit](failure.code, failure.message))
@@ -378,7 +420,26 @@ pub struct Application:
     ## a timer deadline, a blinking caret's cadence, and a one-second safety ceiling. A
     ## wake() or an OS event ends the wait early.
     func wait_budget(frame_limit: i64) -> u64:
-        if frame_limit > 0 or self.dirty or self.tree.is_animating():
+        if frame_limit > 0:
+            return 0
+        if self.game:
+            if self.target_fps <= 0.0:
+                return 0
+            let now = time.now()
+            let interval = (u64)(1000000000.0 / self.target_fps)
+            var budget: u64 = 0
+            if self.last_render != 0:
+                let next = self.last_render + interval
+                if next > now:
+                    budget = next - now
+            if let deadline = self.timers.next_deadline():
+                if deadline <= now:
+                    return 0
+                let delta = deadline - now
+                if budget == 0 or delta < budget:
+                    budget = delta
+            return budget
+        if self.dirty or self.tree.is_animating():
             return 0
         let now = time.now()
         var budget: u64 = 1000000000
@@ -426,6 +487,12 @@ pub struct Application:
         self.frames.trace(visit, context)
         self.tree.trace(visit, context)
         self.title.trace(visit, context)
+
+func check_fps(fps: f64) -> !:
+    if not math.is_finite(fps) or fps < 0.0 or fps > 1000.0:
+        error(result.invalid, "game fps must be finite and in 0..1000")
+
+
 
 pub let application_type: interop.Type[Application] = interop.Type[Application]("UI application", Application.dispose, Application.trace, main_thread = true)
 

@@ -164,6 +164,31 @@ func ownership_and_layout(tracker: Tracker*) -> !:
     try row.value().set_children([widget])
     try expect(app.value().layout(300.0, 100.0))
 
+func game_mode() -> !:
+    let flexible = try interop.Reference[Spacer].adopt(new Spacer(1.0) in memory.heap, ui.spacer_type, memory.heap)
+    defer flexible.release()
+    let space = flexible.as_interface[Widget](flexible.value())
+    defer space.release()
+    let app = try interop.Reference[Application].adopt(new Application(space, game = true, fps = 70.0) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    assert(app.value().is_game() and app.value().fps() == 70.0)
+    assert(not app.value().is_fullscreen())
+    app.value().set_game(false)
+    assert(not app.value().is_game())
+    try app.value().set_fps(0.0)
+    assert(app.value().fps() == 0.0)
+    var rejected = false
+    app.value().set_fps(-1.0) catch failure:
+        assert(failure.code == ui.invalid)
+        rejected = true
+    assert(rejected)
+    rejected = false
+    let invalid: interop.Reference[Application]? = interop.Reference[Application].adopt(new Application(space, fps = 1001.0) in memory.heap, ui.application_type, memory.heap) catch failure:
+        assert(failure.code == ui.invalid)
+        rejected = true
+        recover none
+    assert(rejected and invalid == none)
+
 func shared_font() -> !:
     let font = try interop.Reference[Font].adopt(new Font(size = 18.0) in memory.heap, ui.font_type, memory.heap)
     let expected_width = try font.value().measure("Save") + ui.Theme().inset(font) * 2.0
@@ -221,6 +246,7 @@ pub func main(arguments: str[]) -> i32!:
         assert(ownership.finish_run(0) == 0)
         assert(tracker.live == 0)
         try shared_font()
+        try game_mode()
         try drawing()
         assert(ownership.finish_run(0) == 0)
         assert(tracker.live == 0)

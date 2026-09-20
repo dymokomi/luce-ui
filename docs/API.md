@@ -19,7 +19,8 @@ All objects and callbacks belong to the main thread.
 | `Icon` | `Icon(kind, font=...)`; vector symbol sized to its font, `set_kind`, `layout` |
 | `SplitView` | Two widgets, `axis`, preferred `fraction`, `handle_width`; `fraction`, `set_fraction`, `layout` |
 | `Viewport` | Preferred minimum width/height; `on_render`, `layout` |
-| `Application` | Content, title and dimensions; `run`, `stop`, `close`, `on_frame`, `set_commands`, `command`, `layout`, `dispatch`, `render` |
+| `Application` | Content, title, dimensions, optional `game`/`fps`/`fullscreen`; `run`, `stop`, `close`, `on_frame`, `set_game`, `set_fps`, `set_fullscreen`, `set_commands`, `command`, `layout`, `dispatch`, `render` |
+| `Raster` | Mutable RGBA surface; `set_pixel`, `put`, `fill`, `fill_rect`, `dab`, `draw`, `color_at` |
 | `Painter` | Checked GPU target; `rectangle(rect, color, opacity=1.0)`, `triangle(a, b, c, color)`, `line(a, b, width, color)`, `text`, `target` |
 | `Font` | Installed monospace family and size; `measure`, `advance`, `height`, `line_height` |
 | `Command` | Optional registry `id`, label and `Shortcut`; `id`, `on_trigger`, `trigger`, `set_enabled`, `set_text` |
@@ -78,6 +79,12 @@ extension point for the separate 3D package. Applications use `run`; the explici
 tests. `on_frame` supplies elapsed seconds for animation. `run(frame_limit=0)`
 continues until stop/close or a native close request. `close` requests shutdown
 without destroying storage beneath an active callback; subsequent calls fail.
+`Application(..., game=true, fps=70.0)` is a run-loop mode for software
+renderers and other per-frame work: every serviced turn presents, and the loop
+waits out the remaining frame interval instead of blocking until the next input.
+`fps=0` is uncapped. `fullscreen=true` covers the main display without chrome
+through standard `window`; `set_fullscreen` toggles it while `run` is active.
+This is not a game engine — simulation, input and drawing stay in the application.
 While the window is being live-resized the OS runs a modal loop that starves that
 frame pump, so `run` registers a redraw the window invokes from inside it: the
 content repaints at each intermediate size instead of stretching the last frame.

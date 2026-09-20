@@ -824,7 +824,7 @@ pub struct Tree:
                 self.capture = 0
                 return self.arrange(self.width, self.height)
             # Tab stays within the popup; its widget chooses how to navigate.
-            if event.kind == input.EventKind.key_down or event.kind == input.EventKind.key_up or event.kind == input.EventKind.text_input:
+            if event.kind == input.EventKind.key_down or event.kind == input.EventKind.key_up or event.kind == input.EventKind.text_input or event.kind == input.EventKind.modifiers_changed:
                 let delivered = self.send(popup, Event(kind = event.kind, key = event.key,
                     repeated = event.repeated, shift = event.modifiers.shift,
                     control = event.modifiers.control, alt = event.modifiers.alt, meta = event.modifiers.super,
@@ -912,7 +912,7 @@ pub struct Tree:
             destination = self.capture if self.capture != 0 else self.hit(event.x, event.y)
         elif event.kind == input.EventKind.scroll:
             destination = self.hit(event.x, event.y)
-        elif event.kind == input.EventKind.key_down or event.kind == input.EventKind.key_up or event.kind == input.EventKind.text_input:
+        elif event.kind == input.EventKind.key_down or event.kind == input.EventKind.key_up or event.kind == input.EventKind.text_input or event.kind == input.EventKind.modifiers_changed:
             destination = self.focus
         if let index = self.find(destination):
             let box = self.entries[index].box.value()
