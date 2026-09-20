@@ -237,6 +237,12 @@ pub struct TextEditor: Widget:
             error(result.invalid, "line offset is outside the document")
         return (i64)self.document.line_end((usize)offset)
 
+    ## The 0-based physical line number containing `offset`.
+    pub func line_number(offset: i64) -> i64!:
+        if offset < 0 or offset > self.length():
+            error(result.invalid, "line offset is outside the document")
+        return (i64)self.document.line_number((usize)offset)
+
     pub mutating func insert(text: str) -> interop.Outcome[unit]:
         if self.read_only:
             return result.failure[unit](result.invalid, "the text editor is read only")
