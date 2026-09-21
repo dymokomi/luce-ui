@@ -31,7 +31,7 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
     defer root.release()
     let theme = ui.Theme(background = gpu.Color(1.0, 1.0, 1.0), panel = gpu.Color(),
         foreground = gpu.Color(1.0, 1.0, 1.0), border = gpu.Color(1.0, 0.0, 0.0),
-        hover_border = gpu.Color(0.0, 1.0, 0.0), active_border = gpu.Color(0.0, 0.0, 1.0), accent = gpu.Color(0.0, 0.0, 1.0))
+        active_border = gpu.Color(0.0, 0.0, 1.0), accent = gpu.Color(0.0, 0.0, 1.0))
     let app = try interop.Reference[Application].adopt(new Application(root, theme = theme) in memory.heap, ui.application_type, memory.heap)
     defer app.release()
     let scale = (try host.size()).scale

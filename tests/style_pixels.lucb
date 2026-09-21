@@ -51,9 +51,8 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
     defer root.release()
     let white = gpu.Color(1.0, 1.0, 1.0)
     let black = gpu.Color()
-    let theme = ui.Theme(background = white, border = black, panel = white, foreground = black,
-        hover_border = gpu.Color(1.0, 0.0, 0.0), gutter = white,
-        gutter_active = gpu.Color(1.0, 0.0, 0.0), hover = gpu.Color(0.0, 1.0, 0.0),
+    let theme = ui.Theme(background = white, border = black, active_border = gpu.Color(1.0, 0.0, 0.0),
+        panel = white, foreground = black, gutter = white,
         accent = gpu.Color(0.0, 0.0, 1.0), shadow = black, shadow_opacity = 0.5)
     let app = try interop.Reference[Application].adopt(new Application(root, theme = theme) in memory.heap, ui.application_type, memory.heap)
     defer app.release()
@@ -73,7 +72,7 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
         pixel(scale, 105.0, 90.0, 0, 0, 0)
         pixel(scale, 3.0, 4.0, 255, 0, 0)
         pixel(scale, 3.0, 1.0 + font.value().line_height() + 2.0, 0 if phase == 2 else 255, 255, 0 if phase == 2 else 255)
-    let action = try interop.Reference[Command].adopt(new Command("Shadow") in memory.heap, ui.action_type, memory.heap)
+    let action = try interop.Reference[Command].adopt(new Command("Shadow") in memory.heap, ui.command_type, memory.heap)
     defer action.release()
     let menu = try interop.Reference[Menu].adopt(new Menu("File", [action], font = font) in memory.heap, ui.menu_type, memory.heap)
     defer menu.release()
@@ -117,7 +116,7 @@ pub func headers(host: window.Window, surface: gpu.Surface) -> !:
     defer root.release()
     let theme = ui.Theme(background = gpu.Color(1.0, 1.0, 1.0), panel = gpu.Color(),
         foreground = gpu.Color(1.0, 1.0, 1.0), border = gpu.Color(1.0, 0.0, 0.0),
-        hover_border = gpu.Color(0.0, 1.0, 0.0), active_border = gpu.Color(0.0, 0.0, 1.0))
+        active_border = gpu.Color(0.0, 0.0, 1.0))
     let app = try interop.Reference[Application].adopt(new Application(root, theme = theme) in memory.heap, ui.application_type, memory.heap)
     defer app.release()
     let scale = (try host.size()).scale
