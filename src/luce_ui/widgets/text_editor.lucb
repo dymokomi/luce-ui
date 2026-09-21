@@ -12,14 +12,15 @@ import luce_ui.result as result
 import luce_ui.text.drawing as drawing
 import luce_ui.text.editing as editing
 from luce_ui.text.decorations import Decorations
+from luce_ui.text.swatches import Swatches
 from luce_ui.text.folding import FoldRange, Folding
 from luce_ui.text.projection import Projection
 from luce_ui.text.diff import LineDiff
 from luce_ui.font import Font, selected_font
-from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event, Point
 from luce_ui.painter import Painter
 from luce_ui.text.document import Document, TextChange
-from luce_ui.text.style import Highlight, EditorTheme
+from luce_ui.text.style import Highlight, EditorTheme, Swatch, swatch_span
 
 ## A reusable multiline editor. Its document owns text and history; the widget
 ## owns focus, selection gestures, scrolling, drawing and application signals.
@@ -32,6 +33,7 @@ pub struct TextEditor: Widget:
     let font: interop.Reference[Font]
     let theme: EditorTheme?
     var highlights: Decorations
+    var swatches: Swatches
     var folds: Folding
     var projection: Projection
     var scroll_x: f64
@@ -50,6 +52,9 @@ pub struct TextEditor: Widget:
     var baseline: interop.Owned[str]?
     var diff: LineDiff
     var diff_version: i64
+    let swatch_activated: interop.Signal[i64]
+    var swatch_hover: bool
+    var pending_swatch: i64
 
     pub func init(text: str = "", read_only: bool = false, line_numbers: bool = true,
                   font: interop.Reference[Font]? = none, theme: EditorTheme? = none, wrap: bool = false) -> !:
@@ -68,7 +73,10 @@ pub struct TextEditor: Widget:
         errdefer document.close()
         let changed = try interop.Signal[unit]()
         errdefer changed.release()
+        let swatch_activated = try interop.Signal[i64]()
+        errdefer swatch_activated.release()
         let highlights = Decorations()
+        let swatches = Swatches()
         var folds = Folding()
         var projection = Projection()
         try projection.refresh(&document, &folds)
@@ -81,6 +89,7 @@ pub struct TextEditor: Widget:
         self.font = selected
         self.theme = theme
         self.highlights = highlights
+        self.swatches = swatches
         self.folds = folds
         self.projection = projection
         self.scroll_x = 0.0
@@ -99,6 +108,9 @@ pub struct TextEditor: Widget:
         self.baseline = none
         self.diff = LineDiff()
         self.diff_version = -1
+        self.swatch_activated = swatch_activated
+        self.swatch_hover = false
+        self.pending_swatch = -1
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -158,7 +170,7 @@ pub struct TextEditor: Widget:
         return (i64)self.document.line_number(self.document.caret()) + 1
 
     pub func column() -> i64:
-        return (i64)editing.column(&self.document, self.document.caret()) + 1
+        return (i64)editing.column(&self.document, self.document.caret(), self.active_swatches()) + 1
 
     ## The 1-based first and last lines the selection spans (equal when it is a caret).
     pub func selection_first_line() -> i64:
@@ -218,6 +230,115 @@ pub struct TextEditor: Widget:
 
     pub func highlight_at(offset: i64) -> gpu.Color?:
         return self.highlights.color_at(offset)
+
+    ## Replace the color-chip set (offsets into the current document, ascending). A
+    ## language service republishes this on each change, alongside the highlights.
+    pub mutating func set_swatches(marks: const Swatch[]) -> !:
+        try self.swatches.replace(marks)
+        self.box.value().invalidate()
+
+    ## The chips that reserve layout columns. Only when soft-wrap is off, so wrapped
+    ## rendering keeps the projection's scalar-based column layout; wrapped mode draws
+    ## the chips compactly in place instead. Column math and painting share this view.
+    func active_swatches() -> const Swatch[]:
+        return self.swatches.values() if not self.wrap else self.swatches.values()[..<0]
+
+    pub func on_swatch_activate(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.swatch_activated.connect(callback)
+
+    ## The document offset of the color chip under editor-local (x, y), or -1. Only
+    ## when soft-wrap is off, where chips reserve their two cells before the scalar.
+    func swatch_at(x: f64, y: f64) -> i64:
+        if self.wrap or self.swatches.values().length == 0:
+            return -1
+        let advance = self.font.value().advance()
+        let row = (usize)(math.max(0.0, y + self.scroll_y) / self.font.value().line_height())
+        if row >= self.projection.visible_count():
+            return -1
+        let line = self.projection.line(self.projection.physical_row(row))
+        let origin = self.gutter_width() + advance - self.scroll_x
+        for mark in self.swatches.values():
+            if mark.offset >= (i64)line.start and mark.offset <= (i64)line.end:
+                let col = (i64)editing.column(&self.document, (usize)mark.offset, self.swatches.values())
+                let chip_x = origin + (f64)(col - (i64)swatch_span) * advance
+                if x >= chip_x and x < chip_x + (f64)swatch_span * advance:
+                    return mark.offset
+        return -1
+
+    ## The editor-local point just below the chip at `offset`, to anchor a popup.
+    pub func swatch_anchor(offset: i64) -> Point:
+        let advance = self.font.value().advance()
+        let col = (i64)editing.column(&self.document, (usize)offset, self.swatches.values())
+        let chip_x = self.gutter_width() + advance - self.scroll_x + (f64)(col - (i64)swatch_span) * advance
+        let row = self.projection.visual_row((usize)offset)
+        return Point(chip_x, (f64)(row + 1) * self.font.value().line_height() - self.scroll_y + drawing.vertical_padding(self.font))
+
+    ## The literal color token (`#rgb` or `#rrggbb`) at a chip offset, for seeding and
+    ## for replacing it in place.
+    pub func swatch_token(offset: i64) -> interop.Owned[str]!:
+        let length = 1 + self.hex_run((usize)offset, self.document.length())
+        return try self.document.text((usize)offset, (usize)offset + length)
+
+    ## The first color chip's offset, or -1 — for harnesses that drive a chip click.
+    pub func first_swatch() -> i64:
+        let marks = self.swatches.values()
+        return marks[0].offset if marks.length > 0 else -1
+
+    ## Scan the document for CSS-style hex colors (`#rgb` or `#rrggbb`) and draw a color
+    ## chip over each leading `#`. A convenience over set_swatches for editing themes and
+    ## stylesheets; call it after each change, next to syntax highlighting. Offsets come
+    ## straight from scalar positions, so the chips stay aligned in non-ASCII documents.
+    pub mutating func set_hex_swatches() -> !:
+        let length = self.document.length()
+        var count: usize = 0
+        var index: usize = 0
+        while index < length:
+            let run = self.hex_run(index, length)
+            if run == 3 or run == 6:
+                count += 1
+                index += 1 + run
+            else:
+                index += 1
+        let marks = try alloc Swatch[count] in memory.heap
+        defer free(marks) in memory.heap
+        var written: usize = 0
+        index = 0
+        while index < length and written < count:
+            let run = self.hex_run(index, length)
+            if run == 3 or run == 6:
+                marks[written] = Swatch((i64)index, self.hex_color(index + 1, run))
+                written += 1
+                index += 1 + run
+            else:
+                index += 1
+        try self.swatches.replace(marks[..<written])
+        self.box.value().invalidate()
+
+    ## Consecutive hex digits following a `#` at `at` (0 when that scalar is not `#`),
+    ## capped at seven so a run longer than six fails the 3/6-digit test.
+    func hex_run(at: usize, length: usize) -> usize:
+        if self.document.scalar(at) != (u32)'#':
+            return 0
+        var run: usize = 0
+        var index = at + 1
+        while index < length and run < 7 and hex_digit(self.document.scalar(index)) >= 0:
+            run += 1
+            index += 1
+        return run
+
+    ## Decode `count` (3 or 6) hex digits at `at` into a linear-light color, matching
+    ## the sRGB decoding used for configured theme colors.
+    func hex_color(at: usize, count: usize) -> gpu.Color:
+        var channels: f64[3] = [0.0, 0.0, 0.0]
+        for channel in 0..<3:
+            var value: i64 = 0
+            if count == 6:
+                value = hex_digit(self.document.scalar(at + (usize)channel * 2)) * 16 + hex_digit(self.document.scalar(at + (usize)channel * 2 + 1))
+            else:
+                let digit = hex_digit(self.document.scalar(at + (usize)channel))
+                value = digit * 16 + digit
+            channels[channel] = channel_linear(value)
+        return gpu.Color(channels[0], channels[1], channels[2])
 
     pub func change() -> TextChange:
         return self.document.last_change()
@@ -396,17 +517,26 @@ pub struct TextEditor: Widget:
         try drawing.paint(&self.document, &painter, size.width, size.height, self.scroll_x, self.scroll_y,
             self.line_numbers, self.box.value().is_focused(), time.since(self.active_since) % 1000000000 < 600000000,
             self.font, (self.theme else self.box.value().theme().editor()), self.highlights.values(), &self.projection, &self.folds, &self.diff, hovered_row,
-            (usize)self.ai_first, (usize)self.ai_last)
+            (usize)self.ai_first, (usize)self.ai_last, self.swatches.values(), not self.wrap)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         # Passive hover is derived by Layout and rendered without remeasuring
-        # controls or rebuilding text projections for each pointer movement.
+        # controls or rebuilding text projections for each pointer movement. The
+        # pointer turns into a hand over a color chip, updated only on a transition.
         if event.kind == input.EventKind.pointer_moved and not event.cancelled and not self.dragging and not self.dragging_scroll:
+            let over = self.swatch_at(event.x, event.y) >= 0
+            if over != self.swatch_hover:
+                self.swatch_hover = over
+                self.box.value().set_cursor(input.Cursor.pointer if over else input.Cursor.text)
             return result.success[unit](())
         let before = self.document.version()
         self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
         self.box.value().invalidate()
+        if self.pending_swatch >= 0:
+            let offset = self.pending_swatch
+            self.pending_swatch = -1
+            return self.swatch_activated.emit(offset)
         if self.document.version() != before:
             return self.notify_changed()
         return result.success[unit](())
@@ -432,6 +562,10 @@ pub struct TextEditor: Widget:
             self.clamp_scroll()
             return
         if event.kind == input.EventKind.pointer_down and event.button == 0:
+            let chip = self.swatch_at(event.x, event.y)
+            if chip >= 0:
+                self.pending_swatch = chip
+                return
             if self.folds.values().length > 0 and event.x >= self.gutter_width() - self.font.value().advance() * 2.0 and event.x < self.gutter_width():
                 let visible = (usize)(math.max(0.0, event.y - drawing.vertical_padding(self.font) + self.scroll_y) / self.font.value().line_height())
                 if visible < self.projection.visible_count():
@@ -522,7 +656,7 @@ pub struct TextEditor: Widget:
         elif event.key == input.Key.up or event.key == input.Key.down or event.key == input.Key.page_up or event.key == input.Key.page_down:
             if not self.vertical_move:
                 let here = self.projection.row(self.projection.visual_row(caret))
-                self.preferred_column = editing.column(&self.document, caret) - here.column
+                self.preferred_column = editing.column(&self.document, caret, self.active_swatches()) - here.column
             let row = self.projection.visual_row(caret)
             let page = (usize)math.max(1.0, self.box.value().bounds().height / self.font.value().line_height() - 1.0)
             let step = page if event.key == input.Key.page_up or event.key == input.Key.page_down else 1
@@ -530,7 +664,7 @@ pub struct TextEditor: Widget:
             let rows = self.projection.visible_count()
             let raw = row - step if upwards and row >= step else (0 if upwards else row + step)
             let target = self.projection.row(raw if raw < rows else (rows - 1 if rows > 0 else 0))
-            var offset = editing.at_column(&self.document, target.physical, target.column + self.preferred_column)
+            var offset = editing.at_column(&self.document, target.physical, target.column + self.preferred_column, self.active_swatches())
             if offset > target.end:
                 offset = target.end
             if offset < target.start:
@@ -558,7 +692,7 @@ pub struct TextEditor: Widget:
         let raw = (usize)(math.max(0.0, y - drawing.vertical_padding(self.font) + self.scroll_y) / self.font.value().line_height())
         let segment = self.projection.row(raw if raw < rows else (rows - 1 if rows > 0 else 0))
         let cells = (usize)(math.max(0.0, x - self.gutter_width() - self.font.value().advance() + self.scroll_x) / self.font.value().advance() + 0.5)
-        var offset = editing.at_column(&self.document, segment.physical, segment.column + cells)
+        var offset = editing.at_column(&self.document, segment.physical, segment.column + cells, self.active_swatches())
         if offset > segment.end:
             offset = segment.end
         if offset < segment.start:
@@ -602,7 +736,7 @@ pub struct TextEditor: Widget:
             self.scroll_y = y + self.font.value().line_height() - height
         self.scroll_y = math.clamp(self.scroll_y, 0.0, self.maximum_scroll())
         if not self.wrap:
-            let x = (f64)editing.column(&self.document, self.document.caret()) * self.font.value().advance()
+            let x = (f64)editing.column(&self.document, self.document.caret(), self.active_swatches()) * self.font.value().advance()
             let width = self.content_width()
             if x < self.scroll_x:
                 self.scroll_x = x
@@ -612,6 +746,7 @@ pub struct TextEditor: Widget:
 
     mutating func notify_changed() -> interop.Outcome[unit]:
         self.highlights.transform(self.document.last_change())
+        self.swatches.transform(self.document.last_change())
         self.folds.transform(self.document.last_change())
         self.vertical_move = false
         self.active_since = time.now()
@@ -624,8 +759,11 @@ pub struct TextEditor: Widget:
         self.font.release()
         self.changed.close()
         self.changed.release()
+        self.swatch_activated.close()
+        self.swatch_activated.release()
         self.document.close()
         self.highlights.close()
+        self.swatches.close()
         self.folds.close()
         self.projection.close()
         if let baseline = self.baseline:
@@ -637,5 +775,21 @@ pub struct TextEditor: Widget:
         self.font.trace(visit, context)
         self.box.trace(visit, context)
         self.changed.trace(visit, context)
+        self.swatch_activated.trace(visit, context)
+
+## The value 0..15 of a hex-digit scalar, or -1 when it is not one.
+func hex_digit(scalar: u32) -> i64:
+    if scalar >= (u32)'0' and scalar <= (u32)'9':
+        return (i64)(scalar - (u32)'0')
+    if scalar >= (u32)'a' and scalar <= (u32)'f':
+        return (i64)(scalar - (u32)'a') + 10
+    if scalar >= (u32)'A' and scalar <= (u32)'F':
+        return (i64)(scalar - (u32)'A') + 10
+    return -1
+
+## An 8-bit sRGB channel decoded to linear light.
+func channel_linear(value: i64) -> f64:
+    let encoded = (f64)value / 255.0
+    return encoded / 12.92 if encoded <= 0.04045 else math.pow((encoded + 0.055) / 1.055, 2.4)
 
 pub let text_editor_type: interop.Type[TextEditor] = interop.Type[TextEditor]("Text editor", TextEditor.close, TextEditor.trace, closeable = true, main_thread = true)

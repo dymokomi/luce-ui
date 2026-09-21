@@ -7,6 +7,18 @@ pub struct Highlight:
     pub let end: i64
     pub let color: gpu.Color
 
+## The number of character cells a color chip reserves before its scalar when the
+## editor is not soft-wrapping: the chip is a square about a line tall, so two
+## monospace cells sit closest to that width.
+pub let swatch_span: usize = 2
+
+## A color chip drawn immediately before the scalar at `offset` — used to show a
+## literal color (e.g. a `#rrggbb` hex) beside its text. Point decorations, ordered
+## by ascending offset; published by the same language service that emits highlights.
+pub struct Swatch:
+    pub let offset: i64
+    pub let color: gpu.Color
+
 pub struct EditorTheme:
     pub var background: gpu.Color = gpu.Color(0.012, 0.017, 0.027)
     pub var foreground: gpu.Color = gpu.Color(0.68, 0.73, 0.82)

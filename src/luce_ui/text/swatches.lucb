@@ -1,0 +1,56 @@
+## Point decorations that draw a color chip in place of one scalar. Like the range
+## Decorations, edits transform the stored set without allocation and publication
+## replaces it wholesale; a chip inside an edited span is dropped, to be republished
+## by the next analysis. Storage is independent of the language service and renderer.
+import memory
+import luce_ui.result as result
+from luce_ui.text.document import TextChange
+from luce_ui.text.style import Swatch
+
+pub struct Swatches:
+    var marks: Swatch[]
+    var count: usize
+
+    pub func init():
+        var empty: Swatch[]
+        self.marks = empty
+        self.count = 0
+
+    pub func values() -> const Swatch[]:
+        return self.marks[..<self.count]
+
+    pub mutating func transform(change: TextChange):
+        var count: usize = 0
+        let delta = change.new_end - change.old_end
+        for mark in self.marks[..<self.count]:
+            if mark.offset >= change.old_end:
+                self.marks[count] = Swatch(mark.offset + delta, mark.color)
+                count += 1
+            elif mark.offset < change.start:
+                self.marks[count] = mark
+                count += 1
+        self.count = count
+
+    pub mutating func replace(marks: const Swatch[]) -> !:
+        if marks.length > 131072:
+            error(result.limit, "an editor supports at most 131072 color swatches")
+        var previous: i64 = -1
+        for mark in marks:
+            if mark.offset <= previous:
+                error(result.invalid, "swatches must be ordered by ascending, distinct offset")
+            previous = mark.offset
+        var copied: Swatch[]
+        if marks.length > 0:
+            copied = try alloc Swatch[marks.length] in memory.heap
+        for index in 0..<marks.length:
+            copied[index] = marks[index]
+        self.close()
+        self.marks = copied
+        self.count = marks.length
+
+    pub mutating func close():
+        if self.marks.length > 0:
+            free(self.marks) in memory.heap
+        var empty: Swatch[]
+        self.marks = empty
+        self.count = 0

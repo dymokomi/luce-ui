@@ -11,7 +11,7 @@ from luce_ui.text.document import Document
 from luce_ui.text.projection import Projection
 from luce_ui.text.folding import Folding
 from luce_ui.text.diff import LineDiff, ChangeKind
-from luce_ui.text.style import Highlight, EditorTheme
+from luce_ui.text.style import Highlight, EditorTheme, Swatch, swatch_span
 
 pub func vertical_padding(font: interop.Reference[Font]) -> f64:
     return (font.value().line_height() - font.value().height()) * 0.5
@@ -41,8 +41,8 @@ func stripes(painter: Painter*, x: f64, y: f64, w: f64, h: f64, spacing: f64, co
 pub func paint(document: const Document*, painter: Painter*, width: f64, height: f64,
                scroll_x: f64, scroll_y: f64, numbers: bool, focused: bool,
                caret_visible: bool, font: interop.Reference[Font], theme: EditorTheme,
-               highlights: const Highlight[], projection: const Projection*, folds: const Folding*, diff: const LineDiff*, hovered_row: usize? = none,
-               ai_first: usize = 0, ai_last: usize = 0) -> !:
+               highlights: const Highlight[], projection: const Projection*, folds: const Folding*, diff: const LineDiff*, hovered_row: usize?,
+               ai_first: usize, ai_last: usize, swatches: const Swatch[], reserve: bool) -> !:
     let folding = folds.values().length > 0
     let gutter = gutter_width(numbers, font, projection.line_count(), folding)
     try painter.rectangle(gpu.Rect(width = width, height = height), theme.background)
@@ -57,6 +57,9 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
     var style: usize = 0
     while style < highlights.length and highlights[style].end <= (i64)offset:
         style += 1
+    var swatch: usize = 0
+    while swatch < swatches.length and swatches[swatch].offset < (i64)offset:
+        swatch += 1
     while y < height and row < rows:
         let segment = projection.row(row)
         let line = projection.line(segment.physical)
@@ -87,7 +90,7 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
             let extent = try font.value().measure(text)
             try painter.text(text, gutter - extent - font.value().advance() * (3.0 if folding else 1.0), y, number_color, font)
         try paint_line(document, painter, segment.start, segment.end, segment.column, segment.end == line.end,
-            y, width, scroll_x, gutter, focused, caret_visible, font, theme, highlights, &style)
+            y, width, scroll_x, gutter, focused, caret_visible, font, theme, highlights, &style, swatches, &swatch, reserve)
         if segment.leading:
             if let index = folds.at(line.start):
                 let fold = folds.values()[index]
@@ -111,7 +114,8 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
 func paint_line(document: const Document*, painter: Painter*, start: usize, end: usize,
                 start_column: usize, last: bool, y: f64, width: f64, scroll_x: f64,
                 gutter: f64, focused: bool, caret_visible: bool, font: interop.Reference[Font],
-                theme: EditorTheme, highlights: const Highlight[], style: usize*) -> !:
+                theme: EditorTheme, highlights: const Highlight[], style: usize*,
+                swatches: const Swatch[], swatch: usize*, reserve: bool) -> !:
     let advance = font.value().advance()
     let origin = gutter + advance - scroll_x - (f64)start_column * advance
     var column = start_column
@@ -121,6 +125,21 @@ func paint_line(document: const Document*, painter: Painter*, start: usize, end:
     var run_color = theme.foreground
     var cursor_x = gutter + advance - scroll_x
     for index in start..<end:
+        # Reserving mode (no soft wrap): a chip claims `swatch_span` cells before the
+        # scalar, shifting the rest of the line right so `#rrggbb` stays intact. Column
+        # math in editing.column/at_column matches this, so caret and clicks stay true.
+        if reserve:
+            while *swatch < swatches.length and swatches[*swatch].offset < (i64)index:
+                *swatch += 1
+            if *swatch < swatches.length and swatches[*swatch].offset == (i64)index:
+                let chip_x = origin + (f64)column * advance
+                if used > 0:
+                    try painter.text((str)bytes[..<used], run_x, y, run_color, font)
+                    used = 0
+                if chip_x + (f64)swatch_span * advance > gutter and chip_x < width - 8.0:
+                    try draw_swatch(painter, chip_x, y, advance, swatch_span, font, theme, swatches[*swatch].color)
+                column += swatch_span
+                *swatch += 1
         let scalar = document.scalar(index)
         let cells = 4 - column % 4 if scalar == 9 else 1
         let x = origin + (f64)column * advance
@@ -130,6 +149,22 @@ func paint_line(document: const Document*, painter: Painter*, start: usize, end:
         if visible and index >= document.first() and index < document.last():
             let left = math.max(gutter, x)
             try painter.rectangle(gpu.Rect(left, y - 2.0, math.min(width - left, x + (f64)cells * advance - left), font.value().line_height()), theme.selection)
+        # Wrapping mode: draw a compact chip in the scalar's own cell, no shift, so the
+        # projection's column layout stays valid.
+        if not reserve:
+            while *swatch < swatches.length and swatches[*swatch].offset < (i64)index:
+                *swatch += 1
+            if *swatch < swatches.length and swatches[*swatch].offset == (i64)index:
+                if used > 0:
+                    try painter.text((str)bytes[..<used], run_x, y, run_color, font)
+                    used = 0
+                if visible and x >= gutter:
+                    try draw_swatch(painter, x, y, advance, 1, font, theme, swatches[*swatch].color)
+                *swatch += 1
+                column += cells
+                if index + 1 == document.caret():
+                    cursor_x = origin + (f64)column * advance
+                continue
         while *style < highlights.length and highlights[*style].end <= (i64)index:
             *style += 1
         var color = theme.foreground
@@ -157,3 +192,21 @@ func paint_line(document: const Document*, painter: Painter*, start: usize, end:
 
 func same_color(a: gpu.Color, b: gpu.Color) -> bool:
     return a.red == b.red and a.green == b.green and a.blue == b.blue
+
+## Draw a color chip filling one character cell at `x`, replacing that scalar's
+## glyph. A thin frame in the line-number color keeps a chip that matches the
+## background legible; the fill shows the literal color the text encodes.
+## Draw a color chip filling `span` cells starting at `x`. A square about a line tall
+## (capped to the slot width), centred in the slot with a small margin so it never
+## touches the neighbouring glyphs; a thin frame keeps a chip on a matching background
+## legible.
+func draw_swatch(painter: Painter*, x: f64, y: f64, advance: f64, span: usize, font: interop.Reference[Font], theme: EditorTheme, color: gpu.Color) -> !:
+    let extent = font.value().height()
+    let slot = (f64)span * advance
+    let side = math.floor(math.min(extent, slot) - 2.0)
+    if side < 2.0:
+        return
+    let sx = x + (slot - side) * 0.5
+    let sy = y + (extent - side) * 0.5
+    try painter.rectangle(gpu.Rect(sx - 1.0, sy - 1.0, side + 2.0, side + 2.0), theme.line_number)
+    try painter.rectangle(gpu.Rect(sx, sy, side, side), color)

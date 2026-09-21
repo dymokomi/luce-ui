@@ -63,6 +63,13 @@ pub type ListView = list_view.ListView
 pub type ListItem = list_view.ListItem
 pub let list_view_type = list_view.list_view_type
 
+import luce_ui.widgets.table_view as table_view
+pub type TableView = table_view.TableView
+pub type TableColumn = table_view.TableColumn
+pub type TableCell = table_view.TableCell
+pub type CellAlign = table_view.CellAlign
+pub let table_view_type = table_view.table_view_type
+
 import luce_ui.text.document as document
 pub type TextChange = document.TextChange
 
@@ -104,6 +111,10 @@ pub let text_prompt_type = text_prompt.text_prompt_type
 import luce_ui.widgets.confirm_dialog as confirm_dialog
 pub type ConfirmDialog = confirm_dialog.ConfirmDialog
 pub let confirm_dialog_type = confirm_dialog.confirm_dialog_type
+
+import luce_ui.widgets.color_editor as color_editor
+pub type ColorEditor = color_editor.ColorEditor
+pub let color_editor_type = color_editor.color_editor_type
 
 import luce_ui.icons as icons
 import luce_ui.widgets.icon as icon

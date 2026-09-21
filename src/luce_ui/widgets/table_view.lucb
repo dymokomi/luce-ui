@@ -1,0 +1,465 @@
+## A virtualized, single-selection multi-column list: a small model/view/delegate
+## table. Columns describe sizing and alignment; each row is a list of cells that
+## carry their own presentation — icon, tint, muted, emphasis — which is the
+## delegate role. The view owns scrolling, whole-row selection, keyboard navigation,
+## activation, an optional sticky header and drag-to-resize column dividers.
+import gpu
+import input
+import interop
+import math
+import memory
+import ownership
+import utf8
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+from luce_ui.font import Font, selected_font
+from luce_ui.theme import Theme
+from luce_ui.icons import IconKind
+import luce_ui.icons as icons
+
+let maximum_columns: usize = 16
+
+## Text alignment within a column.
+pub enum CellAlign as u8:
+    left = 0
+    right = 1
+    center = 2
+
+## A column's title and sizing. `weight` > 0 makes the column absorb leftover width
+## in proportion to its weight; weight 0 is a fixed column of `width` points, which
+## is also the starting width a resize adjusts. Borrowed for the call; copied inside.
+pub struct TableColumn:
+    pub let title: str = ""
+    pub let width: f64 = 120.0
+    pub let weight: f64 = 0.0
+    pub let minimum: f64 = 36.0
+    pub let align: CellAlign = CellAlign.left
+
+## One cell's presentation — the model's display text plus its delegate roles. A
+## missing tint draws in the row's foreground; muted uses the theme's comment color;
+## emphasis renders bold; an icon draws before the text, typically in column 0.
+## Borrowed for the call; the table retains its own copy.
+pub struct TableCell:
+    pub let text: str = ""
+    pub let icon: IconKind = IconKind.blank
+    pub let tint: gpu.Color? = none
+    pub let muted: bool = false
+    pub let emphasis: bool = false
+
+struct StoredColumn:
+    var title: interop.Owned[str]
+    var width: f64
+    let weight: f64
+    let minimum: f64
+    let align: CellAlign
+
+struct StoredCell:
+    let text: interop.Owned[str]
+    let icon: IconKind
+    let tint: gpu.Color?
+    let muted: bool
+    let emphasis: bool
+
+pub struct TableView: Widget:
+    let box: interop.Reference[Layout]
+    var columns: StoredColumn[]
+    var cells: StoredCell[]
+    var rows: usize
+    let activated: interop.Signal[i64]
+    var selection: i64
+    var scroll: f64
+    let show_header: bool
+    let resizable: bool
+    let custom_row_height: f64?
+    let font: interop.Reference[Font]
+    ## The column currently being resized, or -1. `drag_sign` is +1 when the dragged
+    ## divider grows the column to its left, -1 when it shrinks the column to its right.
+    var drag_column: i64
+    var drag_start_x: f64
+    var drag_start_width: f64
+    var drag_sign: f64
+
+    ## `cells` is row-major: `columns.length` cells per row, laid out one row after
+    ## another. A flat slice keeps the public signature expressible from either tier.
+    pub func init(columns: const TableColumn[], cells: const TableCell[], row_height: f64? = none,
+                  font: interop.Reference[Font]? = none, header: bool = true, resizable: bool = true) -> !:
+        if columns.length == 0 or columns.length > maximum_columns:
+            error(result.invalid, "a table needs between 1 and 16 columns")
+        var selected = try selected_font(font)
+        errdefer selected.release()
+        if let height = row_height:
+            if not math.is_finite(height) or height < selected.value().line_height() or height > 512.0:
+                error(result.invalid, "table row height must fit the font and be at most 512")
+        let box = try layout.make_layout()
+        errdefer box.release()
+        box.value().set_focusable(true)
+        box.value().set_cursor(input.Cursor.pointer)
+        try box.value().set_flex()
+        try box.value().set_limits(Size(160.0, 60.0), Size(16384.0, 16384.0))
+        let signal = try interop.Signal[i64]()
+        errdefer signal.release()
+        let stored_columns = try copy_columns(columns)
+        errdefer release_columns(stored_columns)
+        let stored_cells = try copy_cells(cells, columns.length, selected)
+        self.box = box
+        self.columns = stored_columns
+        self.cells = stored_cells
+        self.rows = cells.length // columns.length
+        self.activated = signal
+        self.selection = -1
+        self.scroll = 0.0
+        self.show_header = header
+        self.resizable = resizable
+        self.custom_row_height = row_height
+        self.font = selected
+        self.drag_column = -1
+        self.drag_start_x = 0.0
+        self.drag_start_width = 0.0
+        self.drag_sign = 1.0
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    func row_height() -> f64:
+        return self.custom_row_height else self.box.value().theme().row_height(self.font)
+
+    func header_height() -> f64:
+        return self.row_height() if self.show_header else 0.0
+
+    pub func selected_index() -> i64:
+        return self.selection
+
+    pub func scroll_offset() -> f64:
+        return self.scroll
+
+    ## Fill `out[0..columns]` with each column's resolved on-screen width: fixed
+    ## columns keep their width; weighted columns share the leftover by weight.
+    func resolve_widths(out: f64[]):
+        let available = self.box.value().bounds().width
+        var fixed_total: f64 = 0.0
+        var weight_total: f64 = 0.0
+        for index in 0..<self.columns.length:
+            if self.columns[index].weight > 0.0:
+                weight_total += self.columns[index].weight
+            else:
+                fixed_total += self.columns[index].width
+        let leftover = math.max(0.0, available - fixed_total)
+        for index in 0..<self.columns.length:
+            let column = self.columns[index]
+            if column.weight > 0.0 and weight_total > 0.0:
+                out[index] = math.max(column.minimum, leftover * column.weight / weight_total)
+            else:
+                out[index] = column.width
+
+    ## The boundary (index of the column on its left) under `x`, or -1 when none is
+    ## close enough or neither adjacent column is fixed and so resizable.
+    func divider_at(x: f64, widths: f64[]) -> i64:
+        if not self.resizable:
+            return -1
+        var edge: f64 = 0.0
+        for index in 0..<self.columns.length - 1:
+            edge += widths[index]
+            if math.abs(x - edge) <= 4.0 and (self.columns[index].weight == 0.0 or self.columns[index + 1].weight == 0.0):
+                return (i64)index
+        return -1
+
+    pub mutating func set_rows(cells: const TableCell[]) -> !:
+        let copies = try copy_cells(cells, self.columns.length, self.font)
+        release_cells(self.cells)
+        self.cells = copies
+        self.rows = cells.length // self.columns.length
+        if self.selection >= (i64)self.rows:
+            self.selection = -1
+        let limit = math.max(0.0, (f64)self.rows * self.row_height() - math.max(0.0, self.box.value().bounds().height - self.header_height()))
+        self.scroll = math.clamp(self.scroll, 0.0, limit)
+        self.box.value().invalidate()
+
+    pub mutating func select(index: i64) -> !:
+        if index < -1 or index >= (i64)self.rows:
+            error(result.invalid, "table selection is outside its rows")
+        self.selection = index
+        if index >= 0:
+            let rh = self.row_height()
+            let viewport = self.box.value().bounds().height - self.header_height()
+            let y = (f64)index * rh
+            if viewport <= 0.0:
+                self.scroll = 0.0
+            elif y < self.scroll:
+                self.scroll = y
+            elif y + rh > self.scroll + viewport:
+                self.scroll = math.max(0.0, y + rh - viewport)
+        self.box.value().invalidate()
+
+    pub func on_activate(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.activated.connect(callback)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return result.success[Size](Size(260.0, 260.0))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.background)
+        var widths: f64[16]
+        self.resolve_widths(widths)
+        let rh = self.row_height()
+        let hh = self.header_height()
+        let inset = theme.inset(self.font)
+        var index = (usize)(self.scroll / rh)
+        while index < self.rows:
+            let y = hh + (f64)index * rh - self.scroll
+            if y >= size.height:
+                break
+            if y + rh > hh:
+                if (i64)index == self.selection:
+                    try painter.rectangle(gpu.Rect(0.0, y, size.width, rh), theme.selection)
+                    try painter.rectangle(gpu.Rect(0.0, y, 2.0, rh), theme.accent)
+                elif self.box.value().contains_pointer() and self.box.value().pointer_position().y >= math.max(hh, y) and self.box.value().pointer_position().y < y + rh:
+                    try painter.rectangle(gpu.Rect(0.0, y, size.width, rh), theme.hover())
+                var x: f64 = 0.0
+                for column in 0..<self.columns.length:
+                    let cell = self.cells[index * self.columns.length + column]
+                    try self.paint_cell(&painter, cell, self.columns[column], x, y, widths[column], rh, inset, theme)
+                    x += widths[column]
+            index += 1
+        if self.show_header:
+            try painter.rectangle(gpu.Rect(0.0, 0.0, size.width, hh), theme.panel)
+            var hx: f64 = 0.0
+            for column in 0..<self.columns.length:
+                let title = self.columns[column].title.value
+                if title.length > 0:
+                    try self.paint_label(&painter, title, self.columns[column], hx, 0.0, widths[column], hh, inset, theme.muted)
+                hx += widths[column]
+                if column < self.columns.length - 1:
+                    try painter.rectangle(gpu.Rect(hx - 0.5, 0.0, 1.0, hh), theme.border)
+            try painter.rectangle(gpu.Rect(0.0, hh - 1.0, size.width, 1.0), theme.border)
+        if self.box.value().is_focused():
+            try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.accent)
+        let content = (f64)self.rows * rh
+        let viewport = size.height - hh
+        if content > viewport and viewport > 0.0:
+            let thumb = math.max(24.0, viewport * viewport / content)
+            let position = hh + self.scroll / math.max(1.0, content - viewport) * math.max(0.0, viewport - thumb)
+            try painter.rectangle(gpu.Rect(math.max(0.0, size.width - 6.0), position, 4.0, thumb), theme.border)
+
+    func paint_cell(painter: Painter*, cell: StoredCell, column: StoredColumn, x: f64, y: f64,
+                    width: f64, rh: f64, inset: f64, theme: Theme) -> !:
+        var text_x = x + inset
+        if cell.icon != IconKind.blank:
+            let extent = self.font.value().height()
+            let color = theme.accent if cell.icon == IconKind.folder or cell.icon == IconKind.folder_open else theme.muted
+            try icons.draw(painter, cell.icon, gpu.Rect(text_x, y + (rh - extent) * 0.5, extent, extent), color)
+            text_x += extent + inset
+        if cell.text.value.length == 0:
+            return
+        var color = theme.foreground
+        if cell.muted:
+            color = theme.muted
+        if let tint = cell.tint:
+            color = tint
+        var buffer: u8[512]
+        let label = elide(self.font, cell.text.value, x + width - inset - text_x, buffer)
+        if label.length == 0:
+            return
+        let ty = y + (rh - self.font.value().height()) * 0.5
+        var draw_x = text_x
+        if column.align == CellAlign.right:
+            let measured = try self.font.value().measure(label)
+            draw_x = x + width - inset - measured
+        elif column.align == CellAlign.center:
+            let measured = try self.font.value().measure(label)
+            draw_x = x + (width - measured) * 0.5
+        try painter.text(label, draw_x, ty, color = color, font = self.font)
+        if cell.emphasis:
+            try painter.text(label, draw_x + 0.6, ty, color = color, font = self.font)
+
+    func paint_label(painter: Painter*, text: str, column: StoredColumn, x: f64, y: f64,
+                     width: f64, rh: f64, inset: f64, color: gpu.Color) -> !:
+        var buffer: u8[512]
+        let label = elide(self.font, text, width - inset * 2.0, buffer)
+        if label.length == 0:
+            return
+        let ty = y + (rh - self.font.value().height()) * 0.5
+        var draw_x = x + inset
+        if column.align == CellAlign.right:
+            let measured = try self.font.value().measure(label)
+            draw_x = x + width - inset - measured
+        elif column.align == CellAlign.center:
+            let measured = try self.font.value().measure(label)
+            draw_x = x + (width - measured) * 0.5
+        try painter.text(label, draw_x, ty, color = color, font = self.font)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        let activate = self.handle(event) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        if activate:
+            return self.activated.emit(self.selection)
+        return result.success[unit](())
+
+    mutating func handle(event: Event) -> bool!:
+        if event.cancelled:
+            return false
+        var widths: f64[16]
+        self.resolve_widths(widths)
+        let rh = self.row_height()
+        let hh = self.header_height()
+        if event.kind == input.EventKind.pointer_up:
+            self.drag_column = -1
+            return false
+        if self.drag_column >= 0 and event.kind == input.EventKind.pointer_moved:
+            let width = math.max(self.columns[self.drag_column].minimum,
+                self.drag_start_width + self.drag_sign * (event.x - self.drag_start_x))
+            self.columns[self.drag_column].width = width
+            self.box.value().invalidate()
+            return false
+        if event.kind == input.EventKind.pointer_moved:
+            if self.show_header and event.y < hh and self.divider_at(event.x, widths) >= 0:
+                self.box.value().set_cursor(input.Cursor.resize_horizontal)
+            else:
+                self.box.value().set_cursor(input.Cursor.pointer)
+            # Repaint on every move so the hovered row keeps up with the pointer;
+            # set_cursor alone does not invalidate.
+            self.box.value().invalidate()
+            return false
+        if event.kind == input.EventKind.scroll:
+            let scale = 1.0 if event.scroll_unit == input.ScrollUnit.points else rh * 3.0
+            let viewport = math.max(0.0, self.box.value().bounds().height - hh)
+            let limit = math.max(0.0, (f64)self.rows * rh - viewport)
+            self.scroll = math.clamp(self.scroll - event.scroll_y * scale, 0.0, limit)
+            self.box.value().invalidate()
+        elif event.kind == input.EventKind.pointer_down and (event.button == 0 or event.button == 1) and event.inside:
+            if self.show_header and event.y < hh:
+                if event.button == 0:
+                    let boundary = self.divider_at(event.x, widths)
+                    if boundary >= 0:
+                        let target = boundary if self.columns[boundary].weight == 0.0 else boundary + 1
+                        self.drag_column = target
+                        self.drag_start_x = event.x
+                        self.drag_start_width = self.columns[target].width
+                        self.drag_sign = 1.0 if target == boundary else -1.0
+                return false
+            let index = (i64)((event.y - hh + self.scroll) / rh)
+            if index >= 0 and index < (i64)self.rows:
+                try self.select(index)
+                return event.button == 0
+            if event.button == 1:
+                try self.select(-1)
+        elif event.kind == input.EventKind.key_down:
+            if event.key == input.Key.enter and self.selection >= 0:
+                return true
+            elif self.rows > 0:
+                if event.key == input.Key.down:
+                    try self.select(self.selection + 1 if self.selection + 1 < (i64)self.rows else self.selection)
+                elif event.key == input.Key.up:
+                    try self.select(self.selection - 1 if self.selection > 0 else 0)
+                elif event.key == input.Key.home:
+                    try self.select(0)
+                elif event.key == input.Key.end:
+                    try self.select((i64)self.rows - 1)
+        return false
+
+    pub mutating func close():
+        self.font.release()
+        self.activated.close()
+        self.activated.release()
+        release_cells(self.cells)
+        release_columns(self.columns)
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+        self.activated.trace(visit, context)
+        for cell in self.cells:
+            cell.text.trace(visit, context)
+        for column in self.columns:
+            column.title.trace(visit, context)
+
+## Fit `text` into `max_width`, appending an ellipsis (U+2026) when it must be cut.
+## The font is monospace, so one scalar is one cell of `advance`; truncation keeps
+## whole scalars and reserves a cell for the ellipsis. Returns the original text when
+## it fits, otherwise a view into `buffer`, which the caller owns for the draw.
+func elide(font: interop.Reference[Font], text: str, max_width: f64, buffer: u8[]) -> str:
+    if max_width <= 0.0:
+        return ""
+    let advance = font.value().advance()
+    let bytes = text.bytes
+    var count: usize = 0
+    var index: usize = 0
+    while index < bytes.length:
+        let decoded = utf8.decode(bytes, index) else break
+        index += decoded.width
+        count += 1
+    if (f64)count * advance <= max_width:
+        return text
+    let cells = (usize)(max_width / advance)
+    if cells < 1:
+        return ""
+    let keep = cells - 1
+    var written: usize = 0
+    var scalars: usize = 0
+    index = 0
+    while index < bytes.length and scalars < keep:
+        let decoded = utf8.decode(bytes, index) else break
+        if written + decoded.width + 3 > buffer.length:
+            break
+        for source in index..<index + decoded.width:
+            buffer[written] = bytes[source]
+            written += 1
+        index += decoded.width
+        scalars += 1
+    buffer[written] = (u8)226
+    buffer[written + 1] = (u8)128
+    buffer[written + 2] = (u8)166
+    written += 3
+    return (str)buffer[..<written]
+
+func copy_columns(columns: const TableColumn[]) -> StoredColumn[]!:
+    let copies = try alloc StoredColumn[columns.length] in memory.heap
+    var count: usize = 0
+    errdefer release_columns_partial(copies, count)
+    for column in columns:
+        copies[count] = StoredColumn(try interop.copy_text(column.title), column.width, column.weight, column.minimum, column.align)
+        count += 1
+    return copies
+
+func copy_cells(cells: const TableCell[], column_count: usize, font: interop.Reference[Font]) -> StoredCell[]!:
+    if column_count == 0 or cells.length % column_count != 0:
+        error(result.invalid, "table cells must form whole rows of one cell per column")
+    if cells.length // column_count > 65536:
+        error(result.invalid, "a table supports at most 65536 rows")
+    let copies = try alloc StoredCell[cells.length] in memory.heap
+    var count: usize = 0
+    errdefer release_cells_partial(copies, count)
+    for cell in cells:
+        discard(try font.value().measure(cell.text))
+        copies[count] = StoredCell(try interop.copy_text(cell.text), cell.icon, cell.tint, cell.muted, cell.emphasis)
+        count += 1
+    return copies
+
+func release_columns_partial(columns: StoredColumn[], count: usize):
+    for column in columns[..<count]:
+        column.title.release()
+    free(columns) in memory.heap
+
+func release_columns(columns: StoredColumn[]):
+    release_columns_partial(columns, columns.length)
+
+func release_cells_partial(cells: StoredCell[], count: usize):
+    for cell in cells[..<count]:
+        cell.text.release()
+    free(cells) in memory.heap
+
+func release_cells(cells: StoredCell[]):
+    release_cells_partial(cells, cells.length)
+
+pub let table_view_type: interop.Type[TableView] = interop.Type[TableView]("TableView", TableView.close, TableView.trace, closeable = true, main_thread = true)

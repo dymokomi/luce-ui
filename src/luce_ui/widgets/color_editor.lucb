@@ -1,0 +1,290 @@
+## A small color editor popup: three R/G/B sliders with live numeric values, a live
+## preview, and an editable hex field (select, copy, paste, type). It emits the hex
+## string on every change, so a host can write it straight back to the source. The
+## host opens it under the swatch that was clicked and connects on_change.
+import gpu
+import input
+import interop
+import memory
+import ownership
+import math
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Constraints, Size, Event
+from luce_ui.font import Font, selected_font
+from luce_ui.painter import Painter
+from luce_ui.text.line_input import LineInput
+
+let hex_digits: str = "0123456789abcdef"
+
+pub struct ColorEditor: Widget:
+    let box: interop.Reference[Layout]
+    let font: interop.Reference[Font]
+    var red: i64
+    var green: i64
+    var blue: i64
+    var field: LineInput
+    ## The slider being dragged (0 red, 1 green, 2 blue) or -1, and whether the pointer
+    ## is currently inside the hex field's row so keys route there.
+    var dragging: i64
+    var editing_hex: bool
+    let changed: interop.Signal[str]
+
+    pub func init(font: interop.Reference[Font]? = none) -> !:
+        let selected = try selected_font(font)
+        errdefer selected.release()
+        let box = try layout.make_layout()
+        errdefer box.release()
+        box.value().set_popup(true)
+        box.value().set_popup_placement(layout.PopupPlacement.point)
+        box.value().set_text_input(true)
+        box.value().set_cursor(input.Cursor.arrow)
+        box.value().set_visible(false)
+        var field = try LineInput()
+        errdefer field.close()
+        let changed = try interop.Signal[str]()
+        self.box = box
+        self.font = selected
+        self.red = 0
+        self.green = 0
+        self.blue = 0
+        self.field = field
+        self.dragging = -1
+        self.editing_hex = false
+        self.changed = changed
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func on_change(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.changed.connect(callback)
+
+    pub func is_open() -> bool:
+        return self.box.value().is_visible()
+
+    ## Show the editor at (x, y) in the parent's coordinates, seeded from `hex`.
+    pub mutating func open_at(value: str, x: f64, y: f64) -> !:
+        self.parse(value)
+        try self.field.set_text(value)
+        self.dragging = -1
+        self.editing_hex = false
+        try self.box.value().set_popup_point(x, y)
+        self.box.value().set_visible(true)
+
+    pub mutating func hide():
+        self.box.value().set_visible(false)
+        self.dragging = -1
+
+    func row_height() -> f64:
+        return self.box.value().theme().row_height(self.font)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return result.success[Size](Size(260.0, self.row_height() * 5.0 + 8.0))
+
+    ## The x where a slider track starts and its width, given the panel width.
+    func track_x(inset: f64) -> f64:
+        return inset + self.font.value().advance() * 3.0
+
+    func track_width(width: f64, inset: f64) -> f64:
+        return math.max(20.0, width - self.track_x(inset) - inset - self.font.value().advance() * 4.0)
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        let inset = theme.inset(self.font)
+        let rh = self.row_height()
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.panel)
+        # Preview of the current color across the header row.
+        let preview = gpu.Color((f64)self.red / 255.0, (f64)self.green / 255.0, (f64)self.blue / 255.0)
+        try painter.rectangle(gpu.Rect(inset, (rh - rh * 0.6) * 0.5, rh * 1.2, rh * 0.6), theme.border)
+        try painter.rectangle(gpu.Rect(inset + 1.0, (rh - rh * 0.6) * 0.5 + 1.0, rh * 1.2 - 2.0, rh * 0.6 - 2.0), to_linear(preview))
+        try painter.text(self.hex_string(), inset + rh * 1.5, (rh - self.font.value().height()) * 0.5, theme.foreground, self.font)
+        # Three channel sliders.
+        let labels = ["R", "G", "B"]
+        let values = [self.red, self.green, self.blue]
+        let tx = self.track_x(inset)
+        let tw = self.track_width(size.width, inset)
+        for channel in 0..<3:
+            let y = rh * ((f64)channel + 1.0)
+            let mid = y + rh * 0.5
+            try painter.text(labels[channel], inset, y + (rh - self.font.value().height()) * 0.5, theme.muted, self.font)
+            try painter.rectangle(gpu.Rect(tx, mid - 2.0, tw, 4.0), theme.button)
+            let fraction = (f64)values[channel] / 255.0
+            try painter.rectangle(gpu.Rect(tx, mid - 2.0, tw * fraction, 4.0), theme.accent)
+            let handle = tx + tw * fraction
+            try painter.rectangle(gpu.Rect(handle - 3.0, mid - rh * 0.3, 6.0, rh * 0.6), theme.foreground)
+            var digits: u8[8]
+            let text = format_int(digits, values[channel])
+            try painter.text(text, tx + tw + self.font.value().advance(), y + (rh - self.font.value().height()) * 0.5, theme.foreground, self.font)
+        # Editable hex field on the last row.
+        let hy = rh * 4.0
+        try painter.rectangle(gpu.Rect(inset, hy + 2.0, size.width - inset * 2.0, rh - 4.0), theme.button)
+        try self.field.paint(&painter, self.font, theme, inset + self.font.value().advance() * 0.5, hy + (rh - self.font.value().height()) * 0.5, size.width - inset * 2.0 - self.font.value().advance())
+        try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.active_border)
+        try painter.rectangle(gpu.Rect(y = size.height - 1.0, width = size.width, height = 1.0), theme.active_border)
+        try painter.rectangle(gpu.Rect(width = 1.0, height = size.height), theme.active_border)
+        try painter.rectangle(gpu.Rect(x = size.width - 1.0, width = 1.0, height = size.height), theme.active_border)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        let handled = self.handle(event) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        self.box.value().invalidate()
+        if handled:
+            var buffer: u8[8]
+            return self.changed.emit(self.hex_string_into(buffer))
+        return result.success[unit](())
+
+    mutating func handle(event: Event) -> bool!:
+        if event.cancelled or (event.kind == input.EventKind.key_down and event.key == input.Key.escape):
+            self.hide()
+            return false
+        let inset = self.box.value().theme().inset(self.font)
+        let rh = self.row_height()
+        let width = self.box.value().bounds().width
+        let tx = self.track_x(inset)
+        let tw = self.track_width(width, inset)
+        let hy = rh * 4.0
+        # Slider drag.
+        if self.dragging >= 0 and event.kind == input.EventKind.pointer_moved:
+            return try self.set_channel(self.dragging, self.value_at(event.x, tx, tw))
+        if event.kind == input.EventKind.pointer_up:
+            self.dragging = -1
+            return false
+        if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
+            self.editing_hex = event.y >= hy
+            if event.y >= rh and event.y < rh * 4.0:
+                let channel = (i64)((event.y - rh) / rh)
+                if channel >= 0 and channel < 3:
+                    self.dragging = channel
+                    return try self.set_channel(channel, self.value_at(event.x, tx, tw))
+        # Route keyboard and pointer to the hex field.
+        if self.editing_hex or event.kind == input.EventKind.text_input:
+            self.field.pointer(event, self.font, inset + self.font.value().advance() * 0.5, hy, width - inset * 2.0, rh) catch failure:
+                return false
+            let mutated = self.field.event(event) catch failure:
+                return false
+            if mutated:
+                return try self.adopt_field()
+        return false
+
+    ## Read the (possibly incomplete) field text; when it is a valid hex, update the
+    ## channels and report a change so the host writes exactly what was typed.
+    mutating func adopt_field() -> bool!:
+        let text = try self.field.text()
+        defer text.release()
+        if parse_hex(text.value, &self.red, &self.green, &self.blue):
+            return true
+        return false
+
+    func value_at(x: f64, tx: f64, tw: f64) -> i64:
+        let fraction = math.clamp((x - tx) / math.max(1.0, tw), 0.0, 1.0)
+        return (i64)(fraction * 255.0 + 0.5)
+
+    mutating func set_channel(channel: i64, value: i64) -> bool!:
+        let clamped = value if value >= 0 else 0
+        let bounded = clamped if clamped <= 255 else 255
+        if channel == 0:
+            self.red = bounded
+        elif channel == 1:
+            self.green = bounded
+        else:
+            self.blue = bounded
+        var buffer: u8[8]
+        try self.field.set_text(self.hex_string_into(buffer))
+        self.editing_hex = false
+        return true
+
+    func hex_string() -> str:
+        var buffer: u8[8]
+        return self.hex_string_into(buffer)
+
+    func hex_string_into(buffer: u8[]) -> str:
+        buffer[0] = (u8)'#'
+        buffer[1] = hex_digits.bytes[(usize)((self.red >> 4) & 15)]
+        buffer[2] = hex_digits.bytes[(usize)(self.red & 15)]
+        buffer[3] = hex_digits.bytes[(usize)((self.green >> 4) & 15)]
+        buffer[4] = hex_digits.bytes[(usize)(self.green & 15)]
+        buffer[5] = hex_digits.bytes[(usize)((self.blue >> 4) & 15)]
+        buffer[6] = hex_digits.bytes[(usize)(self.blue & 15)]
+        return (str)buffer[..<7]
+
+    mutating func parse(value: str):
+        discard(parse_hex(value, &self.red, &self.green, &self.blue))
+
+    pub mutating func close():
+        self.changed.close()
+        self.changed.release()
+        self.field.close()
+        self.font.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.changed.trace(visit, context)
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+
+## Convert an sRGB preview color to the linear components the GPU target expects, so
+## the preview matches how the same hex renders elsewhere.
+func to_linear(color: gpu.Color) -> gpu.Color:
+    return gpu.Color(srgb_to_linear(color.red), srgb_to_linear(color.green), srgb_to_linear(color.blue))
+
+func srgb_to_linear(value: f64) -> f64:
+    return value / 12.92 if value <= 0.04045 else math.pow((value + 0.055) / 1.055, 2.4)
+
+func digit_value(byte: u8) -> i64:
+    if byte >= (u8)'0' and byte <= (u8)'9':
+        return (i64)(byte - (u8)'0')
+    if byte >= (u8)'a' and byte <= (u8)'f':
+        return (i64)(byte - (u8)'a') + 10
+    if byte >= (u8)'A' and byte <= (u8)'F':
+        return (i64)(byte - (u8)'A') + 10
+    return -1
+
+## Parse `#rgb` or `#rrggbb` into channels; returns false and leaves them unchanged
+## for anything else (e.g. a half-typed value).
+func parse_hex(text: str, red: i64*, green: i64*, blue: i64*) -> bool:
+    let bytes = text.bytes
+    if bytes.length != 4 and bytes.length != 7:
+        return false
+    if bytes[0] != (u8)'#':
+        return false
+    var values: i64[6]
+    let count = bytes.length - 1
+    for index in 0..<count:
+        let value = digit_value(bytes[index + 1])
+        if value < 0:
+            return false
+        values[index] = value
+    if count == 3:
+        *red = values[0] * 16 + values[0]
+        *green = values[1] * 16 + values[1]
+        *blue = values[2] * 16 + values[2]
+    else:
+        *red = values[0] * 16 + values[1]
+        *green = values[2] * 16 + values[3]
+        *blue = values[4] * 16 + values[5]
+    return true
+
+func format_int(buffer: u8[], value: i64) -> str:
+    if value == 0:
+        buffer[0] = (u8)'0'
+        return (str)buffer[..<1]
+    var digits: u8[8]
+    var count: usize = 0
+    var remaining = value
+    while remaining > 0 and count < digits.length:
+        digits[count] = (u8)((i64)(u8)'0' + remaining % 10)
+        remaining //= 10
+        count += 1
+    for index in 0..<count:
+        buffer[index] = digits[count - 1 - index]
+    return (str)buffer[..<count]
+
+pub let color_editor_type: interop.Type[ColorEditor] = interop.Type[ColorEditor]("ColorEditor", ColorEditor.close, ColorEditor.trace, closeable = true, main_thread = true)

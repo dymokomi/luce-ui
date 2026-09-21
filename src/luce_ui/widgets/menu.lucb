@@ -72,9 +72,9 @@ pub struct Menu: Widget:
         let size = try target.get().size()
         let theme = self.box.value().theme()
         if self.is_open() or self.box.value().is_focused():
-            try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.selection)
+            try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.menu_selection)
         elif self.box.value().contains_pointer():
-            try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.hover())
+            try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.menu_hover)
         try painter.text(self.caption.value, theme.inset(self.font), (size.height - self.font.value().height()) * 0.5, theme.foreground if self.box.value().is_enabled() else theme.muted, self.font)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:

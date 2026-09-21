@@ -4,6 +4,7 @@ import interop
 import memory
 import strings
 from luce_ui.text.document import Document
+from luce_ui.text.style import Swatch, swatch_span
 
 pub func move(document: Document*, position: usize, extend: bool) -> !:
     try document.select(document.anchor() if extend else position, position)
@@ -87,7 +88,8 @@ pub func newline(document: Document*) -> !:
 pub func indent(document: Document*, backwards: bool) -> !:
     let selected = document.first() != document.last()
     if not selected and not backwards:
-        let width = 4 - column(document, document.caret()) % 4
+        var no_chips: Swatch[]
+        let width = 4 - column(document, document.caret(), no_chips) % 4
         let spaces = "    "
         try document.insert((str)spaces.bytes[..<width])
         return
@@ -131,22 +133,43 @@ pub func indent(document: Document*, backwards: bool) -> !:
             let caret = original_caret - first_removed if original_caret >= start + first_removed else start
             try document.complete_selection(anchor, caret)
 
-pub func column(document: const Document*, position: usize) -> usize:
+## The display column of `position`. `swatches` are the color chips that reserve
+## `swatch_span` cells each before their offset (empty when soft-wrap is on, so the
+## chips do not shift text); a chip at `position` itself sits left of the caret.
+pub func column(document: const Document*, position: usize, swatches: const Swatch[]) -> usize:
     var width: usize = 0
     for index in document.line_start(position)..<position:
+        if has_swatch(swatches, index):
+            width += swatch_span
         width += 4 - width % 4 if document.scalar(index) == 9 else 1
+    if has_swatch(swatches, position):
+        width += swatch_span
     return width
 
-pub func at_column(document: const Document*, row: usize, requested: usize) -> usize:
+pub func at_column(document: const Document*, row: usize, requested: usize, swatches: const Swatch[]) -> usize:
     var index = document.line_offset(row)
     var width: usize = 0
     while index < document.length() and document.scalar(index) != 10:
+        if has_swatch(swatches, index):
+            if width + swatch_span > requested:
+                break
+            width += swatch_span
         let next = width + (4 - width % 4 if document.scalar(index) == 9 else 1)
         if next > requested:
             break
         width = next
         index += 1
     return index
+
+## Whether a chip sits at `offset`. Swatches are ordered by ascending offset; the
+## lists are short (a handful of colors per view), so a linear scan is ample.
+func has_swatch(swatches: const Swatch[], offset: usize) -> bool:
+    for swatch in swatches:
+        if swatch.offset == (i64)offset:
+            return true
+        if swatch.offset > (i64)offset:
+            return false
+    return false
 
 pub func normalize_lines(text: str) -> interop.Owned[str]!:
     with memory.heap:

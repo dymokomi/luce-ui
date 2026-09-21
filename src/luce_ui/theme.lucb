@@ -16,10 +16,21 @@ pub struct Theme:
     pub var selection: gpu.Color = gpu.Color(0.035, 0.11, 0.22)
     pub var accent: gpu.Color = gpu.Color(0.2, 0.66, 0.92)
     pub var button: gpu.Color = gpu.Color(0.032, 0.044, 0.064)
+    ## An explicit, brighter fill for a hovered button, rather than a dim panel tint.
+    pub var button_hover: gpu.Color = gpu.Color(0.075, 0.11, 0.16)
     pub var pressed: gpu.Color = gpu.Color(0.055, 0.1, 0.16)
+    ## Menus and dropdowns carry their own palette: the surface, a hovered title or
+    ## row, and the selected row, independent of panels and text selection.
+    pub var menu: gpu.Color = gpu.Color(0.028, 0.037, 0.053)
+    pub var menu_hover: gpu.Color = gpu.Color(0.075, 0.11, 0.16)
+    pub var menu_selection: gpu.Color = gpu.Color(0.06, 0.15, 0.26)
     pub var border: gpu.Color = gpu.Color(0.06, 0.085, 0.12)
     pub var active_border: gpu.Color = gpu.Color(0.10, 0.22, 0.32)
     pub var gutter: gpu.Color = gpu.Color(0.021, 0.028, 0.041)
+    ## Version-control accents for lists such as the file explorer: `vcs_added` marks
+    ## an untracked path, `vcs_modified` a tracked path with uncommitted changes.
+    pub var vcs_added: gpu.Color = gpu.Color(0.36, 0.72, 0.42)
+    pub var vcs_modified: gpu.Color = gpu.Color(0.85, 0.68, 0.28)
     pub var shadow: gpu.Color = gpu.Color()
     pub var shadow_offset: f64 = 4.0
     pub var shadow_opacity: f64 = 0.35
