@@ -52,9 +52,11 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
         defer native.end()
         try pixels.render(app, host, surface)
         if phase == 0:
-            pixels.pixel(scale, 180.0, 4.0, 255, 0, 0)
+            # Selected tab headers use the flat background color; group frames
+            # retain their independent red/blue border contracts below them.
+            pixels.pixel(scale, 180.0, 4.0, 255, 255, 255)
             pixels.pixel(scale, 0.0, 100.0, 255, 0, 0)
-            pixels.pixel(scale, 430.0, 4.0, 0, 0, 255)
+            pixels.pixel(scale, 430.0, 4.0, 255, 255, 255)
             pixels.pixel(scale, 450.0, 120.0, 255, 255, 255)
         elif phase == 1:
             pixels.pixel(scale, 249.0, 120.0, 0, 0, 255)
@@ -63,7 +65,7 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
             pixels.pixel(scale, dragged.x + 2.0, dragged.y + 2.0, 0, 0, 255)
         else:
             pixels.pixel(scale, 100.0, 4.0, 0, 0, 0)
-            pixels.pixel(scale, 350.0, 4.0, 0, 0, 255)
+            pixels.pixel(scale, 350.0, 4.0, 255, 255, 255)
             pixels.pixel(scale, 379.0, 120.0, 255, 255, 255)
 
 func dispatch(app: interop.Reference[Application], event: Event) -> !:

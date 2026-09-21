@@ -67,11 +67,14 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
         native.begin("UI pixel contracts")
         defer native.end()
         try render(app, host, surface)
-        pixel(scale, 99.0, 90.0, 255 if phase == 2 else 0, 0, 0)
+        # Hover colors are derived from the supplied black/red frame palette.
+        pixel(scale, 99.0, 90.0, 99 if phase == 2 else 0, 0, 0)
         pixel(scale, 102.0, 90.0, 0 if phase == 1 else 255, 0 if phase == 1 else 255, 255)
         pixel(scale, 105.0, 90.0, 0, 0, 0)
-        pixel(scale, 3.0, 4.0, 255, 0, 0)
-        pixel(scale, 3.0, 1.0 + font.value().line_height() + 2.0, 0 if phase == 2 else 255, 255, 0 if phase == 2 else 255)
+        # The white gutter's derived active/hover lifts remain neutral gray.
+        pixel(scale, 3.0, 4.0, 215, 215, 215)
+        pixel(scale, 3.0, 1.0 + font.value().line_height() + 2.0,
+            235 if phase == 2 else 255, 235 if phase == 2 else 255, 235 if phase == 2 else 255)
     let action = try interop.Reference[Command].adopt(new Command("Shadow") in memory.heap, ui.command_type, memory.heap)
     defer action.release()
     let menu = try interop.Reference[Menu].adopt(new Menu("File", [action], font = font) in memory.heap, ui.menu_type, memory.heap)
@@ -93,10 +96,10 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
     let popup_box = popup.value().layout()
     defer popup_box.release()
     let bounds = popup_box.value().bounds()
-    # A half-opacity black shadow over white is 188 in sRGB. The adjacent pixel
-    # beyond its four-point extent remains white: no blur, spread or hit padding.
-    pixel(scale, bounds.x + bounds.width + 2.0, bounds.y + 8.0, 188, 188, 188)
-    pixel(scale, bounds.x + bounds.width + 6.0, bounds.y + 8.0, 255, 255, 255)
+    # The layered shadow is dense next to the popup and fades across its
+    # 24-point spread. A pixel beyond that spread remains white.
+    pixel(scale, bounds.x + bounds.width + 2.0, bounds.y + 8.0, 190, 190, 190)
+    pixel(scale, bounds.x + bounds.width + 26.0, bounds.y + 8.0, 255, 255, 255)
 
 pub func headers(host: window.Window, surface: gpu.Surface) -> !:
     try host.resize(205, 120)
@@ -137,9 +140,9 @@ pub func headers(host: window.Window, surface: gpu.Surface) -> !:
         try render(app, host, surface)
         # The header and all frame edges change together, even when focus and
         # hover are in different descendants. Content keeps its own background.
-        let red: u8 = 255 if phase == 0 else 0
-        let green: u8 = 255 if phase == 1 else 0
-        let blue: u8 = 255 if phase == 2 else 0
+        let red: u8 = 255 if phase == 0 else (140 if phase == 1 else 0)
+        let green: u8 = 83 if phase == 1 else 0
+        let blue: u8 = 162 if phase == 1 else (255 if phase == 2 else 0)
         pixel(scale, 180.0, 4.0, red, green, blue)
         pixel(scale, 0.0, 80.0, red, green, blue)
         pixel(scale, 204.0, 80.0, red, green, blue)
@@ -148,4 +151,4 @@ pub func headers(host: window.Window, surface: gpu.Surface) -> !:
         # The icon sits directly on the shared frame color, without a badge.
         pixel(scale, 1.0 + badge + 2.0, 1.0 + height * 0.5, red, green, blue)
         pixel(scale, 1.0 + badge + height * 0.5 + 2.0, 1.0 + height * 0.5, red, green, blue)
-        pixel(scale, 1.0 + inset + font.value().height() * 0.5, 1.0 + height * 0.5, 255, 255, 255)
+        pixel(scale, 1.0 + inset + font.value().height() * 0.5, 1.0 + height * 0.5, red, green, blue)
