@@ -49,6 +49,16 @@ pub struct Menu: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
+    ## Retitle the menu, for one whose title names the current choice.
+    pub mutating func set_text(text: str) -> !:
+        if text == self.caption.value:
+            return
+        discard(try self.font.value().measure(text))
+        let replacement = try interop.copy_text(text)
+        self.caption.release()
+        self.caption = replacement
+        self.box.value().invalidate()
+
     pub mutating func open() -> !:
         try self.popup.value().open()
 
