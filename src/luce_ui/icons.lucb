@@ -35,14 +35,31 @@ func name_of(kind: IconKind) -> str:
     return ""
 
 pub func draw(painter: Painter*, kind: IconKind, bounds: gpu.Rect, color: gpu.Color) -> !:
-    if bounds.width <= 0.0 or bounds.height <= 0.0 or kind == IconKind.blank:
+    if kind == IconKind.blank:
         return
-    let source = icon_assets.source(name_of(kind))
+    try draw_named(painter, name_of(kind), bounds, color)
+
+## Draw the luciaos-assets icon called `name` ("brush-tool", "layer-mask", ...)
+## fitted into `bounds`, stroked in `color`. Unknown names draw nothing.
+pub func draw_named(painter: Painter*, name: str, bounds: gpu.Rect, color: gpu.Color) -> !:
+    if bounds.width <= 0.0 or bounds.height <= 0.0:
+        return
+    let source = icon_assets.source(name)
     if source == "":
         return
     let drawing = try svg.parse(source)
     defer drawing.release()
     try render(painter, try drawing.get(), bounds, color)
+
+## Whether `name` is an icon in the set.
+pub func known(name: str) -> bool:
+    return icon_assets.source(name) != ""
+
+## Draw a named icon onto a render target: the entry Luce widgets use.
+pub func draw_icon(target: interop.View[gpu.RenderTarget], name: str, bounds: gpu.Rect, color: gpu.Color) -> !:
+    var painter = try Painter(target)
+    defer painter.close()
+    try draw_named(&painter, name, bounds, color)
 
 ## Scale the viewBox into `bounds` (uniform, centered), accumulate every contour's
 ## triangles into one buffer, and submit them as a SINGLE draw. One draw per icon keeps

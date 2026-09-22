@@ -1,3 +1,5 @@
+import gpu
+import interop
 import luce_ui.layout as layout
 import input
 import luce_ui.cursor as cursor
@@ -126,6 +128,14 @@ import luce_ui.icons as icons
 import luce_ui.widgets.icon as icon
 import luce_ui.widgets.pane_header as pane_header
 pub type IconKind = icons.IconKind
+
+## Draw the luciaos-assets icon called `name` into `bounds` of `target`, in `color`.
+pub func draw_icon(target: interop.View[gpu.RenderTarget], name: str, bounds: gpu.Rect, color: gpu.Color) -> !:
+    try icons.draw_icon(target, name, bounds, color)
+
+## Whether `name` is an icon in the set.
+pub func icon_known(name: str) -> bool:
+    return icons.known(name)
 pub type Icon = icon.Icon
 pub let icon_type = icon.icon_type
 pub type PaneHeader = pane_header.PaneHeader

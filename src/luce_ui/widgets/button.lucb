@@ -12,6 +12,7 @@ from luce_ui.font import Font, selected_font
 from luce_ui.command import Command
 from luce_ui.cursor import CursorSource
 from luce_ui.geometry import Point
+import luce_ui.icons as icons
 
 ## Query shared action state without forcing a layout pass when it is enabled
 ## or disabled. The layout owns this policy; the action owns no widget edges.
@@ -40,10 +41,14 @@ pub struct Button: Widget:
     let action: interop.Reference[Command]?
     var pressed: bool
     var pressed_key: input.Key
+    ## A luciaos-assets icon drawn before the text, or alone when there is no text.
+    var glyph: interop.Owned[str]
 
-    pub func init(text: str = "", font: interop.Reference[Font]? = none, action: interop.Reference[Command]? = none) -> !:
+    pub func init(text: str = "", font: interop.Reference[Font]? = none, action: interop.Reference[Command]? = none, icon: str = "") -> !:
         if action != none and text != "":
             error(result.invalid, "a button takes either text or an action")
+        if icon != "" and not icons.known(icon):
+            error(result.invalid, "unknown icon name")
         var selected = try selected_font(font)
         errdefer selected.release()
         discard(try selected.value().measure(text))
@@ -61,6 +66,8 @@ pub struct Button: Widget:
         let signal = try interop.Signal[unit]()
         errdefer signal.release()
         self.caption = try interop.copy_text(text)
+        errdefer self.caption.release()
+        self.glyph = try interop.copy_text(icon)
         self.clicked = signal
         self.pressed = false
         self.pressed_key = input.Key.unknown
@@ -103,11 +110,17 @@ pub struct Button: Widget:
         let action = self.action else return self.box.value().is_enabled()
         return self.box.value().is_enabled() and action.value().is_enabled()
 
+    ## The icon's side: the row height less a little air.
+    func glyph_size() -> f64:
+        return self.box.value().theme().row_height(self.font) - 6.0
+
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         let caption = self.text()
         defer caption.release()
-        let width = self.font.value().measure(caption.value) catch failure:
+        var width = self.font.value().measure(caption.value) catch failure:
             return result.failure[Size](failure.code, failure.message)
+        if self.glyph.value.length > 0:
+            width += self.glyph_size() + (self.font.value().advance() * 0.5 if caption.value.length > 0 else 0.0)
         return result.success[Size](Size(width + self.box.value().theme().inset(self.font) * 2.0, self.box.value().theme().row_height(self.font)))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
@@ -127,7 +140,14 @@ pub struct Button: Widget:
             try painter.rectangle(gpu.Rect(width = size.width, height = 2.0), theme.accent)
         let caption = self.text()
         defer caption.release()
-        try painter.text(caption.value, theme.inset(self.font), math.max(0.0, (size.height - self.font.value().height()) * 0.5), color = theme.foreground if self.is_enabled() else theme.muted, font = self.font)
+        let ink = theme.foreground if self.is_enabled() else theme.muted
+        var x = theme.inset(self.font)
+        if self.glyph.value.length > 0:
+            let side = self.glyph_size()
+            try icons.draw_named(&painter, self.glyph.value, gpu.Rect(x, math.max(0.0, (size.height - side) * 0.5), side, side), ink)
+            x += side + (self.font.value().advance() * 0.5 if caption.value.length > 0 else 0.0)
+        if caption.value.length > 0:
+            try painter.text(caption.value, x, math.max(0.0, (size.height - self.font.value().height()) * 0.5), color = ink, font = self.font)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         if event.kind == input.EventKind.pointer_moved and not event.cancelled:
@@ -166,6 +186,7 @@ pub struct Button: Widget:
         self.clicked.close()
         self.clicked.release()
         self.caption.release()
+        self.glyph.release()
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
@@ -174,6 +195,7 @@ pub struct Button: Widget:
         self.font.trace(visit, context)
         self.box.trace(visit, context)
         self.caption.trace(visit, context)
+        self.glyph.trace(visit, context)
         self.clicked.trace(visit, context)
 
 pub let button_type: interop.Type[Button] = interop.Type[Button]("Button", Button.close, Button.trace, closeable = true, main_thread = true)
