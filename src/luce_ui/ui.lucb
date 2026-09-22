@@ -14,6 +14,7 @@ import luce_ui.widgets.shelf as shelf
 import luce_ui.widgets.rule as rule
 import luce_ui.widgets.checkbox as checkbox
 import luce_ui.widgets.dialog as dialog
+import luce_ui.widgets.hsb_field as hsb_field
 import luce_ui.widgets.text_field as text_field
 import luce_ui.widgets.number_field as number_field
 import luce_ui.widgets.curve_editor as curve_editor
@@ -47,6 +48,8 @@ pub type Shelf = shelf.Shelf
 pub type Rule = rule.Rule
 pub type Checkbox = checkbox.Checkbox
 pub type Dialog = dialog.Dialog
+pub type HsbField = hsb_field.HsbField
+pub type HueStrip = hsb_field.HueStrip
 pub type TextField = text_field.TextField
 pub type NumberField = number_field.NumberField
 pub type ButtonStyle = button.ButtonStyle
@@ -69,6 +72,8 @@ pub let shelf_type = shelf.shelf_type
 pub let rule_type = rule.rule_type
 pub let checkbox_type = checkbox.checkbox_type
 pub let dialog_type = dialog.dialog_type
+pub let hsb_field_type = hsb_field.hsb_field_type
+pub let hue_strip_type = hsb_field.hue_strip_type
 pub let text_field_type = text_field.text_field_type
 pub let number_field_type = number_field.number_field_type
 pub let curve_editor_type = curve_editor.curve_editor_type
@@ -154,6 +159,34 @@ pub type IconKind = icons.IconKind
 ## Draw the luciaos-assets icon called `name` into `bounds` of `target`, in `color`.
 pub func draw_icon(target: interop.View[gpu.RenderTarget], name: str, bounds: gpu.Rect, color: gpu.Color) -> !:
     try icons.draw_icon(target, name, bounds, color)
+
+## An sRGB colour from hue (0..360), saturation and brightness (0..1).
+pub func hsb_to_rgb(hue: f64, saturation: f64, brightness: f64) -> gpu.Color:
+    return hsb_field.hsb_to_rgb(hue, saturation, brightness)
+
+## The hue of an sRGB colour, 0..360 (0 for greys).
+pub func hue_of(color: gpu.Color) -> f64:
+    var h = 0.0
+    var s = 0.0
+    var b = 0.0
+    hsb_field.rgb_to_hsb(color, &h, &s, &b)
+    return h
+
+## The saturation of an sRGB colour, 0..1.
+pub func saturation_of(color: gpu.Color) -> f64:
+    var h = 0.0
+    var s = 0.0
+    var b = 0.0
+    hsb_field.rgb_to_hsb(color, &h, &s, &b)
+    return s
+
+## The brightness of an sRGB colour, 0..1.
+pub func brightness_of(color: gpu.Color) -> f64:
+    var h = 0.0
+    var s = 0.0
+    var b = 0.0
+    hsb_field.rgb_to_hsb(color, &h, &s, &b)
+    return b
 
 ## Whether `name` is an icon in the set.
 pub func icon_known(name: str) -> bool:

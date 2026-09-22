@@ -116,8 +116,8 @@ pub struct Painter:
         var index: usize = 0
         for point in [a, b, c]:
             vertices[index] = gpu.Vertex(x = (f32)(point.x * 2.0 / size.width - 1.0),
-                y = (f32)(1.0 - point.y * 2.0 / size.height),
-                red = (f32)color.red, green = (f32)color.green, blue = (f32)color.blue)
+                                         y = (f32)(1.0 - point.y * 2.0 / size.height),
+                                         red = (f32)color.red, green = (f32)color.green, blue = (f32)color.blue)
             index += 1
         try target.triangles(vertices)
 
@@ -136,8 +136,29 @@ pub struct Painter:
         defer free(vertices) in memory.heap
         for index in 0..<count:
             vertices[index] = gpu.Vertex(x = (f32)(points[index].x * 2.0 / size.width - 1.0),
-                y = (f32)(1.0 - points[index].y * 2.0 / size.height),
-                red = (f32)color.red, green = (f32)color.green, blue = (f32)color.blue)
+                                         y = (f32)(1.0 - points[index].y * 2.0 / size.height),
+                                         red = (f32)color.red, green = (f32)color.green, blue = (f32)color.blue)
+        try target.triangles(vertices)
+
+    ## Fill many triangles with a colour per vertex, in one draw: `colors` runs
+    ## parallel to `points`. Gradients (a colour picker's field, a hue strip) are
+    ## drawn this way, as a grid of shaded cells.
+    pub func shaded_mesh(points: const Point[], colors: const gpu.Color[], opacity: f64 = 1.0) -> !:
+        if points.length != colors.length:
+            error(result.invalid, "a shaded mesh needs one colour per point")
+        if not math.is_finite(opacity) or opacity < 0.0 or opacity > 1.0:
+            error(result.invalid, "mesh opacity must be in 0..1")
+        if points.length < 3:
+            return
+        let target = try self.target_view.get()
+        let size = try target.size()
+        if size.width <= 0.0 or size.height <= 0.0:
+            return
+        let count = points.length - points.length % 3
+        var vertices = try alloc gpu.Vertex[count] in memory.heap
+        defer free(vertices) in memory.heap
+        for index in 0..<count:
+            vertices[index] = clip_vertex(points[index].x, points[index].y, size.width, size.height, colors[index], opacity)
         try target.triangles(vertices)
 
     pub func line(a: Point, b: Point, width: f64, color: gpu.Color) -> !:
