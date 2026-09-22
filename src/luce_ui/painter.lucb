@@ -41,6 +41,49 @@ pub struct Painter:
         d.y = bottom
         try target.triangles([a, b, c, a, c, d])
 
+    ## A rectangle with corners rounded by `radius` points (clamped to half the
+    ## shorter side); zero draws a plain rectangle. One batched draw: a fan of
+    ## triangles from the centre through eight-segment corner arcs.
+    pub func rounded_rectangle(rectangle: gpu.Rect, color: gpu.Color, radius: f64, opacity: f64 = 1.0) -> !:
+        if not math.is_finite(radius) or radius < 0.0:
+            error(result.invalid, "corner radius must be finite and nonnegative")
+        let r = math.min(radius, math.min(rectangle.width, rectangle.height) * 0.5)
+        if r < 0.5:
+            try self.rectangle(rectangle, color, opacity)
+            return
+        if rectangle.width <= 0.0 or rectangle.height <= 0.0:
+            return
+        let target = try self.target_view.get()
+        let size = try target.size()
+        if size.width <= 0.0 or size.height <= 0.0:
+            return
+        # The outline: 8 segments per corner, so 36 points around, fanned from the centre.
+        let segments: usize = 8
+        let around = (segments + 1) * 4
+        var vertices = try alloc gpu.Vertex[around * 3] in memory.heap
+        defer free(vertices) in memory.heap
+        let cx = rectangle.x + rectangle.width * 0.5
+        let cy = rectangle.y + rectangle.height * 0.5
+        let centre = clip_vertex(cx, cy, size.width, size.height, color, opacity)
+        var outline = try alloc Point[around] in memory.heap
+        defer free(outline) in memory.heap
+        var index: usize = 0
+        for corner in 0..<(usize)4:
+            # Corner centres clockwise from the top-right; angles sweep a quarter turn each.
+            let ox = rectangle.x + rectangle.width - r if corner == 0 or corner == 1 else rectangle.x + r
+            let oy = rectangle.y + r if corner == 0 or corner == 3 else rectangle.y + rectangle.height - r
+            let start = -math.pi * 0.5 + (f64)corner * math.pi * 0.5
+            for step in 0..<(segments + 1):
+                let angle = start + (f64)step / (f64)segments * math.pi * 0.5
+                outline[index] = Point(ox + math.cos(angle) * r, oy + math.sin(angle) * r)
+                index += 1
+        for point in 0..<around:
+            let next = outline[(point + 1) % around]
+            vertices[point * 3] = centre
+            vertices[point * 3 + 1] = clip_vertex(outline[point].x, outline[point].y, size.width, size.height, color, opacity)
+            vertices[point * 3 + 2] = clip_vertex(next.x, next.y, size.width, size.height, color, opacity)
+        try target.triangles(vertices)
+
     ## Draw `source` of `image` (all of it by default) scaled onto `rectangle`,
     ## at `opacity`, sampled with `filter`.
     pub func image(image: interop.Reference[Image], rectangle: gpu.Rect, source: gpu.Region? = none, opacity: f64 = 1.0,
@@ -109,3 +152,8 @@ pub struct Painter:
         self.target_view.trace(visit, context)
 
 pub let painter_type: interop.Type[Painter] = interop.Type[Painter]("UI painter", Painter.close, Painter.trace, closeable = true, main_thread = true)
+
+## A point in target coordinates as a clip-space vertex of one colour.
+func clip_vertex(x: f64, y: f64, width: f64, height: f64, color: gpu.Color, opacity: f64) -> gpu.Vertex:
+    return gpu.Vertex(x = (f32)(x * 2.0 / width - 1.0), y = (f32)(1.0 - y * 2.0 / height),
+                      red = (f32)color.red, green = (f32)color.green, blue = (f32)color.blue, alpha = (f32)opacity)
