@@ -13,6 +13,7 @@ import luce_ui.widgets.slider as slider
 import luce_ui.widgets.shelf as shelf
 import luce_ui.widgets.rule as rule
 import luce_ui.widgets.checkbox as checkbox
+import luce_ui.widgets.dialog as dialog
 import luce_ui.widgets.text_field as text_field
 import luce_ui.widgets.number_field as number_field
 import luce_ui.widgets.curve_editor as curve_editor
@@ -45,6 +46,7 @@ pub type Slider = slider.Slider
 pub type Shelf = shelf.Shelf
 pub type Rule = rule.Rule
 pub type Checkbox = checkbox.Checkbox
+pub type Dialog = dialog.Dialog
 pub type TextField = text_field.TextField
 pub type NumberField = number_field.NumberField
 pub type ButtonStyle = button.ButtonStyle
@@ -66,6 +68,7 @@ pub let slider_type = slider.slider_type
 pub let shelf_type = shelf.shelf_type
 pub let rule_type = rule.rule_type
 pub let checkbox_type = checkbox.checkbox_type
+pub let dialog_type = dialog.dialog_type
 pub let text_field_type = text_field.text_field_type
 pub let number_field_type = number_field.number_field_type
 pub let curve_editor_type = curve_editor.curve_editor_type

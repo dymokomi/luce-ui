@@ -14,7 +14,8 @@ from luce_ui.font import Font, selected_font
 ## value shown after it. Dragging anywhere on the track sets the value; arrow
 ## keys step by `step` (a tenth of the range when zero), shift by ten steps.
 ## `on_change` fires with the new value on every change the user makes; the
-## value can also be set from code without a signal.
+## value can also be set from code without a signal. `show_value = false`
+## leaves the readout to a field beside the slider.
 pub struct Slider: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]
@@ -25,10 +26,11 @@ pub struct Slider: Widget:
     var current: f64
     var decimals: i64
     var dragging: bool
+    var show_value: bool
     let changed: interop.Signal[f64]
 
     pub func init(text: str = "", minimum: f64 = 0.0, maximum: f64 = 1.0, value: f64 = 0.0, step: f64 = 0.0, decimals: i64 = 0,
-                  font: interop.Reference[Font]? = none) -> !:
+                  font: interop.Reference[Font]? = none, show_value: bool = true) -> !:
         if not math.is_finite(minimum) or not math.is_finite(maximum) or maximum <= minimum or not math.is_finite(value) or not math.is_finite(step) or step < 0.0:
             error(result.invalid, "a slider needs finite bounds with maximum above minimum, a finite value and a nonnegative step")
         if decimals < 0 or decimals > 6:
@@ -52,6 +54,7 @@ pub struct Slider: Widget:
         self.current = math.clamp(value, minimum, maximum)
         self.decimals = decimals
         self.dragging = false
+        self.show_value = show_value
         self.changed = signal
 
     pub func layout() -> interop.Reference[Layout]:
@@ -94,6 +97,8 @@ pub struct Slider: Widget:
 
     ## The value's text width: room for the widest number in range at the decimals shown.
     func value_width() -> f64:
+        if not self.show_value:
+            return 0.0
         var digits: i64 = 1
         var magnitude = math.max(math.abs(self.minimum), math.abs(self.maximum))
         while magnitude >= 10.0 and digits < 12:
@@ -105,11 +110,11 @@ pub struct Slider: Widget:
     ## The track's rectangle within the widget.
     func track(width: f64, height: f64) -> gpu.Rect:
         let left = self.label_width()
-        let right = self.value_width() + self.font.value().advance()
+        let right = self.value_width() + self.font.value().advance() if self.show_value else 0.0
         return gpu.Rect(left, 0.0, math.max(8.0, width - left - right), height)
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
-        let width = self.label_width() + 120.0 + self.value_width() + self.font.value().advance()
+        let width = self.label_width() + 120.0 + (self.value_width() + self.font.value().advance() if self.show_value else 0.0)
         return result.success[Size](Size(width, self.box.value().theme().row_height(self.font)))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
@@ -137,6 +142,8 @@ pub struct Slider: Widget:
         let knob_height = math.min(rail.height, 14.0)
         let knob_color = theme.accent if enabled and (self.dragging or self.box.value().contains_pointer() or self.box.value().is_focused()) else theme.foreground
         try painter.rectangle(gpu.Rect(rail.x + filled, rail.y + math.floor((rail.height - knob_height) * 0.5), knob, knob_height), knob_color if enabled else theme.muted)
+        if not self.show_value:
+            return
         var digits: u8[32]
         let shown = try format_value(digits, self.current, self.decimals)
         try painter.text(shown, rail.x + rail.width + self.font.value().advance(), text_y, color = theme.foreground if enabled else theme.muted, font = self.font)

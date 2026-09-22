@@ -1,0 +1,92 @@
+import gpu
+import interop
+import math
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+
+## A floating card after Compositor's live-previewing panels: a raised face with
+## a one-point border and the surface radius, centred in the window over the
+## content, holding a column of rows. It is not modal and does not close when
+## the pointer goes elsewhere; the host shows and hides it (`open`, `hide`)
+## around an edit and gives it Cancel/OK buttons in its last row.
+pub struct Dialog: Widget:
+    let box: interop.Reference[Layout]
+    var width: f64
+
+    ## `width` is the card's fixed width in points (Compositor uses 340–460).
+    pub func init(children: const interop.Interface[Widget][], width: f64 = 380.0, spacing: f64 = 12.0, padding: f64 = 20.0) -> !:
+        if not math.is_finite(width) or width < 40.0 or width > 4096.0:
+            error(result.invalid, "a dialog needs a width between 40 and 4096 points")
+        let box = try layout.make_layout(layout.Axis.vertical, spacing, padding, layout.Alignment.stretch)
+        errdefer box.release()
+        box.value().set_popup(true)
+        box.value().set_popup_placement(layout.PopupPlacement.window_center)
+        box.value().set_visible(false)
+        try box.value().set_children(children)
+        self.box = box
+        self.width = width
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub mutating func set_children(children: const interop.Interface[Widget][]) -> !:
+        try self.box.value().set_children(children)
+
+    pub func is_open() -> bool:
+        return self.box.value().is_visible()
+
+    pub mutating func open():
+        self.box.value().set_visible(true)
+
+    pub mutating func hide():
+        self.box.value().set_visible(false)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let fixed = Constraints(self.width, available.height)
+        let size = self.box.value().content_size(fixed) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        return result.success[Size](Size(self.width, size.height))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        let radius = math.min(theme.control_radius + 1.0, 8.0)
+        try painter.rounded_rectangle(gpu.Rect(width = size.width, height = size.height), theme.border, radius)
+        try painter.rounded_rectangle(gpu.Rect(1.0, 1.0, size.width - 2.0, size.height - 2.0), theme.raised, math.max(0.0, radius - 1.0))
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+
+pub let dialog_type: interop.Type[Dialog] = interop.Type[Dialog]("Dialog", Dialog.close, Dialog.trace, closeable = true, main_thread = true)
+
+test "a dialog starts hidden, opens and hides":
+    var empty: interop.Interface[Widget][]
+    var card = try Dialog(empty, 340.0)
+    defer card.close()
+    assert(not card.is_open())
+    card.open()
+    assert(card.is_open())
+    card.hide()
+    assert(not card.is_open())
+    var rejected = false
+    discard(Dialog(empty, 10.0) catch failure:
+        assert(failure.code == result.invalid)
+        rejected = true
+        recover try Dialog(empty))
+    assert(rejected)
