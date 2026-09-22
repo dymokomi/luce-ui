@@ -12,8 +12,10 @@ pub struct Text: Widget:
     let box: interop.Reference[Layout]
     var caption: interop.Owned[str]
     let font: interop.Reference[Font]
+    ## Drawn in the theme's muted colour: a label beside a value, metadata.
+    var muted: bool
 
-    pub func init(text: str, font: interop.Reference[Font]? = none) -> !:
+    pub func init(text: str, font: interop.Reference[Font]? = none, muted: bool = false) -> !:
         var selected = try selected_font(font)
         errdefer selected.release()
         discard(try selected.value().measure(text))
@@ -23,6 +25,7 @@ pub struct Text: Widget:
         self.caption = try interop.copy_text(text)
         self.box = box
         self.font = selected
+        self.muted = muted
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -35,6 +38,12 @@ pub struct Text: Widget:
         let replacement = try interop.copy_text(text)
         self.caption.release()
         self.caption = replacement
+        self.box.value().invalidate()
+
+    pub mutating func set_muted(muted: bool):
+        if muted == self.muted:
+            return
+        self.muted = muted
         self.box.value().invalidate()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
@@ -51,7 +60,7 @@ pub struct Text: Widget:
         var painter = try Painter(target)
         defer painter.close()
         let size = try target.get().size()
-        try painter.text(self.caption.value, 0.0, math.max(0.0, (size.height - self.font.value().height()) * 0.5), color = self.box.value().theme().foreground, font = self.font)
+        try painter.text(self.caption.value, 0.0, math.max(0.0, (size.height - self.font.value().height()) * 0.5), color = self.box.value().theme().muted if self.muted else self.box.value().theme().foreground, font = self.font)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
