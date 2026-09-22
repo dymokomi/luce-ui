@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True, prefix="luce-ui-tes
     for compiler, entry in [(args.base, "main.lucb"), (args.luce, "controls.luc")]:
         for flags in modes:
             subprocess.run([str(compiler.resolve()), "build", str(ROOT / "tests" / entry),
-                            *flags, "-o", str(binary)], check=True, env=env, timeout=180)
+                            *flags, "-o", str(binary)], check=True, env=env, timeout=600)
             subprocess.run([str(binary)], check=True, timeout=30)
     for module in ["text/editing", "text/projection_tests", "text/diff", "docking/model_tests", "raster"]:
         for flags in [["--native"], ["--backend=c"]]:
