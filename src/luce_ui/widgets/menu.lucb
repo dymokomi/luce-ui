@@ -71,11 +71,14 @@ pub struct Menu: Widget:
         defer painter.close()
         let size = try target.get().size()
         let theme = self.box.value().theme()
-        if self.is_open() or self.box.value().is_focused():
-            try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.menu_selection)
-        elif self.box.value().contains_pointer():
-            try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.menu_hover)
-        try painter.text(self.caption.value, theme.inset(self.font), (size.height - self.font.value().height()) * 0.5, theme.foreground if self.box.value().is_enabled() else theme.muted, self.font)
+        # An open title is the selected control; focus and hover show only the wash.
+        let whole = gpu.Rect(width = size.width, height = size.height)
+        if self.is_open():
+            try painter.rounded_rectangle(whole, theme.menu_selection, theme.control_radius)
+        elif self.box.value().is_focused() or self.box.value().contains_pointer():
+            try painter.rounded_rectangle(whole, theme.menu_hover, theme.control_radius)
+        let ink = theme.accent_text if self.is_open() and theme.menu_selection == theme.accent else (theme.foreground if self.box.value().is_enabled() else theme.muted)
+        try painter.text(self.caption.value, theme.inset(self.font), (size.height - self.font.value().height()) * 0.5, ink, self.font)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         if event.menu_requested:
