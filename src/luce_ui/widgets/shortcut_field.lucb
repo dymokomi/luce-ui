@@ -1,0 +1,151 @@
+import gpu
+import interop
+import math
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+from luce_ui.command import Shortcut
+import input
+from luce_ui.font import Font, selected_font
+
+## A field that records a keyboard shortcut, after eleusis's shortcut editor:
+## it shows the chord ("⌘⇧S", or "None" muted); a click (or Enter/Space when
+## focused) starts recording, shown as "Press keys…" in the focus colour; the
+## next key with its modifiers becomes the chord, Backspace or Delete unbinds,
+## Escape stops recording. `on_change` fires on every recorded change. Hosts
+## show it inside a popup, where the application's own shortcuts do not fire.
+pub struct ShortcutField: Widget:
+    let box: interop.Reference[Layout]
+    let font: interop.Reference[Font]
+    var binding: Shortcut
+    var recording: bool
+    var cells: f64
+    let changed: interop.Signal[unit]
+
+    pub func init(shortcut: Shortcut = Shortcut(), font: interop.Reference[Font]? = none, cells: f64 = 12.0) -> !:
+        var selected = try selected_font(font)
+        errdefer selected.release()
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_shrink(vertical = 0.0)
+        box.value().set_focusable(true)
+        box.value().set_cursor(input.Cursor.pointer)
+        let changed = try interop.Signal[unit]()
+        errdefer changed.release()
+        self.box = box
+        self.font = selected
+        self.binding = shortcut
+        self.recording = false
+        self.cells = math.clamp(cells, 4.0, 40.0)
+        self.changed = changed
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func shortcut() -> Shortcut:
+        return self.binding
+
+    ## Set the shown chord from code; stops recording, no signal.
+    pub mutating func set_shortcut(shortcut: Shortcut):
+        self.binding = shortcut
+        self.recording = false
+        self.box.value().invalidate()
+
+    pub func is_recording() -> bool:
+        return self.recording
+
+    pub func on_change(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.changed.connect(callback)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return result.success[Size](Size(self.font.value().advance() * self.cells, self.box.value().theme().row_height(self.font)))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        let focused = self.box.value().is_focused()
+        let radius = theme.control_radius
+        let border = theme.accent if self.recording else (theme.active_border if focused else (theme.hover_border() if self.box.value().contains_pointer() else theme.border))
+        let thickness = 2.0 if focused or self.recording else 1.0
+        try painter.rounded_rectangle(gpu.Rect(width = size.width, height = size.height), border, radius)
+        try painter.rounded_rectangle(gpu.Rect(thickness, thickness, size.width - thickness * 2.0, size.height - thickness * 2.0), theme.sunken, math.max(0.0, radius - thickness))
+        let inset = self.font.value().advance() * 0.75
+        let text_y = math.max(0.0, (size.height - self.font.value().height()) * 0.5)
+        if self.recording:
+            try painter.text("Press keys…", inset, text_y, color = theme.muted, font = self.font)
+        elif self.binding.is_bound():
+            let shown = try self.binding.text()
+            defer shown.release()
+            try painter.text(shown.value, inset, text_y, color = theme.foreground if self.box.value().is_enabled() else theme.muted, font = self.font)
+        else:
+            try painter.text("None", inset, text_y, color = theme.muted, font = self.font)
+
+    mutating func record(event: Event) -> interop.Outcome[unit]:
+        if event.key == input.Key.escape:
+            self.recording = false
+            self.box.value().invalidate()
+            return result.success[unit](())
+        if event.key == input.Key.backspace or event.key == input.Key.delete:
+            self.binding = Shortcut()
+            self.recording = false
+            self.box.value().invalidate()
+            return self.changed.emit(())
+        let code = (u16)event.key
+        if event.key == input.Key.unknown or (code >= (u16)input.Key.left_control and code <= (u16)input.Key.right_super):
+            return result.success[unit](())
+        self.binding = Shortcut(key = event.key, primary = event.control or event.meta, shift = event.shift, alt = event.alt)
+        self.recording = false
+        self.box.value().invalidate()
+        return self.changed.emit(())
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if event.cancelled or not self.box.value().is_enabled():
+            self.recording = false
+            return result.success[unit](())
+        if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
+            self.box.value().request_focus()
+            self.recording = true
+            self.box.value().invalidate()
+            return result.success[unit](())
+        if event.kind == input.EventKind.focus_lost:
+            self.recording = false
+            self.box.value().invalidate()
+            return result.success[unit](())
+        if event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_left:
+            self.box.value().invalidate()
+        if event.kind == input.EventKind.key_down and not event.repeated:
+            if self.recording:
+                return self.record(event)
+            if event.key == input.Key.enter or event.key == input.Key.space:
+                self.recording = true
+                self.box.value().invalidate()
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.font.release()
+        self.changed.close()
+        self.changed.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+        self.changed.trace(visit, context)
+
+pub let shortcut_field_type: interop.Type[ShortcutField] = interop.Type[ShortcutField]("ShortcutField", ShortcutField.close, ShortcutField.trace, closeable = true, main_thread = true)
+
+test "a shortcut field holds a chord":
+    var field = try ShortcutField(try Shortcut.parse("cmd+s"))
+    defer field.close()
+    assert(field.shortcut().key == input.Key.s and field.shortcut().primary and not field.is_recording())
+    field.set_shortcut(Shortcut())
+    assert(not field.shortcut().is_bound())
