@@ -33,6 +33,15 @@ struct ActionCursor: CursorSource:
 
 let action_cursor_type: interop.Type[ActionCursor] = interop.Type[ActionCursor]("Command cursor", ActionCursor.close, ActionCursor.trace, closeable = true, main_thread = true)
 
+## How a button rests: `sunken` (the default face), `raised`, `plain` (no
+## resting fill, only the hover and pressed washes) or `selected` (the accent,
+## with `accent_text` on it: the active tool, an open menu title).
+pub enum ButtonStyle as u8:
+    sunken = 0
+    raised = 1
+    plain = 2
+    selected = 3
+
 pub struct Button: Widget:
     let box: interop.Reference[Layout]
     var caption: interop.Owned[str]
@@ -43,6 +52,7 @@ pub struct Button: Widget:
     var pressed_key: input.Key
     ## A luciaos-assets icon drawn before the text, or alone when there is no text.
     var glyph: interop.Owned[str]
+    var style: ButtonStyle
 
     pub func init(text: str = "", font: interop.Reference[Font]? = none, action: interop.Reference[Command]? = none, icon: str = "") -> !:
         if action != none and text != "":
@@ -68,6 +78,7 @@ pub struct Button: Widget:
         self.caption = try interop.copy_text(text)
         errdefer self.caption.release()
         self.glyph = try interop.copy_text(icon)
+        self.style = ButtonStyle.sunken
         self.clicked = signal
         self.pressed = false
         self.pressed_key = input.Key.unknown
@@ -93,6 +104,16 @@ pub struct Button: Widget:
         self.caption.release()
         self.caption = replacement
         self.box.value().invalidate()
+
+    ## Change how the button rests; `selected` marks it as the active choice.
+    pub mutating func set_style(style: ButtonStyle):
+        if style == self.style:
+            return
+        self.style = style
+        self.box.value().invalidate()
+
+    pub func style_of() -> ButtonStyle:
+        return self.style
 
     pub func on_click(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         if let action = self.action:
@@ -134,15 +155,25 @@ pub struct Button: Widget:
         let size = try target.get().size()
         let theme = self.box.value().theme()
         let pressing = self.pressed and (self.pressed_key != input.Key.unknown or self.box.value().contains_pointer())
-        let color = theme.pressed if pressing and self.is_enabled() else (theme.button_hover if self.is_enabled() and self.box.value().contains_pointer() else theme.button)
-        try painter.rounded_rectangle(gpu.Rect(width = size.width, height = size.height), color, theme.control_radius)
+        let hovering = self.is_enabled() and self.box.value().contains_pointer()
+        let resting = theme.accent if self.style == ButtonStyle.selected else (theme.raised if self.style == ButtonStyle.raised else theme.button)
+        var color = resting
+        if self.style == ButtonStyle.selected:
+            color = resting
+        elif pressing and self.is_enabled():
+            color = theme.pressed
+        elif hovering:
+            color = theme.button_hover
+        # A plain button shows only the washes: nothing at rest.
+        if self.style != ButtonStyle.plain or pressing or hovering:
+            try painter.rounded_rectangle(gpu.Rect(width = size.width, height = size.height), color, theme.control_radius)
         if self.box.value().is_focused():
             # A focus ring: the accent behind, the face inset by its width.
             try painter.rounded_rectangle(gpu.Rect(width = size.width, height = size.height), theme.accent, theme.control_radius)
             try painter.rounded_rectangle(gpu.Rect(1.5, 1.5, size.width - 3.0, size.height - 3.0), color, math.max(0.0, theme.control_radius - 1.5))
         let caption = self.text()
         defer caption.release()
-        let ink = theme.foreground if self.is_enabled() else theme.muted
+        let ink = theme.accent_text if self.style == ButtonStyle.selected else (theme.foreground if self.is_enabled() else theme.muted)
         var x = theme.inset(self.font)
         if self.glyph.value.length > 0:
             let side = self.glyph_size()

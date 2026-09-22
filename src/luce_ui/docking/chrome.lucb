@@ -39,16 +39,22 @@ pub func draw(state: State*, target: interop.View[gpu.RenderTarget]) -> !:
         let bounds = geometry.panes[group]
         let border = theme.active_border if focused and active_group == group else (theme.hover_border() if hovered and strip.contains(bounds, pointer.x, pointer.y) else theme.border)
         try painter.rectangle(bounds, border)
-        try painter.rectangle(gpu.Rect(bounds.x + 1.0, bounds.y + 1.0, math.max(0.0, bounds.width - 2.0), state.height()), theme.panel)
-        try painter.rectangle(gpu.Rect(bounds.x + 1.0, bounds.y + state.height() + 1.0, math.max(0.0, bounds.width - 2.0), math.max(0.0, bounds.height - state.height() - 2.0)), theme.background)
+        # The tab strip recess, the pane's surface below it, and the one-point rule between.
+        try painter.rectangle(gpu.Rect(bounds.x + 1.0, bounds.y + 1.0, math.max(0.0, bounds.width - 2.0), state.height()), theme.strip)
+        try painter.rectangle(gpu.Rect(bounds.x + 1.0, bounds.y + state.height() + 1.0, math.max(0.0, bounds.width - 2.0), math.max(0.0, bounds.height - state.height() - 2.0)), theme.panel)
+        try painter.rectangle(gpu.Rect(bounds.x + 1.0, bounds.y + state.height(), math.max(0.0, bounds.width - 2.0), 1.0), theme.background)
         let header = state.strip(group, bounds)
         for order in header.first..<header.first + header.count:
             let index = model.at(group, order)
             let rectangle = header.tab(order)
             if rectangle.width == 0.0: continue
             let selected = node.selected == index
-            let color = theme.background if selected else theme.panel
-            try painter.rectangle(rectangle, theme.hover() if hovered and not selected and strip.contains(rectangle, pointer.x, pointer.y) else color)
+            # The selected tab is the pane's surface, rounded at the top so tab and
+            # pane read as one; the others show only a hover wash over the strip.
+            if selected:
+                try painter.rounded_rectangle(gpu.Rect(rectangle.x, rectangle.y, rectangle.width, rectangle.height + 1.0), theme.panel, theme.control_radius, corners = 3)
+            elif hovered and strip.contains(rectangle, pointer.x, pointer.y):
+                try painter.rounded_rectangle(rectangle, theme.hover(), theme.control_radius, corners = 3)
             try tab(state, target, index, rectangle, pointer, hovered)
         try button(state, &painter, header.previous, "<", pointer, hovered)
         try button(state, &painter, header.next, ">", pointer, hovered)

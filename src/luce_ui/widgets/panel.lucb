@@ -14,18 +14,24 @@ pub struct Panel: Widget:
     var description: interop.Owned[str]
     var symbol: IconKind
     let closable: bool
+    ## A bar under the content, kept when the content changes: the pane's toolbar.
+    var footer: interop.Interface[Widget]?
 
     pub func init(text: str, content: interop.Interface[Widget], icon: IconKind = IconKind.blank,
-                  minimum: Size = Size(120.0, 60.0), closable: bool = true) -> !:
+                  minimum: Size = Size(120.0, 60.0), closable: bool = true, footer: interop.Interface[Widget]? = none) -> !:
         let caption = try interop.copy_text(text)
         errdefer caption.release()
         let description = try interop.copy_text("")
         errdefer description.release()
-        let box = try layout.make_layout()
+        let box = try layout.make_layout(layout.Axis.vertical)
         errdefer box.release()
         try box.value().set_limits(minimum, Size(16384.0, 16384.0))
         try box.value().set_flex()
-        try box.value().set_children([content])
+        if let bar = footer:
+            try box.value().set_children([content, bar])
+        else:
+            try box.value().set_children([content])
+        self.footer = footer
         self.box = box
         self.caption = caption
         self.description = description
@@ -67,7 +73,10 @@ pub struct Panel: Widget:
         self.box.value().invalidate()
 
     pub mutating func set_content(content: interop.Interface[Widget]) -> !:
-        try self.box.value().set_children([content])
+        if let bar = self.footer:
+            try self.box.value().set_children([content, bar])
+        else:
+            try self.box.value().set_children([content])
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         let size = self.box.value().content_size(available) catch failure:

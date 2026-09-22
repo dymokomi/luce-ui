@@ -32,6 +32,14 @@ pub struct Theme:
     pub var vcs_added: gpu.Color = gpu.Color(0.36, 0.72, 0.42)
     pub var vcs_modified: gpu.Color = gpu.Color(0.85, 0.68, 0.28)
     pub var shadow: gpu.Color = gpu.Color()
+    ## The recess a tab strip sits in; section headings.
+    pub var strip: gpu.Color = gpu.Color(0.021, 0.028, 0.041)
+    ## A sunken surface: field wells, slider grooves, a pane's bottom toolbar.
+    pub var sunken: gpu.Color = gpu.Color(0.032, 0.044, 0.064)
+    ## A raised surface: menus, popovers, raised buttons.
+    pub var raised: gpu.Color = gpu.Color(0.028, 0.037, 0.053)
+    ## Text and icons on the accent colour.
+    pub var accent_text: gpu.Color = gpu.Color(1.0, 1.0, 1.0)
     pub var shadow_offset: f64 = 4.0
     pub var shadow_opacity: f64 = 0.35
     pub var control_lines: f64 = 1.0

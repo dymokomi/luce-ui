@@ -42,13 +42,15 @@ pub struct Painter:
         try target.triangles([a, b, c, a, c, d])
 
     ## A rectangle with corners rounded by `radius` points (clamped to half the
-    ## shorter side); zero draws a plain rectangle. One batched draw: a fan of
-    ## triangles from the centre through eight-segment corner arcs.
-    pub func rounded_rectangle(rectangle: gpu.Rect, color: gpu.Color, radius: f64, opacity: f64 = 1.0) -> !:
+    ## shorter side); zero draws a plain rectangle. `corners` picks which round:
+    ## bit 1 top-left, 2 top-right, 4 bottom-right, 8 bottom-left (15 = all), so a
+    ## tab can round its top only. One batched draw: a fan of triangles from the
+    ## centre through eight-segment corner arcs.
+    pub func rounded_rectangle(rectangle: gpu.Rect, color: gpu.Color, radius: f64, opacity: f64 = 1.0, corners: u8 = 15) -> !:
         if not math.is_finite(radius) or radius < 0.0:
             error(result.invalid, "corner radius must be finite and nonnegative")
         let r = math.min(radius, math.min(rectangle.width, rectangle.height) * 0.5)
-        if r < 0.5:
+        if r < 0.5 or corners & 15 == 0:
             try self.rectangle(rectangle, color, opacity)
             return
         if rectangle.width <= 0.0 or rectangle.height <= 0.0:
@@ -73,9 +75,16 @@ pub struct Painter:
             let ox = rectangle.x + rectangle.width - r if corner == 0 or corner == 1 else rectangle.x + r
             let oy = rectangle.y + r if corner == 0 or corner == 3 else rectangle.y + rectangle.height - r
             let start = -math.pi * 0.5 + (f64)corner * math.pi * 0.5
+            # Clockwise from the top-right, the corner bits run 2, 4, 8, 1.
+            let bit: u8 = 2 if corner == 0 else (4 if corner == 1 else (8 if corner == 2 else 1))
+            let rounded = corners & bit != 0
             for step in 0..<(segments + 1):
                 let angle = start + (f64)step / (f64)segments * math.pi * 0.5
-                outline[index] = Point(ox + math.cos(angle) * r, oy + math.sin(angle) * r)
+                if rounded:
+                    outline[index] = Point(ox + math.cos(angle) * r, oy + math.sin(angle) * r)
+                else:
+                    # A square corner: every point of its arc sits on the corner itself.
+                    outline[index] = Point(ox + (r if corner == 0 or corner == 1 else -r), oy + (-r if corner == 0 or corner == 3 else r))
                 index += 1
         for point in 0..<around:
             let next = outline[(point + 1) % around]
