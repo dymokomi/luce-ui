@@ -37,7 +37,8 @@ pub func draw(state: State*, target: interop.View[gpu.RenderTarget]) -> !:
                 try painter.rectangle(line, theme.accent)
             continue
         let bounds = geometry.panes[group]
-        let border = theme.active_border if focused and active_group == group else (theme.hover_border() if hovered and strip.contains(bounds, pointer.x, pointer.y) else theme.border)
+        # Panes sit in the backdrop with no frame of their own; only the focused one shows a border.
+        let border = theme.active_border if focused and active_group == group else theme.background
         try painter.rectangle(bounds, border)
         # The tab strip recess, the pane's surface below it, and the one-point rule between.
         try painter.rectangle(gpu.Rect(bounds.x + 1.0, bounds.y + 1.0, math.max(0.0, bounds.width - 2.0), state.height()), theme.strip)
