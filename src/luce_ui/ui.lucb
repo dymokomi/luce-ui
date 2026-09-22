@@ -15,6 +15,7 @@ import luce_ui.widgets.rule as rule
 import luce_ui.widgets.checkbox as checkbox
 import luce_ui.widgets.dialog as dialog
 import luce_ui.widgets.hsb_field as hsb_field
+import luce_ui.widgets.shortcut_field as shortcut_field
 import luce_ui.widgets.text_field as text_field
 import luce_ui.widgets.number_field as number_field
 import luce_ui.widgets.curve_editor as curve_editor
@@ -50,6 +51,7 @@ pub type Checkbox = checkbox.Checkbox
 pub type Dialog = dialog.Dialog
 pub type HsbField = hsb_field.HsbField
 pub type HueStrip = hsb_field.HueStrip
+pub type ShortcutField = shortcut_field.ShortcutField
 pub type TextField = text_field.TextField
 pub type NumberField = number_field.NumberField
 pub type ButtonStyle = button.ButtonStyle
@@ -74,6 +76,7 @@ pub let checkbox_type = checkbox.checkbox_type
 pub let dialog_type = dialog.dialog_type
 pub let hsb_field_type = hsb_field.hsb_field_type
 pub let hue_strip_type = hsb_field.hue_strip_type
+pub let shortcut_field_type = shortcut_field.shortcut_field_type
 pub let text_field_type = text_field.text_field_type
 pub let number_field_type = number_field.number_field_type
 pub let curve_editor_type = curve_editor.curve_editor_type

@@ -44,6 +44,23 @@ pub struct Shortcut:
             error(result.invalid, "a shortcut chord names an unknown key")
         return Shortcut(key = key, primary = primary, shift = shift, alt = alt)
 
+    ## Whether the shortcut binds a key at all.
+    pub func is_bound() -> bool:
+        return self.key != input.Key.unknown
+
+    ## The chord as a menu shows it ("⌘⇧S"), or "" when unbound.
+    pub func text() -> interop.Owned[str]!:
+        var buffer: u8[32]
+        let length = write_chord(self, buffer)
+        return try interop.copy_text((str)buffer[..<length])
+
+    ## The chord as a settings file stores it and `parse` reads it back:
+    ## "cmd+shift+s", "f5", "alt+[", or "none" when unbound.
+    pub func chord() -> interop.Owned[str]!:
+        var buffer: u8[48]
+        let length = write_storable(self, buffer)
+        return try interop.copy_text((str)buffer[..<length])
+
 pub struct Command:
     let name: interop.Owned[str]
     var caption: interop.Owned[str]
@@ -195,6 +212,54 @@ func write_chord(shortcut: Shortcut, buffer: u8[]) -> usize:
         pos = put_bytes(buffer, pos, b"\xe2\x8c\x98")
     return write_key(shortcut.key, buffer, pos)
 
+## The storable, parseable form of a chord: lowercase tokens joined by `+`.
+func write_storable(shortcut: Shortcut, buffer: u8[]) -> usize:
+    if shortcut.key == input.Key.unknown:
+        return put_bytes(buffer, 0, b"none")
+    var pos: usize = 0
+    if shortcut.primary:
+        pos = put_bytes(buffer, pos, b"cmd+")
+    if shortcut.shift:
+        pos = put_bytes(buffer, pos, b"shift+")
+    if shortcut.alt:
+        pos = put_bytes(buffer, pos, b"alt+")
+    let code = (u16)shortcut.key
+    if code >= (u16)input.Key.a and code <= (u16)input.Key.z:
+        let letter: u8[1] = [(u8)((u16)'a' + code - (u16)input.Key.a)]
+        return put_bytes(buffer, pos, letter)
+    if shortcut.key == input.Key.digit_0:
+        return put_bytes(buffer, pos, b"0")
+    if code >= (u16)input.Key.digit_1 and code <= (u16)input.Key.digit_9:
+        let digit: u8[1] = [(u8)((u16)'1' + code - (u16)input.Key.digit_1)]
+        return put_bytes(buffer, pos, digit)
+    if code >= (u16)input.Key.f1 and code <= (u16)input.Key.f12:
+        var p = put_bytes(buffer, pos, b"f")
+        let number = code - (u16)input.Key.f1 + 1
+        if number >= 10:
+            let tens: u8[1] = [(u8)((u16)'0' + number // 10)]
+            p = put_bytes(buffer, p, tens)
+        let ones: u8[1] = [(u8)((u16)'0' + number % 10)]
+        return put_bytes(buffer, p, ones)
+    return put_bytes(buffer, pos, storable_word(shortcut.key))
+
+## The name `parse` accepts for a named or symbol key.
+func storable_word(key: input.Key) -> const u8[]:
+    if key == input.Key.enter: return b"enter"
+    if key == input.Key.escape: return b"escape"
+    if key == input.Key.tab: return b"tab"
+    if key == input.Key.space: return b"space"
+    if key == input.Key.backspace: return b"backspace"
+    if key == input.Key.delete: return b"delete"
+    if key == input.Key.left: return b"left"
+    if key == input.Key.right: return b"right"
+    if key == input.Key.up: return b"up"
+    if key == input.Key.down: return b"down"
+    if key == input.Key.home: return b"home"
+    if key == input.Key.end: return b"end"
+    if key == input.Key.page_up: return b"page_up"
+    if key == input.Key.page_down: return b"page_down"
+    return key_word(key)
+
 func put_bytes(buffer: u8[], pos: usize, bytes: const u8[]) -> usize:
     var p = pos
     for index in 0..<bytes.length:
@@ -325,3 +390,14 @@ test "Shortcut.parse reads modifiers, letters, digits, symbols and function keys
         rejected = true
         recover Shortcut())
     assert(rejected)
+
+test "a shortcut round-trips through its storable chord":
+    for chord in ["cmd+shift+s", "f5", "alt+[", "cmd+alt+left", "shift+f12", "none", "cmd+0", "cmd+,", "page_down"]:
+        let parsed = try Shortcut.parse(chord)
+        let stored = try parsed.chord()
+        defer stored.release()
+        assert(stored.value == chord)
+    let shown = try (try Shortcut.parse("cmd+shift+s")).text()
+    defer shown.release()
+    assert(shown.value == "⇧⌘S")
+    assert(not Shortcut().is_bound() and (try Shortcut.parse("b")).is_bound())
