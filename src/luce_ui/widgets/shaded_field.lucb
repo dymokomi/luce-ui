@@ -1,0 +1,194 @@
+import gpu
+import interop
+import math
+import memory
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+from luce_ui.geometry import Point
+import input
+
+## A picker field whose colours the host supplies: a square shaded from a grid
+## of `columns` × `rows` linear colours (the host computes them in whatever
+## model it edits — HSB, RGB, Lab, CAM16 — so the widget knows no colour
+## science), with a ring marker at (u, v) in 0..1, u left to right and v top to
+## bottom. Dragging moves the marker and emits `on_change`; read `u()`/`v()`.
+pub struct ShadedField: Widget:
+    let box: interop.Reference[Layout]
+    var width: f64
+    var height: f64
+    var columns: usize
+    var rows: usize
+    var grid: gpu.Color[]
+    var marker_u: f64
+    var marker_v: f64
+    var dragging: bool
+    let changed: interop.Signal[unit]
+
+    pub func init(width: f64 = 256.0, height: f64 = 256.0) -> !:
+        if not math.is_finite(width) or not math.is_finite(height) or width < 8.0 or height < 8.0 or width > 2048.0 or height > 2048.0:
+            error(result.invalid, "a shaded field needs sides between 8 and 2048 points")
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_shrink(0.0, 0.0)
+        box.value().set_cursor(input.Cursor.pointer)
+        let changed = try interop.Signal[unit]()
+        errdefer changed.release()
+        var empty: gpu.Color[]
+        self.box = box
+        self.width = width
+        self.height = height
+        self.columns = 0
+        self.rows = 0
+        self.grid = empty
+        self.marker_u = 0.0
+        self.marker_v = 0.0
+        self.dragging = false
+        self.changed = changed
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func on_change(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.changed.connect(callback)
+
+    pub func u() -> f64:
+        return self.marker_u
+
+    pub func v() -> f64:
+        return self.marker_v
+
+    ## Place the marker from code; no signal.
+    pub mutating func set_marker(u: f64, v: f64) -> !:
+        if not math.is_finite(u) or not math.is_finite(v):
+            error(result.invalid, "marker coordinates must be finite")
+        self.marker_u = math.clamp(u, 0.0, 1.0)
+        self.marker_v = math.clamp(v, 0.0, 1.0)
+        self.box.value().invalidate()
+
+    ## The colours at the grid's corners, row-major, `columns` per row: the
+    ## field is shaded between them. The widget keeps its own copy. A strip is
+    ## a grid one column (vertical) or one row (horizontal) wide.
+    pub mutating func set_grid(colors: const gpu.Color[], columns: i64) -> !:
+        if columns < 2 or colors.length % (usize)columns != 0 or colors.length // (usize)columns < 2:
+            error(result.invalid, "a shaded grid needs at least two columns and two rows of colours")
+        let copied = try alloc gpu.Color[colors.length] in memory.heap
+        for index in 0..<colors.length:
+            copied[index] = colors[index]
+        if self.grid.length > 0:
+            free(self.grid) in memory.heap
+        self.grid = copied
+        self.columns = (usize)columns
+        self.rows = colors.length // (usize)columns
+        self.box.value().invalidate()
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return result.success[Size](Size(self.width, self.height))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        if self.columns < 2 or self.rows < 2:
+            try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.sunken)
+            return
+        let cells = (self.columns - 1) * (self.rows - 1)
+        var points = try alloc Point[cells * 6] in memory.heap
+        defer free(points) in memory.heap
+        var colors = try alloc gpu.Color[cells * 6] in memory.heap
+        defer free(colors) in memory.heap
+        var index: usize = 0
+        for row in 0..<(self.rows - 1):
+            for column in 0..<(self.columns - 1):
+                let x0 = (f64)column / (f64)(self.columns - 1) * size.width
+                let x1 = (f64)(column + 1) / (f64)(self.columns - 1) * size.width
+                let y0 = (f64)row / (f64)(self.rows - 1) * size.height
+                let y1 = (f64)(row + 1) / (f64)(self.rows - 1) * size.height
+                let corners: Point[4] = [Point(x0, y0), Point(x1, y0), Point(x1, y1), Point(x0, y1)]
+                let shades: gpu.Color[4] = [self.grid[row * self.columns + column], self.grid[row * self.columns + column + 1],
+                                            self.grid[(row + 1) * self.columns + column + 1], self.grid[(row + 1) * self.columns + column]]
+                let order: usize[6] = [0, 1, 2, 0, 2, 3]
+                for corner in order:
+                    points[index] = corners[corner]
+                    colors[index] = shades[corner]
+                    index += 1
+        try painter.shaded_mesh(points, colors)
+        let mx = self.marker_u * size.width
+        let my = self.marker_v * size.height
+        if self.columns == 2 or self.rows == 2:
+            # A strip: a pair of arrows or a bar across, whichever way it runs.
+            let ink = theme.foreground
+            if size.height > size.width:
+                try painter.rectangle(gpu.Rect(0.0, my - 1.0, size.width, 2.0), gpu.Color(0.0, 0.0, 0.0))
+                try painter.rectangle(gpu.Rect(0.0, my - 0.5, size.width, 1.0), ink)
+            else:
+                try painter.rectangle(gpu.Rect(mx - 1.0, 0.0, 2.0, size.height), gpu.Color(0.0, 0.0, 0.0))
+                try painter.rectangle(gpu.Rect(mx - 0.5, 0.0, 1.0, size.height), ink)
+            return
+        try ring(&painter, mx, my, 6.0, 0.75, gpu.Color(0.0, 0.0, 0.0))
+        try ring(&painter, mx, my, 5.25, 1.5, gpu.Color(1.0, 1.0, 1.0))
+
+    mutating func choose(x: f64, y: f64) -> interop.Outcome[unit]:
+        let bounds = self.box.value().bounds()
+        if bounds.width <= 0.0 or bounds.height <= 0.0:
+            return result.success[unit](())
+        self.marker_u = math.clamp(x / bounds.width, 0.0, 1.0)
+        self.marker_v = math.clamp(y / bounds.height, 0.0, 1.0)
+        self.box.value().invalidate()
+        return self.changed.emit(())
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if event.cancelled:
+            self.dragging = false
+            return result.success[unit](())
+        if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
+            self.dragging = true
+            return self.choose(event.x, event.y)
+        if event.kind == input.EventKind.pointer_moved and self.dragging:
+            return self.choose(event.x, event.y)
+        if event.kind == input.EventKind.pointer_up and event.button == 0:
+            self.dragging = false
+        return result.success[unit](())
+
+    pub mutating func close():
+        if self.grid.length > 0:
+            free(self.grid) in memory.heap
+        self.changed.close()
+        self.changed.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+        self.changed.trace(visit, context)
+
+pub let shaded_field_type: interop.Type[ShadedField] = interop.Type[ShadedField]("ShadedField", ShadedField.close, ShadedField.trace, closeable = true, main_thread = true)
+
+## A ring of `width` around (x, y) at `radius`, as sixteen short lines.
+func ring(painter: Painter*, x: f64, y: f64, radius: f64, width: f64, color: gpu.Color) -> !:
+    let sides: usize = 16
+    for side in 0..<sides:
+        let a = (f64)side / (f64)sides * math.pi * 2.0
+        let b = (f64)(side + 1) / (f64)sides * math.pi * 2.0
+        try painter.line(Point(x + math.cos(a) * radius, y + math.sin(a) * radius), Point(x + math.cos(b) * radius, y + math.sin(b) * radius), width, color)
+
+test "a shaded field keeps its grid and marker":
+    var field = try ShadedField(64.0, 64.0)
+    defer field.close()
+    let grid: gpu.Color[4] = [gpu.Color(0.0, 0.0, 0.0), gpu.Color(1.0, 0.0, 0.0), gpu.Color(0.0, 1.0, 0.0), gpu.Color(1.0, 1.0, 1.0)]
+    try field.set_grid(grid, 2)
+    try field.set_marker(0.25, 2.0)
+    assert(field.u() == 0.25 and field.v() == 1.0)
+    var rejected = false
+    let short: gpu.Color[3] = [gpu.Color(), gpu.Color(), gpu.Color()]
+    field.set_grid(short, 2) catch failure:
+        assert(failure.code == result.invalid)
+        rejected = true
+    assert(rejected)
