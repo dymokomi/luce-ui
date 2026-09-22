@@ -7,6 +7,7 @@ import luce_ui.painter as painter
 import luce_ui.result as result
 import luce_ui.widgets.text as text
 import luce_ui.widgets.button as button
+import luce_ui.widgets.slider as slider
 import luce_ui.widgets.spacer as spacer
 import luce_ui.widgets.viewport as viewport
 import luce_ui.widgets.vstack as vstack
@@ -32,6 +33,7 @@ pub type Image = image.Image
 pub let image_type = image.image_type
 pub type Text = text.Text
 pub type Button = button.Button
+pub type Slider = slider.Slider
 pub type Spacer = spacer.Spacer
 pub type Viewport = viewport.Viewport
 pub type VStack = vstack.VStack
@@ -45,6 +47,7 @@ pub type Font = font.Font
 pub let font_type = font.font_type
 pub let busy: ErrorCode = result.busy
 pub let button_type = button.button_type
+pub let slider_type = slider.slider_type
 pub let text_type = text.text_type
 pub let spacer_type = spacer.spacer_type
 pub let viewport_type = viewport.viewport_type
