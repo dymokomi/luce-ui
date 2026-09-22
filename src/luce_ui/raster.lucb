@@ -13,10 +13,10 @@ struct Pixel:
     var alpha: f32
 
 func dimensions(width: i64, height: i64) -> !:
-    if width < 1 or width > 2048 or height < 1 or height > 2048:
-        error(result.invalid, "raster dimensions must be in 1..2048")
-    if width * height > 1048576:
-        error(result.invalid, "a raster supports at most 1048576 pixels")
+    if width < 1 or width > 16384 or height < 1 or height > 16384:
+        error(result.invalid, "raster dimensions must be in 1..16384")
+    if width * height > 67108864:
+        error(result.invalid, "a raster supports at most 67108864 pixels")
 
 func component(value: f64) -> bool:
     return math.is_finite(value) and value >= 0.0 and value <= 1.0
@@ -38,10 +38,17 @@ func rgba(pixel: Pixel) -> u32:
     let inverse = 1.0 / (f64)pixel.alpha
     return quantize((f64)pixel.red * inverse) + quantize((f64)pixel.green * inverse) * 256 + quantize((f64)pixel.blue * inverse) * 65536 + alpha * 16777216
 
+## A CPU raster of linear premultiplied pixels. Drawing uploads it to a texture
+## on the target's device, created on first draw and refreshed only when the
+## pixels changed since the last upload.
 pub struct Raster:
     var columns: i64
     var rows: i64
     var pixels: Pixel[]
+    var texture: gpu.Texture?
+    var device: gpu.Device?
+    var revision: u64 = 1
+    var uploaded: u64
 
     pub func init(width: i64, height: i64) -> !:
         try dimensions(width, height)
@@ -51,6 +58,10 @@ pub struct Raster:
         self.columns = width
         self.rows = height
         self.pixels = pixels
+        self.texture = none
+        self.device = none
+        self.revision = 1
+        self.uploaded = 0
 
     pub func width() -> i64:
         return self.columns
@@ -63,6 +74,7 @@ pub struct Raster:
             error(result.invalid, "raster is closed")
 
     pub mutating func dab(x: f64, y: f64, diameter: f64, hardness: f64, color: gpu.Color, erase: bool = false) -> !:
+        self.revision += 1
         try self.require_open()
         if not math.is_finite(x) or not math.is_finite(y):
             error(result.invalid, "brush coordinates must be finite")
@@ -97,11 +109,13 @@ pub struct Raster:
                     self.pixels[index] = over(previous, Pixel((f32)color.red * alpha, (f32)color.green * alpha, (f32)color.blue * alpha, alpha))
 
     pub mutating func clear():
+        self.revision += 1
         for index in 0..<self.pixels.length:
             self.pixels[index] = Pixel()
 
     ## Write one opaque pixel in linear-light 0..1. Out of range coordinates fail.
     pub mutating func set_pixel(x: i64, y: i64, color: gpu.Color) -> !:
+        self.revision += 1
         try self.require_open()
         if x < 0 or y < 0 or x >= self.columns or y >= self.rows:
             error(result.invalid, "raster pixel is out of bounds")
@@ -111,12 +125,14 @@ pub struct Raster:
 
     ## Write one opaque pixel by linear offset. The span bounds-check is the check.
     pub mutating func put(offset: usize, color: gpu.Color) -> !:
+        self.revision += 1
         try self.require_open()
         if not component(color.red) or not component(color.green) or not component(color.blue):
             error(result.invalid, "raster color components must be in 0..1")
         self.pixels[offset] = Pixel((f32)color.red, (f32)color.green, (f32)color.blue, (f32)1.0)
 
     pub mutating func fill(color: gpu.Color) -> !:
+        self.revision += 1
         try self.require_open()
         if not component(color.red) or not component(color.green) or not component(color.blue):
             error(result.invalid, "raster color components must be in 0..1")
@@ -125,6 +141,7 @@ pub struct Raster:
             self.pixels[index] = pixel
 
     pub mutating func fill_rect(x: i64, y: i64, width: i64, height: i64, color: gpu.Color) -> !:
+        self.revision += 1
         try self.require_open()
         if not component(color.red) or not component(color.green) or not component(color.blue):
             error(result.invalid, "raster color components must be in 0..1")
@@ -166,6 +183,7 @@ pub struct Raster:
         return copied
 
     pub mutating func composite(source: interop.Reference[Raster], opacity: f64 = 1.0) -> !:
+        self.revision += 1
         try self.require_open()
         if not component(opacity):
             error(result.invalid, "raster opacity must be in 0..1")
@@ -186,92 +204,54 @@ pub struct Raster:
             error(result.invalid, "raster pixel is out of bounds")
         return (f64)self.pixels[(usize)(y * self.columns + x)].alpha
 
-    func run_count(stride: i64) -> i64:
-        var count: i64 = 0
-        var row: i64 = 0
-        while row < self.rows:
-            let start = (usize)(row * self.columns)
-            var previous: u32 = 0
-            var column: i64 = 0
-            while column < self.columns:
-                let color = rgba(self.pixels[start + (usize)column])
-                if color != 0 and color != previous:
-                    count += 1
-                    if count > 100000:
-                        return count
-                previous = color
-                column += stride
-            row += stride
-        return count
-
-    func sampling_stride() -> i64:
-        var stride: i64 = 1
-        while self.run_count(stride) > 100000:
-            stride *= 2
-        return stride
-
-    pub func draw(target: interop.View[gpu.RenderTarget], rectangle: gpu.Rect) -> !:
-        discard(try self.draw_runs(target, rectangle))
-
-    func draw_runs(target: interop.View[gpu.RenderTarget], rectangle: gpu.Rect) -> i64!:
+    ## Draw the raster scaled onto `rectangle` of `target`, nearest-sampled so
+    ## pixels stay crisp when magnified.
+    pub mutating func draw(target: interop.View[gpu.RenderTarget], rectangle: gpu.Rect, filter: gpu.Filter = gpu.Filter.nearest) -> !:
         try self.require_open()
         let checked = try target.get()
-        let size = try checked.size()
         if not math.is_finite(rectangle.x) or not math.is_finite(rectangle.y) or not math.is_finite(rectangle.width) or not math.is_finite(rectangle.height) or not math.is_finite(rectangle.x + rectangle.width) or not math.is_finite(rectangle.y + rectangle.height):
             error(result.invalid, "raster rectangle must be finite")
-        if rectangle.width <= 0.0 or rectangle.height <= 0.0 or size.width <= 0.0 or size.height <= 0.0:
-            return 0
-        var runs: i64 = 0
-        let stride = self.sampling_stride()
-        let vertices = try alloc gpu.Vertex[1536] in memory.heap
-        defer free(vertices) in memory.heap
-        var count: usize = 0
-        let scale_x = rectangle.width / (f64)self.columns
-        let scale_y = rectangle.height / (f64)self.rows
-        var row: i64 = 0
-        while row < self.rows:
-            let top = (f32)(1.0 - (rectangle.y + (f64)row * scale_y) / size.height * 2.0)
-            let bottom = (f32)(1.0 - (rectangle.y + (f64)math.imin(row + stride, self.rows) * scale_y) / size.height * 2.0)
-            let start = (usize)(row * self.columns)
-            var column: i64 = 0
-            while column < self.columns:
-                let first = column
-                let color = rgba(self.pixels[start + (usize)column])
-                column += stride
-                while column < self.columns and rgba(self.pixels[start + (usize)column]) == color:
-                    column += stride
-                if color == 0:
-                    continue
-                let left = (f32)((rectangle.x + (f64)first * scale_x) / size.width * 2.0 - 1.0)
-                let right = (f32)((rectangle.x + (f64)math.imin(column, self.columns) * scale_x) / size.width * 2.0 - 1.0)
-                let a = gpu.Vertex(x = left, y = top, red = (f32)(color % 256) / (f32)255.0,
-                    green = (f32)(color // 256 % 256) / (f32)255.0,
-                    blue = (f32)(color // 65536 % 256) / (f32)255.0,
-                    alpha = (f32)(color // 16777216) / (f32)255.0)
-                var b = a
-                var c = a
-                var d = a
-                b.x = right
-                c.x = right
-                c.y = bottom
-                d.y = bottom
-                vertices[count] = a
-                vertices[count + 1] = b
-                vertices[count + 2] = c
-                vertices[count + 3] = a
-                vertices[count + 4] = c
-                vertices[count + 5] = d
-                count += 6
-                runs += 1
-                if count == vertices.length:
-                    try checked.triangles(vertices)
-                    count = 0
-            row += stride
-        if count > 0:
-            try checked.triangles(vertices[0..<count])
-        return runs
+        if rectangle.width <= 0.0 or rectangle.height <= 0.0:
+            return
+        # A standalone frame has no device to hold a texture; it records nothing here.
+        let texture = (try self.refresh(checked)) else return
+        try gpu.draw_image(checked, texture, rectangle, none, 1.0, filter)
+
+    ## Make the texture match the pixels, on the device `target` draws on.
+    mutating func refresh(target: const gpu.RenderTarget*) -> gpu.Texture?!:
+        let device = self.device else gpu.device_of(target) catch failure:
+            if failure.code == gpu.unavailable:
+                return none
+            error(failure.code, failure.message)
+        self.device = device
+        let texture = self.texture else try gpu.Texture.create(device, (u32)self.columns, (u32)self.rows, gpu.Format.rgba8_linear)
+        if self.texture == none:
+            self.texture = texture
+            self.uploaded = 0
+        if self.uploaded == self.revision:
+            return texture
+        let count = self.pixels.length
+        let bytes = try alloc u8[count * 4] in memory.heap
+        defer free(bytes) in memory.heap
+        for index in 0..<count:
+            let packed = rgba(self.pixels[index])
+            bytes[index * 4] = (u8)(packed % 256)
+            bytes[index * 4 + 1] = (u8)(packed // 256 % 256)
+            bytes[index * 4 + 2] = (u8)(packed // 65536 % 256)
+            bytes[index * 4 + 3] = (u8)(packed // 16777216)
+        try texture.upload(bytes)
+        self.uploaded = self.revision
+        return texture
 
     pub mutating func close():
+        if let texture = self.texture:
+            var owned = texture
+            owned.destroy()
+            self.texture = none
+        if let device = self.device:
+            var owned = device
+            owned.destroy()
+            self.device = none
         if self.pixels.length > 0:
             free(self.pixels) in memory.heap
         var empty: Pixel[]
@@ -397,40 +377,17 @@ test "raster brush falloff, source over, erasing and clearing":
     assert((try raster.alpha_at(0, 0)) == 1.0)
     assert((try raster.alpha_at(1, 0)) == 0.0)
 
-test "raster draw budget samples fragmented million pixel rasters":
-    for extent in [1024, 1023]:
-        var noise = try Raster(extent, extent)
-        defer noise.close()
-        for index in 0..<noise.pixels.length:
-            noise.pixels[index] = Pixel((f32)(index % 251) / (f32)255.0, (f32)0.25, (f32)0.75, (f32)1.0)
-        assert(noise.run_count(1) == 100001 and noise.run_count(2) == 100001)
-        assert(noise.sampling_stride() == 4 and noise.run_count(4) == 65536)
-        var frame = try gpu.Frame(window.Size(160.0, 120.0, 320.0, 240.0, 2.0))
-        defer frame.close()
-        let target = try frame.target()
-        defer target.release()
-        let runs = try noise.draw_runs(target, gpu.Rect(0.0, 0.0, 160.0, 120.0))
-        assert(runs == noise.run_count(4))
-        assert(runs * 6 <= 600000 and (runs + 255) // 256 <= 391)
-
-test "raster draw preserves full resolution below and at its run budget":
-    var raster = try Raster(1000, 100)
+test "raster draw on a standalone frame records nothing":
+    var raster = try Raster(3, 2)
     defer raster.close()
-    for index in 0..<raster.pixels.length:
-        raster.pixels[index] = Pixel((f32)(index % 251) / (f32)255.0, (f32)0.0, (f32)0.0, (f32)1.0)
-    assert(raster.run_count(1) == 100000 and raster.sampling_stride() == 1)
+    try raster.fill(gpu.Color(1.0, 0.0, 0.0))
     var frame = try gpu.Frame(window.Size(160.0, 120.0, 320.0, 240.0, 2.0))
     defer frame.close()
     let target = try frame.target()
     defer target.release()
-    assert((try raster.draw_runs(target, gpu.Rect(0.0, 0.0, 160.0, 120.0))) == 100000)
-    raster.clear()
-    try raster.dab(20.5, 20.5, 32.0, 0.0, gpu.Color(0.0, 1.0, 0.0))
-    assert(raster.sampling_stride() == 1)
-    assert((try raster.draw_runs(target, gpu.Rect(0.0, 0.0, 160.0, 120.0))) == raster.run_count(1))
-    raster.clear()
-    assert(raster.run_count(1) == 0 and raster.sampling_stride() == 1)
-    assert((try raster.draw_runs(target, gpu.Rect(0.0, 0.0, 160.0, 120.0))) == 0)
+    # A standalone frame has no device: the draw records nothing and succeeds.
+    try raster.draw(target, gpu.Rect(0.0, 0.0, 160.0, 120.0))
+    assert(raster.texture == none)
 
 test "raster deep copies, resizing, composite opacity and self composite":
     let source = try interop.Reference[Raster].adopt(new Raster(2, 2) in memory.heap, raster_type, memory.heap)
@@ -461,7 +418,7 @@ test "raster deep copies, resizing, composite opacity and self composite":
     assert((try source.value().alpha_at(0, 0)) == 1.0)
 
 test "raster rejects invalid dimensions, coordinates and brush parameters":
-    for width in [-1, 0, 2049, 9223372036854775807]:
+    for width in [-1, 0, 16385, 9223372036854775807]:
         var rejected = false
         var raster = Raster(width, 1) catch failure:
             assert(failure.code == result.invalid)
@@ -470,7 +427,7 @@ test "raster rejects invalid dimensions, coordinates and brush parameters":
         assert(rejected)
         raster.close()
     var rejected = false
-    var oversized = Raster(2048, 513) catch failure:
+    var oversized = Raster(16384, 4097) catch failure:
         assert(failure.code == result.invalid)
         rejected = true
         recover try Raster(1, 1)

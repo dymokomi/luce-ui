@@ -1,0 +1,155 @@
+import gpu
+import interop
+import math
+import memory
+import ownership
+import luce_ui.result as result
+
+## A picture for drawing: straight-alpha sRGB pixels held on the CPU and
+## uploaded to a texture on the target's device the first time they are drawn
+## after a change. Luce owns an Image like any other object.
+pub struct Image:
+    var columns: u32
+    var rows: u32
+    var pixels: u8[]
+    var texture: gpu.Texture?
+    var device: gpu.Device?
+    var revision: u64
+    var uploaded: u64
+
+    ## A transparent `width` by `height` image, each dimension in 1..16384.
+    pub func init(width: i64, height: i64) -> !:
+        if width < 1 or width > 16384 or height < 1 or height > 16384:
+            error(result.invalid, "image dimensions must be in 1..16384")
+        if width * height > 67108864:
+            error(result.invalid, "an image supports at most 67108864 pixels")
+        let pixels = try alloc u8[(usize)(width * height * 4)] in memory.heap
+        for index in 0..<pixels.length:
+            pixels[index] = 0
+        self.columns = (u32)width
+        self.rows = (u32)height
+        self.pixels = pixels
+        self.texture = none
+        self.device = none
+        self.revision = 1
+        self.uploaded = 0
+
+    pub func width() -> i64:
+        return (i64)self.columns
+
+    pub func height() -> i64:
+        return (i64)self.rows
+
+    ## Replace every pixel with tightly packed, top-down RGBA bytes.
+    pub mutating func write(pixels: const u8[]) -> !:
+        try self.require_open()
+        if pixels.length != self.pixels.length:
+            error(result.invalid, "image pixel data must be width * height * 4 bytes")
+        memory.copy(self.pixels, pixels, pixels.length)
+        self.revision += 1
+
+    ## Set one pixel from a linear colour and straight alpha.
+    pub mutating func set_pixel(x: i64, y: i64, color: gpu.Color) -> !:
+        try self.require_open()
+        if x < 0 or y < 0 or x >= (i64)self.columns or y >= (i64)self.rows:
+            error(result.invalid, "image pixel is out of bounds")
+        if not (color.red >= 0.0 and color.red <= 1.0 and color.green >= 0.0 and color.green <= 1.0 and color.blue >= 0.0 and color.blue <= 1.0 and color.alpha >= 0.0 and color.alpha <= 1.0):
+            error(result.invalid, "image colours must be finite and in 0..1")
+        let offset = (usize)(y * (i64)self.columns + x) * 4
+        self.pixels[offset] = encode(color.red)
+        self.pixels[offset + 1] = encode(color.green)
+        self.pixels[offset + 2] = encode(color.blue)
+        self.pixels[offset + 3] = (u8)(color.alpha * 255.0 + 0.5)
+        self.revision += 1
+
+    ## Draw `source` (all of it by default) scaled onto `rectangle` of `target`.
+    pub mutating func draw(target: interop.View[gpu.RenderTarget], rectangle: gpu.Rect, source: gpu.Region? = none,
+                           opacity: f64 = 1.0, filter: gpu.Filter = gpu.Filter.linear) -> !:
+        try self.require_open()
+        if not math.is_finite(opacity) or opacity < 0.0 or opacity > 1.0:
+            error(result.invalid, "image opacity must be in 0..1")
+        if not math.is_finite(rectangle.x) or not math.is_finite(rectangle.y) or not math.is_finite(rectangle.width) or not math.is_finite(rectangle.height):
+            error(result.invalid, "image rectangle must be finite")
+        let checked = try target.get()
+        if rectangle.width <= 0.0 or rectangle.height <= 0.0:
+            return
+        # A standalone frame has no device to hold a texture; it records nothing here.
+        let texture = (try self.refresh(checked)) else return
+        try gpu.draw_image(checked, texture, rectangle, source, opacity, filter)
+
+    mutating func refresh(target: const gpu.RenderTarget*) -> gpu.Texture?!:
+        let device = self.device else gpu.device_of(target) catch failure:
+            if failure.code == gpu.unavailable:
+                return none
+            error(failure.code, failure.message)
+        self.device = device
+        let texture = self.texture else try gpu.Texture.create(device, self.columns, self.rows, gpu.Format.rgba8)
+        if self.texture == none:
+            self.texture = texture
+            self.uploaded = 0
+        if self.uploaded != self.revision:
+            try texture.upload(self.pixels)
+            self.uploaded = self.revision
+        return texture
+
+    func require_open() -> !:
+        if self.pixels.length == 0:
+            error(result.invalid, "the image is closed")
+
+    pub mutating func close():
+        if let texture = self.texture:
+            var owned = texture
+            owned.destroy()
+            self.texture = none
+        if let device = self.device:
+            var owned = device
+            owned.destroy()
+            self.device = none
+        if self.pixels.length > 0:
+            free(self.pixels) in memory.heap
+        var empty: u8[]
+        self.pixels = empty
+        self.columns = 0
+        self.rows = 0
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        discard(visit)
+        discard(context)
+
+## The sRGB encoding of a linear component.
+func encode(value: f64) -> u8:
+    let clamped = math.clamp(value, 0.0, 1.0)
+    let encoded = clamped * 12.92 if clamped <= 0.0031308 else 1.055 * math.pow(clamped, 1.0 / 2.4) - 0.055
+    return (u8)(encoded * 255.0 + 0.5)
+
+pub let image_type: interop.Type[Image] = interop.Type[Image]("Image", Image.close, Image.trace, closeable = true, main_thread = true)
+
+test "image pixels, bounds and closing":
+    var image = try Image(2, 2)
+    defer image.close()
+    assert(image.width() == 2 and image.height() == 2)
+    try image.set_pixel(1, 1, gpu.Color(1.0, 0.0, 0.0, 0.5))
+    assert(image.pixels[12] == 255 and image.pixels[13] == 0 and image.pixels[15] == 128)
+    try image.set_pixel(0, 0, gpu.Color(0.5, 0.5, 0.5))
+    assert(image.pixels[0] == 188)
+    var rejected = false
+    image.set_pixel(2, 0, gpu.Color()) catch failure:
+        assert(failure.code == result.invalid)
+        rejected = true
+    assert(rejected)
+    rejected = false
+    image.write([(u8)1, (u8)2]) catch failure:
+        assert(failure.code == result.invalid)
+        rejected = true
+    assert(rejected)
+    var bytes: u8[16]
+    for index in 0..<(usize)16:
+        bytes[index] = (u8)index
+    try image.write(bytes)
+    assert(image.pixels[15] == 15)
+    rejected = false
+    discard(Image(0, 1) catch failure:
+        assert(failure.code == result.invalid)
+        rejected = true
+        recover try Image(1, 1))
+    assert(rejected)

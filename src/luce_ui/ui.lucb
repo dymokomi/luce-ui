@@ -27,6 +27,9 @@ pub type Painter = painter.Painter
 import luce_ui.raster as raster
 pub type Raster = raster.Raster
 pub let raster_type = raster.raster_type
+import luce_ui.image as image
+pub type Image = image.Image
+pub let image_type = image.image_type
 pub type Text = text.Text
 pub type Button = button.Button
 pub type Spacer = spacer.Spacer

@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory(prefix="luce-ui-gpu-") as temporary:
     shutil.copy2(ROOT / "tests/style_pixels.lucb", project / "style_pixels.lucb")
     shutil.copy2(ROOT / "tests/docking_pixels.lucb", project / "docking_pixels.lucb")
     shutil.copy2(args.base_source / "tests/programs/gpu/native.lucb", project / "native.lucb")
-    (project / "luce.toml").write_text('[package]\nname = "ui_pixels"\nsource = "."\n\n[dependencies]\nluce_ui = ' + json.dumps(str(ROOT)) + '\n')
+    (project / "package.prisma").write_text('#prisma 4.0\ndef package "ui-pixels" {\n    str owner = "dymokomi"\n    str version = "0.0.0"\n    str kind = "tool"\n    str language = "luce-base"\n    str entry = "main.lucb"\n    def dependency "luce-ui" {\n        str owner = "dymokomi"\n        str version = "^0.1.0"\n        str path = ' + json.dumps(str(ROOT)) + '\n    }\n}\n')
     for flags in modes:
         binary = project / "pixels"
         subprocess.run([str(args.base.resolve()), "build", str(project / "main.lucb"), *flags, "-o", str(binary)], check=True, timeout=180)

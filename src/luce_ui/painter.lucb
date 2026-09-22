@@ -5,6 +5,7 @@ import math
 import memory
 import luce_ui.result as result
 from luce_ui.font import Font, selected_font
+from luce_ui.image import Image
 from luce_ui.geometry import Point
 
 ## A convenience painter over a checked target. Retaining the painter does not
@@ -39,6 +40,12 @@ pub struct Painter:
         c.y = bottom
         d.y = bottom
         try target.triangles([a, b, c, a, c, d])
+
+    ## Draw `source` of `image` (all of it by default) scaled onto `rectangle`,
+    ## at `opacity`, sampled with `filter`.
+    pub func image(image: interop.Reference[Image], rectangle: gpu.Rect, source: gpu.Region? = none, opacity: f64 = 1.0,
+                   filter: gpu.Filter = gpu.Filter.linear) -> !:
+        try image.value().draw(self.target_view, rectangle, source, opacity, filter)
 
     pub func text(text: str, x: f64 = 0.0, y: f64 = 0.0,
                   color: gpu.Color = gpu.Color(red = 0.82, green = 0.9, blue = 1.0),
