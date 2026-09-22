@@ -59,6 +59,8 @@ pub struct Event:
     pub var scroll_x: f64
     pub var scroll_y: f64
     pub var scroll_unit: input.ScrollUnit
+    ## Stylus pressure 0..1 for pointer events; zero from a mouse.
+    pub var pressure: f64
 
 ## layout returns one retained reference to the same Layout for this widget's
 ## lifetime. A measure/draw/event implementation may fail or reenter application
@@ -921,7 +923,7 @@ pub struct Tree:
                 button = (i64)event.button, repeated = event.repeated, shift = event.modifiers.shift,
                 control = event.modifiers.control, alt = event.modifiers.alt, meta = event.modifiers.super,
                 codepoint = (i64)event.codepoint, scroll_unit = event.scroll_unit,
-                inside = inside(box.clipping, event.x, event.y), scroll_x = event.scroll_x, scroll_y = event.scroll_y)
+                inside = inside(box.clipping, event.x, event.y), scroll_x = event.scroll_x, scroll_y = event.scroll_y, pressure = event.pressure)
             let delivered = self.send(index, translated)
             if not delivered.is_success():
                 return delivered
