@@ -1,0 +1,195 @@
+import gpu
+import interop
+import math
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+from luce_ui.text.line_input import LineInput
+import input
+from luce_ui.font import Font, selected_font
+
+## A single-line text field after eleusis: a sunken well whose border thickens in
+## the focus colour, text inset by one cell, everything selected on focus, and a
+## commit on Enter or on losing focus (`on_commit`); Escape puts the committed
+## text back. `on_change` fires on every edit. An empty field shows its
+## `placeholder` in the muted colour.
+pub struct TextField: Widget:
+    let box: interop.Reference[Layout]
+    let font: interop.Reference[Font]
+    var input: LineInput
+    var committed: interop.Owned[str]
+    var placeholder: interop.Owned[str]
+    var cells: f64
+    let changed: interop.Signal[str]
+    let submitted: interop.Signal[str]
+
+    ## `cells` is the width the field asks for, in character cells.
+    pub func init(text: str = "", font: interop.Reference[Font]? = none, placeholder: str = "", cells: f64 = 12.0) -> !:
+        var selected = try selected_font(font)
+        errdefer selected.release()
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_shrink(vertical = 0.0)
+        box.value().set_focusable(true)
+        box.value().set_text_input(true)
+        box.value().set_cursor(input.Cursor.text)
+        var line = try LineInput()
+        errdefer line.close()
+        try line.set_text(text)
+        let changed = try interop.Signal[str]()
+        errdefer changed.release()
+        let submitted = try interop.Signal[str]()
+        errdefer submitted.release()
+        self.committed = try interop.copy_text(text)
+        self.placeholder = try interop.copy_text(placeholder)
+        self.box = box
+        self.font = selected
+        self.input = line
+        self.cells = math.clamp(cells, 2.0, 120.0)
+        self.changed = changed
+        self.submitted = submitted
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    ## The text as edited so far.
+    pub func text() -> interop.Owned[str]!:
+        return try self.input.text()
+
+    ## Set the text from code and take it as committed; no signals.
+    pub mutating func set_text(text: str) -> !:
+        try self.input.set_text(text)
+        let replacement = try interop.copy_text(text)
+        self.committed.release()
+        self.committed = replacement
+        self.box.value().invalidate()
+
+    pub func on_change(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.changed.connect(callback)
+
+    pub func on_commit(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.submitted.connect(callback)
+
+    mutating func commit() -> interop.Outcome[unit]:
+        let current = self.input.text() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer current.release()
+        if current.value == self.committed.value:
+            return result.success[unit](())
+        let replacement = interop.copy_text(current.value) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        self.committed.release()
+        self.committed = replacement
+        self.box.value().invalidate()
+        return self.submitted.emit(current.value)
+
+    mutating func revert() -> interop.Outcome[unit]:
+        self.input.set_text(self.committed.value) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        self.box.value().invalidate()
+        return result.success[unit](())
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return result.success[Size](Size(self.font.value().advance() * self.cells, self.box.value().theme().row_height(self.font)))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        let focused = self.box.value().is_focused()
+        let radius = theme.control_radius
+        let border = theme.active_border if focused else (theme.hover_border() if self.box.value().contains_pointer() else theme.border)
+        let thickness = 2.0 if focused else 1.0
+        try painter.rounded_rectangle(gpu.Rect(width = size.width, height = size.height), border, radius)
+        try painter.rounded_rectangle(gpu.Rect(thickness, thickness, size.width - thickness * 2.0, size.height - thickness * 2.0), theme.sunken, math.max(0.0, radius - thickness))
+        let inset = self.font.value().advance() * 0.75
+        let text_y = math.max(0.0, (size.height - self.font.value().height()) * 0.5)
+        let current = try self.input.text()
+        defer current.release()
+        if current.value.length == 0 and not focused and self.placeholder.value.length > 0:
+            try painter.text(self.placeholder.value, inset, text_y, color = theme.muted, font = self.font)
+        elif focused:
+            try self.input.paint(&painter, self.font, theme, inset, text_y, size.width - inset * 2.0)
+        else:
+            try painter.text(current.value, inset, text_y, color = theme.foreground if self.box.value().is_enabled() else theme.muted, font = self.font)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if event.cancelled:
+            return self.revert()
+        if not self.box.value().is_enabled():
+            return result.success[unit](())
+        let bounds = self.box.value().bounds()
+        let inset = self.font.value().advance() * 0.75
+        if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
+            let was_focused = self.box.value().is_focused()
+            self.box.value().request_focus()
+            if not was_focused:
+                # Focus selects everything, Finder-rename style; a second click places the caret.
+                let current = self.input.text() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                defer current.release()
+                self.input.set_text(current.value) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                self.box.value().invalidate()
+                return result.success[unit](())
+        if event.kind == input.EventKind.pointer_down or event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_up:
+            self.input.pointer(event, self.font, inset, 0.0, bounds.width - inset * 2.0, bounds.height) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            self.box.value().invalidate()
+            return result.success[unit](())
+        if event.kind == input.EventKind.focus_lost:
+            return self.commit()
+        if event.kind == input.EventKind.key_down and event.key == input.Key.escape:
+            return self.revert()
+        if event.kind == input.EventKind.key_down and event.key == input.Key.enter and not event.repeated:
+            return self.commit()
+        if event.kind == input.EventKind.key_down or event.kind == input.EventKind.text_input:
+            let mutated = self.input.event(event) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            if mutated:
+                self.box.value().invalidate()
+                let current = self.input.text() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                defer current.release()
+                return self.changed.emit(current.value)
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.font.release()
+        self.input.close()
+        self.changed.close()
+        self.changed.release()
+        self.submitted.close()
+        self.submitted.release()
+        self.committed.release()
+        self.placeholder.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+        self.changed.trace(visit, context)
+        self.submitted.trace(visit, context)
+        self.committed.trace(visit, context)
+        self.placeholder.trace(visit, context)
+
+pub let text_field_type: interop.Type[TextField] = interop.Type[TextField]("TextField", TextField.close, TextField.trace, closeable = true, main_thread = true)
+
+test "a text field holds, resets and commits text":
+    var field = try TextField("Layer 2", placeholder = "Name")
+    defer field.close()
+    let current = try field.text()
+    defer current.release()
+    assert(current.value == "Layer 2")
+    try field.set_text("Background")
+    let again = try field.text()
+    defer again.release()
+    assert(again.value == "Background")

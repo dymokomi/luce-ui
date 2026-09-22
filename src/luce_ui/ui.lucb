@@ -12,6 +12,9 @@ import luce_ui.widgets.button as button
 import luce_ui.widgets.slider as slider
 import luce_ui.widgets.shelf as shelf
 import luce_ui.widgets.rule as rule
+import luce_ui.widgets.checkbox as checkbox
+import luce_ui.widgets.text_field as text_field
+import luce_ui.widgets.number_field as number_field
 import luce_ui.widgets.curve_editor as curve_editor
 import luce_ui.widgets.spacer as spacer
 import luce_ui.widgets.viewport as viewport
@@ -41,6 +44,9 @@ pub type Button = button.Button
 pub type Slider = slider.Slider
 pub type Shelf = shelf.Shelf
 pub type Rule = rule.Rule
+pub type Checkbox = checkbox.Checkbox
+pub type TextField = text_field.TextField
+pub type NumberField = number_field.NumberField
 pub type ButtonStyle = button.ButtonStyle
 pub type CurveEditor = curve_editor.CurveEditor
 pub type Spacer = spacer.Spacer
@@ -59,6 +65,9 @@ pub let button_type = button.button_type
 pub let slider_type = slider.slider_type
 pub let shelf_type = shelf.shelf_type
 pub let rule_type = rule.rule_type
+pub let checkbox_type = checkbox.checkbox_type
+pub let text_field_type = text_field.text_field_type
+pub let number_field_type = number_field.number_field_type
 pub let curve_editor_type = curve_editor.curve_editor_type
 pub let text_type = text.text_type
 pub let spacer_type = spacer.spacer_type
@@ -146,6 +155,7 @@ pub func draw_icon(target: interop.View[gpu.RenderTarget], name: str, bounds: gp
 ## Whether `name` is an icon in the set.
 pub func icon_known(name: str) -> bool:
     return icons.known(name)
+
 pub type Icon = icon.Icon
 pub let icon_type = icon.icon_type
 pub type PaneHeader = pane_header.PaneHeader

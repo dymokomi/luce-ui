@@ -1,0 +1,361 @@
+import gpu
+import interop
+import math
+import ownership
+import strings
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+from luce_ui.text.line_input import LineInput
+import input
+from luce_ui.font import Font, selected_font
+
+## A number field after eleusis's scrubber: drag horizontally to change the value
+## (a step per two pixels; Shift ten times as fast), click without dragging to
+## type it, Enter commits, Escape cancels, arrows step when focused, and a
+## cmd/ctrl-click puts the default back. The value is clamped to
+## `minimum..maximum`, snapped to `step` and shown with `decimals` places and an
+## optional `suffix`. `on_change` fires on every change; `on_begin`/`on_end`
+## bracket one drag so a caller can make it a single undo step.
+pub struct NumberField: Widget:
+    let box: interop.Reference[Layout]
+    let font: interop.Reference[Font]
+    var input: LineInput
+    var suffix: interop.Owned[str]
+    var minimum: f64
+    var maximum: f64
+    var step: f64
+    var decimals: i64
+    var fallback: f64
+    var current: f64
+    var cells: f64
+    var editing: bool
+    var pressed: bool
+    var scrubbing: bool
+    var press_x: f64
+    var press_value: f64
+    let changed: interop.Signal[f64]
+    let began: interop.Signal[unit]
+    let ended: interop.Signal[unit]
+
+    pub func init(value: f64 = 0.0, minimum: f64 = -1.0e9, maximum: f64 = 1.0e9, step: f64 = 1.0, decimals: i64 = 0,
+                  suffix: str = "", font: interop.Reference[Font]? = none, cells: f64 = 7.0) -> !:
+        if not math.is_finite(minimum) or not math.is_finite(maximum) or maximum <= minimum or not math.is_finite(value) or not math.is_finite(step) or step < 0.0:
+            error(result.invalid, "a number field needs finite bounds with maximum above minimum, a finite value and a nonnegative step")
+        if decimals < 0 or decimals > 6:
+            error(result.invalid, "number field decimals must be 0..6")
+        var selected = try selected_font(font)
+        errdefer selected.release()
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_shrink(vertical = 0.0)
+        box.value().set_focusable(true)
+        box.value().set_text_input(true)
+        box.value().set_cursor(input.Cursor.resize_horizontal)
+        var line = try LineInput()
+        errdefer line.close()
+        let changed = try interop.Signal[f64]()
+        errdefer changed.release()
+        let began = try interop.Signal[unit]()
+        errdefer began.release()
+        let ended = try interop.Signal[unit]()
+        errdefer ended.release()
+        self.suffix = try interop.copy_text(suffix)
+        self.box = box
+        self.font = selected
+        self.input = line
+        self.minimum = minimum
+        self.maximum = maximum
+        self.step = step
+        self.decimals = decimals
+        let clamped = math.clamp(value, minimum, maximum)
+        self.fallback = clamped
+        self.current = clamped
+        self.cells = math.clamp(cells, 3.0, 40.0)
+        self.editing = false
+        self.pressed = false
+        self.scrubbing = false
+        self.press_x = 0.0
+        self.press_value = 0.0
+        self.changed = changed
+        self.began = began
+        self.ended = ended
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func value() -> f64:
+        return self.current
+
+    ## Set the value from code, clamped and snapped; no signal.
+    pub mutating func set_value(value: f64) -> !:
+        if not math.is_finite(value):
+            error(result.invalid, "number field values must be finite")
+        self.current = self.snap(value)
+        self.editing = false
+        self.box.value().invalidate()
+
+    ## What a cmd/ctrl-click puts back.
+    pub mutating func set_default(value: f64) -> !:
+        if not math.is_finite(value):
+            error(result.invalid, "number field defaults must be finite")
+        self.fallback = self.snap(value)
+
+    pub mutating func set_range(minimum: f64, maximum: f64) -> !:
+        if not math.is_finite(minimum) or not math.is_finite(maximum) or maximum <= minimum:
+            error(result.invalid, "a number field needs finite bounds with maximum above minimum")
+        self.minimum = minimum
+        self.maximum = maximum
+        self.current = self.snap(self.current)
+        self.box.value().invalidate()
+
+    pub func on_change(callback: interop.Callback[f64, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.changed.connect(callback)
+
+    pub func on_begin(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.began.connect(callback)
+
+    pub func on_end(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.ended.connect(callback)
+
+    func snap(value: f64) -> f64:
+        var snapped = value
+        if self.step > 0.0:
+            snapped = self.minimum + math.floor((value - self.minimum) / self.step + 0.5) * self.step
+        return math.clamp(snapped, self.minimum, self.maximum)
+
+    mutating func change(value: f64) -> interop.Outcome[unit]:
+        let snapped = self.snap(value)
+        if snapped == self.current:
+            return result.success[unit](())
+        self.current = snapped
+        self.box.value().invalidate()
+        return self.changed.emit(snapped)
+
+    ## One increment for arrows and scrubbing: the step, or a two-hundredth of the range.
+    func increment() -> f64:
+        return self.step if self.step > 0.0 else (self.maximum - self.minimum) / 200.0
+
+    mutating func begin_editing() -> !:
+        var digits: u8[48]
+        let shown = try format_number(digits, self.current, self.decimals)
+        try self.input.set_text(shown)
+        self.editing = true
+        self.box.value().set_cursor(input.Cursor.text)
+        self.box.value().invalidate()
+
+    mutating func finish_editing(keep: bool) -> interop.Outcome[unit]:
+        self.editing = false
+        self.box.value().set_cursor(input.Cursor.resize_horizontal)
+        self.box.value().invalidate()
+        if not keep:
+            return result.success[unit](())
+        let typed = self.input.text() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer typed.release()
+        let parsed = strings.parse_f64(trimmed(typed.value)) catch _:
+            recover self.current
+        if not math.is_finite(parsed):
+            return result.success[unit](())
+        return self.change(parsed)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return result.success[Size](Size(self.font.value().advance() * self.cells, self.box.value().theme().row_height(self.font)))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        let enabled = self.box.value().is_enabled()
+        let focused = self.box.value().is_focused()
+        let radius = theme.control_radius
+        let border = theme.active_border if focused else (theme.hover_border() if self.box.value().contains_pointer() else theme.border)
+        let thickness = 2.0 if focused else 1.0
+        try painter.rounded_rectangle(gpu.Rect(width = size.width, height = size.height), border, radius)
+        try painter.rounded_rectangle(gpu.Rect(thickness, thickness, size.width - thickness * 2.0, size.height - thickness * 2.0), theme.sunken, math.max(0.0, radius - thickness))
+        let inset = self.font.value().advance() * 0.75
+        let text_y = math.max(0.0, (size.height - self.font.value().height()) * 0.5)
+        if self.editing:
+            try self.input.paint(&painter, self.font, theme, inset, text_y, size.width - inset * 2.0)
+            return
+        var digits: u8[48]
+        let shown = try format_number(digits, self.current, self.decimals)
+        let advance = self.font.value().advance()
+        # Right-aligned value, then the suffix in the muted colour.
+        let suffix_width = (f64)self.suffix.value.length * advance
+        let value_width = try self.font.value().measure(shown)
+        var x = size.width - inset - suffix_width - value_width
+        if x < inset:
+            x = inset
+        try painter.text(shown, x, text_y, color = theme.foreground if enabled else theme.muted, font = self.font)
+        if self.suffix.value.length > 0:
+            try painter.text(self.suffix.value, x + value_width, text_y, color = theme.muted, font = self.font)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if event.cancelled:
+            self.pressed = false
+            if self.scrubbing:
+                self.scrubbing = false
+                return self.ended.emit(())
+            if self.editing:
+                return self.finish_editing(false)
+            return result.success[unit](())
+        if not self.box.value().is_enabled():
+            return result.success[unit](())
+        let bounds = self.box.value().bounds()
+        let inset = self.font.value().advance() * 0.75
+        if self.editing:
+            if event.kind == input.EventKind.pointer_down or event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_up:
+                if event.kind == input.EventKind.pointer_down and not event.inside:
+                    return self.finish_editing(true)
+                self.input.pointer(event, self.font, inset, 0.0, bounds.width - inset * 2.0, bounds.height) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                self.box.value().invalidate()
+                return result.success[unit](())
+            if event.kind == input.EventKind.focus_lost:
+                return self.finish_editing(true)
+            if event.kind == input.EventKind.key_down and event.key == input.Key.escape:
+                return self.finish_editing(false)
+            if event.kind == input.EventKind.key_down and event.key == input.Key.enter and not event.repeated:
+                return self.finish_editing(true)
+            if event.kind == input.EventKind.key_down or event.kind == input.EventKind.text_input:
+                let mutated = self.input.event(event) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                if mutated:
+                    self.box.value().invalidate()
+            return result.success[unit](())
+        if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
+            self.box.value().request_focus()
+            if event.control or event.meta:
+                return self.change(self.fallback)
+            self.pressed = true
+            self.scrubbing = false
+            self.press_x = event.x
+            self.press_value = self.current
+            return result.success[unit](())
+        if event.kind == input.EventKind.pointer_moved:
+            if self.pressed:
+                let travelled = event.x - self.press_x
+                if not self.scrubbing and math.abs(travelled) >= 2.0:
+                    self.scrubbing = true
+                    let outcome = self.began.emit(())
+                    if not outcome.is_success():
+                        return outcome
+                if self.scrubbing:
+                    let per_pixel = self.increment() * 0.5 * (10.0 if event.shift else 1.0)
+                    return self.change(self.press_value + travelled * per_pixel)
+            else:
+                self.box.value().invalidate()
+            return result.success[unit](())
+        if event.kind == input.EventKind.pointer_up and event.button == 0:
+            let was_pressed = self.pressed
+            self.pressed = false
+            if self.scrubbing:
+                self.scrubbing = false
+                return self.ended.emit(())
+            if was_pressed and event.inside:
+                self.begin_editing() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+            return result.success[unit](())
+        if event.kind == input.EventKind.key_down:
+            let amount = self.increment() * (10.0 if event.shift else 1.0)
+            if event.key == input.Key.up or event.key == input.Key.right:
+                return self.change(self.current + amount)
+            if event.key == input.Key.down or event.key == input.Key.left:
+                return self.change(self.current - amount)
+            if event.key == input.Key.enter and not event.repeated:
+                self.begin_editing() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.font.release()
+        self.input.close()
+        self.changed.close()
+        self.changed.release()
+        self.began.close()
+        self.began.release()
+        self.ended.close()
+        self.ended.release()
+        self.suffix.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+        self.changed.trace(visit, context)
+        self.began.trace(visit, context)
+        self.ended.trace(visit, context)
+        self.suffix.trace(visit, context)
+
+## `text` without leading and trailing spaces.
+func trimmed(text: str) -> str:
+    var start: usize = 0
+    var end = text.length
+    while start < end and text.bytes[start] == ' ':
+        start += 1
+    while end > start and text.bytes[end - 1] == ' ':
+        end -= 1
+    return (str)text.bytes[start..<end]
+
+## `value` with `decimals` places, into `digits`.
+pub func format_number(digits: u8[], value: f64, decimals: i64) -> str!:
+    var scale = 1.0
+    for _ in 0..<decimals:
+        scale *= 10.0
+    let scaled = (i64)math.floor(math.abs(value) * scale + 0.5)
+    var whole = scaled
+    var fraction: i64 = 0
+    if decimals > 0:
+        let divisor = (i64)scale
+        whole = scaled // divisor
+        fraction = scaled % divisor
+    var end = digits.length
+    if decimals > 0:
+        var remaining = fraction
+        for _ in 0..<decimals:
+            end -= 1
+            digits[end] = (u8)('0' + (u8)(remaining % 10))
+            remaining //= 10
+        end -= 1
+        digits[end] = '.'
+    if whole == 0:
+        end -= 1
+        digits[end] = '0'
+    while whole > 0 and end > 0:
+        end -= 1
+        digits[end] = (u8)('0' + (u8)(whole % 10))
+        whole //= 10
+    if value < 0.0 and scaled != 0 and end > 0:
+        end -= 1
+        digits[end] = '-'
+    return (str)digits[end..]
+
+pub let number_field_type: interop.Type[NumberField] = interop.Type[NumberField]("NumberField", NumberField.close, NumberField.trace, closeable = true, main_thread = true)
+
+test "a number field clamps, snaps, formats and parses":
+    var field = try NumberField(50.0, 0.0, 100.0, 1.0, 0, "%")
+    defer field.close()
+    assert(field.value() == 50.0)
+    try field.set_value(250.0)
+    assert(field.value() == 100.0)
+    try field.set_value(33.4)
+    assert(field.value() == 33.0)
+    var digits: u8[48]
+    assert((try format_number(digits, 33.0, 0)) == "33")
+    assert((try format_number(digits, 2.5, 1)) == "2.5")
+    assert((try format_number(digits, -0.25, 2)) == "-0.25")
+    assert(trimmed("  12 ") == "12")
+    var rejected = false
+    discard(NumberField(0.0, 5.0, 5.0) catch failure:
+        assert(failure.code == result.invalid)
+        rejected = true
+        recover try NumberField())
+    assert(rejected)

@@ -1,0 +1,142 @@
+import gpu
+import interop
+import math
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+from luce_ui.geometry import Point
+import input
+from luce_ui.font import Font, selected_font
+
+## A checkbox after eleusis: a 14-point rounded box (the accent when on, with a
+## tick in `accent_text`; the sunken surface with a border when off) and a label.
+## The whole row toggles on click; Space or Enter toggle when focused.
+## `on_change` fires with the new state on every change the user makes.
+pub struct Checkbox: Widget:
+    let box: interop.Reference[Layout]
+    let font: interop.Reference[Font]
+    var caption: interop.Owned[str]
+    var checked: bool
+    let changed: interop.Signal[bool]
+
+    pub func init(text: str = "", checked: bool = false, font: interop.Reference[Font]? = none) -> !:
+        var selected = try selected_font(font)
+        errdefer selected.release()
+        discard(try selected.value().measure(text))
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_shrink(vertical = 0.0)
+        box.value().set_focusable(true)
+        box.value().set_cursor(input.Cursor.pointer)
+        let signal = try interop.Signal[bool]()
+        errdefer signal.release()
+        self.caption = try interop.copy_text(text)
+        self.box = box
+        self.font = selected
+        self.checked = checked
+        self.changed = signal
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func is_checked() -> bool:
+        return self.checked
+
+    ## Set the state from code; no change signal.
+    pub mutating func set_checked(checked: bool):
+        if checked == self.checked:
+            return
+        self.checked = checked
+        self.box.value().invalidate()
+
+    pub mutating func set_text(text: str) -> !:
+        discard(try self.font.value().measure(text))
+        let replacement = try interop.copy_text(text)
+        self.caption.release()
+        self.caption = replacement
+        self.box.value().invalidate()
+
+    pub func on_change(callback: interop.Callback[bool, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.changed.connect(callback)
+
+    mutating func toggle() -> interop.Outcome[unit]:
+        self.checked = not self.checked
+        self.box.value().invalidate()
+        return self.changed.emit(self.checked)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let label = self.font.value().measure(self.caption.value) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        let gap = self.font.value().advance() * 0.75 if self.caption.value.length > 0 else 0.0
+        return result.success[Size](Size(box_side + gap + label, self.box.value().theme().row_height(self.font)))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        let enabled = self.box.value().is_enabled()
+        let top = math.max(0.0, math.floor((size.height - box_side) * 0.5))
+        let well = gpu.Rect(0.0, top, box_side, box_side)
+        let radius = math.min(theme.control_radius, 5.0)
+        # Border then face, so the border is one point all round.
+        let border = theme.active_border if self.box.value().is_focused() else (theme.accent if self.checked else theme.border)
+        try painter.rounded_rectangle(well, border if enabled else theme.muted, radius)
+        let face = theme.accent if self.checked else (theme.hover() if self.box.value().contains_pointer() else theme.sunken)
+        try painter.rounded_rectangle(gpu.Rect(1.0, top + 1.0, box_side - 2.0, box_side - 2.0), face if enabled else theme.sunken, math.max(0.0, radius - 1.0))
+        if self.checked:
+            # The tick: two strokes inside the box.
+            let ink = theme.accent_text if enabled else theme.muted
+            try painter.line(layout_point(3.5, top + 7.5), layout_point(6.0, top + 10.0), 1.8, ink)
+            try painter.line(layout_point(6.0, top + 10.0), layout_point(10.8, top + 4.2), 1.8, ink)
+        if self.caption.value.length > 0:
+            let x = box_side + self.font.value().advance() * 0.75
+            try painter.text(self.caption.value, x, math.max(0.0, (size.height - self.font.value().height()) * 0.5), color = theme.foreground if enabled else theme.muted, font = self.font)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if event.cancelled or not self.box.value().is_enabled():
+            return result.success[unit](())
+        if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
+            self.box.value().request_focus()
+            return self.toggle()
+        if event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_left:
+            self.box.value().invalidate()
+        elif event.kind == input.EventKind.key_down and not event.repeated and (event.key == input.Key.space or event.key == input.Key.enter):
+            return self.toggle()
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.font.release()
+        self.changed.close()
+        self.changed.release()
+        self.caption.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+        self.caption.trace(visit, context)
+        self.changed.trace(visit, context)
+
+## The box is 14 points, the weight of a capital letter beside 13-point text.
+let box_side: f64 = 14.0
+
+func layout_point(x: f64, y: f64) -> Point:
+    return Point(x, y)
+
+pub let checkbox_type: interop.Type[Checkbox] = interop.Type[Checkbox]("Checkbox", Checkbox.close, Checkbox.trace, closeable = true, main_thread = true)
+
+test "a checkbox toggles and reports its state":
+    var box = try Checkbox("Visible", true)
+    defer box.close()
+    assert(box.is_checked())
+    box.set_checked(false)
+    assert(not box.is_checked())
+    try box.set_text("Clipped")
