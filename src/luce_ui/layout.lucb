@@ -785,7 +785,7 @@ pub struct Tree:
             self.pointer_present = false
             self.update_hover()
             return result.success[unit](())
-        if event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_down or event.kind == input.EventKind.pointer_up or event.kind == input.EventKind.scroll:
+        if event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_down or event.kind == input.EventKind.pointer_up or event.kind == input.EventKind.scroll or event.kind == input.EventKind.magnify:
             self.pointer_x = event.x
             self.pointer_y = event.y
             self.pointer_present = math.is_finite(event.x) and math.is_finite(event.y)
@@ -910,7 +910,7 @@ pub struct Tree:
             self.capture = 0
         elif event.kind == input.EventKind.pointer_moved:
             destination = self.capture if self.capture != 0 else self.hit(event.x, event.y)
-        elif event.kind == input.EventKind.scroll:
+        elif event.kind == input.EventKind.scroll or event.kind == input.EventKind.magnify:
             destination = self.hit(event.x, event.y)
         elif event.kind == input.EventKind.key_down or event.kind == input.EventKind.key_up or event.kind == input.EventKind.text_input or event.kind == input.EventKind.modifiers_changed:
             destination = self.focus
