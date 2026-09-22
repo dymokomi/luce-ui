@@ -10,6 +10,7 @@ import luce_ui.result as result
 import luce_ui.widgets.text as text
 import luce_ui.widgets.button as button
 import luce_ui.widgets.slider as slider
+import luce_ui.widgets.curve_editor as curve_editor
 import luce_ui.widgets.spacer as spacer
 import luce_ui.widgets.viewport as viewport
 import luce_ui.widgets.vstack as vstack
@@ -36,6 +37,7 @@ pub let image_type = image.image_type
 pub type Text = text.Text
 pub type Button = button.Button
 pub type Slider = slider.Slider
+pub type CurveEditor = curve_editor.CurveEditor
 pub type Spacer = spacer.Spacer
 pub type Viewport = viewport.Viewport
 pub type VStack = vstack.VStack
@@ -50,6 +52,7 @@ pub let font_type = font.font_type
 pub let busy: ErrorCode = result.busy
 pub let button_type = button.button_type
 pub let slider_type = slider.slider_type
+pub let curve_editor_type = curve_editor.curve_editor_type
 pub let text_type = text.text_type
 pub let spacer_type = spacer.spacer_type
 pub let viewport_type = viewport.viewport_type

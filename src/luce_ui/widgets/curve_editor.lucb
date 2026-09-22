@@ -1,0 +1,313 @@
+import gpu
+import interop
+import math
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+from luce_ui.geometry import Point
+import input
+
+## The most control points a curve takes.
+pub let curve_editor_points: usize = 16
+
+## A square tone-curve editor after Photoshop's Curves: a grid with the curve
+## through up to sixteen control points. Click on empty space to add a point,
+## drag a point to move it (the end points slide only vertically), drag a
+## point well outside the square or press Delete on the selected one to
+## remove it. `on_change` fires after every edit; the points are read back
+## with `point_count`, `point_x` and `point_y`, and the curve is a monotone
+## cubic (Fritsch–Carlson) that never overshoots between points.
+pub struct CurveEditor: Widget:
+    let box: interop.Reference[Layout]
+    var xs: f64[16]
+    var ys: f64[16]
+    var count: usize
+    var selected: i64
+    var dragging: bool
+    let changed: interop.Signal[unit]
+
+    pub func init() -> !:
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_shrink(0.0, 0.0)
+        box.value().set_focusable(true)
+        box.value().set_cursor(input.Cursor.pointer)
+        let signal = try interop.Signal[unit]()
+        errdefer signal.release()
+        var xs: f64[16]
+        var ys: f64[16]
+        xs[1] = 1.0
+        ys[1] = 1.0
+        self.box = box
+        self.changed = signal
+        self.xs = xs
+        self.ys = ys
+        self.count = 2
+        self.selected = -1
+        self.dragging = false
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func point_count() -> i64:
+        return (i64)self.count
+
+    pub func point_x(index: i64) -> f64!:
+        if index < 0 or index >= (i64)self.count:
+            error(result.invalid, "no such curve point")
+        return self.xs[(usize)index]
+
+    pub func point_y(index: i64) -> f64!:
+        if index < 0 or index >= (i64)self.count:
+            error(result.invalid, "no such curve point")
+        return self.ys[(usize)index]
+
+    ## Back to the identity, (0, 0) to (1, 1); no change signal.
+    pub mutating func reset():
+        self.count = 2
+        self.xs[0] = 0.0
+        self.ys[0] = 0.0
+        self.xs[1] = 1.0
+        self.ys[1] = 1.0
+        self.selected = -1
+        self.box.value().invalidate()
+
+    ## Add a point from code, sorted by x; one at an existing x replaces it. No change signal.
+    pub mutating func add_point(x: f64, y: f64) -> !:
+        discard(try self.insert(x, y))
+        self.box.value().invalidate()
+
+    ## The curve's output for `x`.
+    pub func evaluate(x: f64) -> f64:
+        if self.count == 0:
+            return math.clamp(x, 0.0, 1.0)
+        if self.count == 1 or x <= self.xs[0]:
+            return self.ys[0]
+        let last = self.count - 1
+        if x >= self.xs[last]:
+            return self.ys[last]
+        var segment: usize = 0
+        while segment + 1 < last and x >= self.xs[segment + 1]:
+            segment += 1
+        let h = self.xs[segment + 1] - self.xs[segment]
+        let t = (x - self.xs[segment]) / h
+        let m0 = self.tangent(segment)
+        let m1 = self.tangent(segment + 1)
+        let y0 = self.ys[segment]
+        let y1 = self.ys[segment + 1]
+        let t2 = t * t
+        let t3 = t2 * t
+        let value = (2.0 * t3 - 3.0 * t2 + 1.0) * y0 + (t3 - 2.0 * t2 + t) * h * m0 + (-2.0 * t3 + 3.0 * t2) * y1 + (t3 - t2) * h * m1
+        return math.clamp(value, 0.0, 1.0)
+
+    pub func on_change(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.changed.connect(callback)
+
+    func tangent(index: usize) -> f64:
+        let last = self.count - 1
+        if index == 0:
+            return self.secant(0)
+        if index == last:
+            return self.secant(last - 1)
+        let before = self.secant(index - 1)
+        let after = self.secant(index)
+        if before * after <= 0.0:
+            return 0.0
+        return 2.0 / (1.0 / before + 1.0 / after)
+
+    func secant(segment: usize) -> f64:
+        let h = self.xs[segment + 1] - self.xs[segment]
+        if h <= 0.0:
+            return 0.0
+        return (self.ys[segment + 1] - self.ys[segment]) / h
+
+    ## Insert or replace a point; its index.
+    mutating func insert(x: f64, y: f64) -> usize!:
+        if not math.is_finite(x) or not math.is_finite(y) or x < 0.0 or x > 1.0 or y < 0.0 or y > 1.0:
+            error(result.invalid, "curve points lie in 0..1")
+        var index: usize = 0
+        while index < self.count and self.xs[index] < x:
+            index += 1
+        if index < self.count and self.xs[index] == x:
+            self.ys[index] = y
+            return index
+        if self.count == curve_editor_points:
+            error(result.invalid, "a curve takes at most 16 points")
+        var slot = self.count
+        while slot > index:
+            self.xs[slot] = self.xs[slot - 1]
+            self.ys[slot] = self.ys[slot - 1]
+            slot -= 1
+        self.xs[index] = x
+        self.ys[index] = y
+        self.count += 1
+        return index
+
+    mutating func remove(index: usize):
+        if self.count <= 2 or index >= self.count:
+            return
+        for slot in index..<(self.count - 1):
+            self.xs[slot] = self.xs[slot + 1]
+            self.ys[slot] = self.ys[slot + 1]
+        self.count -= 1
+
+    ## The square the curve is drawn in, inset for the point handles.
+    func plot(width: f64, height: f64) -> gpu.Rect:
+        let inset = 6.0
+        let side = math.max(16.0, math.min(width, height) - inset * 2.0)
+        return gpu.Rect(inset, inset + math.max(0.0, (height - inset * 2.0 - side) * 0.5), side, side)
+
+    func to_plot(plot: gpu.Rect, x: f64, y: f64) -> Point:
+        return Point(plot.x + x * plot.width, plot.y + (1.0 - y) * plot.height)
+
+    ## The point within reach of (`x`, `y`) in widget coordinates, or -1.
+    func hit(plot: gpu.Rect, x: f64, y: f64) -> i64:
+        var best: i64 = -1
+        var nearest = 10.0
+        for index in 0..<self.count:
+            let at = self.to_plot(plot, self.xs[index], self.ys[index])
+            let distance = math.max(math.abs(at.x - x), math.abs(at.y - y))
+            if distance <= nearest:
+                nearest = distance
+                best = (i64)index
+        return best
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        discard(available)
+        return result.success[Size](Size(212.0, 212.0))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        let enabled = self.box.value().is_enabled()
+        let plot = self.plot(size.width, size.height)
+        try painter.rectangle(plot, theme.background)
+        # A quarter grid and the identity diagonal.
+        for step in 0..<(usize)5:
+            let offset = math.floor((f64)step * plot.width / 4.0)
+            try painter.rectangle(gpu.Rect(plot.x + offset, plot.y, 1.0, plot.height), theme.border)
+            try painter.rectangle(gpu.Rect(plot.x, plot.y + offset, plot.width, 1.0), theme.border)
+        try painter.line(Point(plot.x, plot.y + plot.height), Point(plot.x + plot.width, plot.y), 1.0, theme.border)
+        # The curve, sampled finely enough to look smooth.
+        let ink = theme.accent if enabled else theme.muted
+        var previous = self.to_plot(plot, 0.0, self.evaluate(0.0))
+        for step in 1..<(usize)65:
+            let x = (f64)step / 64.0
+            let next = self.to_plot(plot, x, self.evaluate(x))
+            try painter.line(previous, next, 2.0, ink)
+            previous = next
+        for index in 0..<self.count:
+            let at = self.to_plot(plot, self.xs[index], self.ys[index])
+            let handle = 7.0 if (i64)index == self.selected else 5.0
+            try painter.rectangle(gpu.Rect(at.x - handle * 0.5, at.y - handle * 0.5, handle, handle), theme.foreground if (i64)index != self.selected else ink)
+
+    ## Move the dragged point to (`x`, `y`) in plot coordinates: ends stay at their x, the others stay between their neighbours.
+    mutating func drag_to(plot: gpu.Rect, x: f64, y: f64) -> interop.Outcome[unit]:
+        let index = (usize)self.selected
+        var fx = math.clamp((x - plot.x) / plot.width, 0.0, 1.0)
+        let fy = math.clamp(1.0 - (y - plot.y) / plot.height, 0.0, 1.0)
+        if index == 0:
+            fx = self.xs[0]
+        elif index == self.count - 1:
+            fx = self.xs[index]
+        else:
+            let gap = 1.0 / 255.0
+            fx = math.clamp(fx, self.xs[index - 1] + gap, self.xs[index + 1] - gap)
+        self.xs[index] = fx
+        self.ys[index] = fy
+        self.box.value().invalidate()
+        return self.changed.emit(())
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if event.cancelled:
+            self.dragging = false
+            self.box.value().invalidate()
+            return result.success[unit](())
+        if not self.box.value().is_enabled():
+            return result.success[unit](())
+        let bounds = self.box.value().bounds()
+        let plot = self.plot(bounds.width, bounds.height)
+        if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
+            var index = self.hit(plot, event.x, event.y)
+            if index < 0:
+                let x = math.clamp((event.x - plot.x) / plot.width, 0.0, 1.0)
+                let y = math.clamp(1.0 - (event.y - plot.y) / plot.height, 0.0, 1.0)
+                let added = self.insert(x, y) catch failure:
+                    discard(failure)
+                    return result.success[unit](())
+                index = (i64)added
+            self.selected = index
+            self.dragging = true
+            return self.drag_to(plot, event.x, event.y)
+        if event.kind == input.EventKind.pointer_moved:
+            if self.dragging and self.selected >= 0:
+                return self.drag_to(plot, event.x, event.y)
+        elif event.kind == input.EventKind.pointer_up and event.button == 0:
+            if self.dragging and self.selected > 0 and self.selected < (i64)self.count - 1:
+                # Dragged well outside the square: the point goes away.
+                let margin = 24.0
+                if event.x < plot.x - margin or event.x > plot.x + plot.width + margin or event.y < plot.y - margin or event.y > plot.y + plot.height + margin:
+                    self.remove((usize)self.selected)
+                    self.selected = -1
+                    self.box.value().invalidate()
+                    self.dragging = false
+                    return self.changed.emit(())
+            self.dragging = false
+            self.box.value().invalidate()
+        elif event.kind == input.EventKind.key_down:
+            if (event.key == input.Key.backspace or event.key == input.Key.delete) and self.selected > 0 and self.selected < (i64)self.count - 1:
+                self.remove((usize)self.selected)
+                self.selected = -1
+                self.box.value().invalidate()
+                return self.changed.emit(())
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.changed.close()
+        self.changed.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+        self.changed.trace(visit, context)
+
+pub let curve_editor_type: interop.Type[CurveEditor] = interop.Type[CurveEditor]("CurveEditor", CurveEditor.close, CurveEditor.trace, closeable = true, main_thread = true)
+
+test "curve editor points sort, replace, interpolate monotonically and remove":
+    var editor = try CurveEditor()
+    defer editor.close()
+    assert(editor.point_count() == 2 and math.abs(editor.evaluate(0.3) - 0.3) < 1e-9)
+    try editor.add_point(0.5, 0.75)
+    try editor.add_point(0.25, 0.3)
+    assert(editor.point_count() == 4 and (try editor.point_x(1)) == 0.25 and (try editor.point_x(2)) == 0.5)
+    var previous = 0.0
+    var x = 0.0
+    while x <= 1.0:
+        let value = editor.evaluate(x)
+        assert(value >= previous - 1e-9 and value <= 1.0)
+        previous = value
+        x += 0.01
+    try editor.add_point(0.5, 0.6)
+    assert(editor.point_count() == 4 and math.abs(editor.evaluate(0.5) - 0.6) < 1e-9)
+    editor.remove(2)
+    assert(editor.point_count() == 3)
+    editor.remove(0)
+    assert(editor.point_count() == 2 and (try editor.point_x(0)) == 0.25)
+    editor.remove(1)
+    assert(editor.point_count() == 2)
+    editor.reset()
+    assert(editor.point_count() == 2 and (try editor.point_y(1)) == 1.0)
+    var rejected = false
+    editor.add_point(2.0, 0.0) catch failure:
+        assert(failure.code == result.invalid)
+        rejected = true
+    assert(rejected)
