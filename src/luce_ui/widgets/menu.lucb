@@ -18,7 +18,7 @@ from luce_ui.widgets.action_popup import ActionPopup, action_popup_type
 
 pub struct Menu: Widget:
     let box: interop.Reference[Layout]
-    let caption: interop.Owned[str]
+    var caption: interop.Owned[str]
     let font: interop.Reference[Font]
     let popup: interop.Reference[ActionPopup]
     var pressed: bool
