@@ -20,7 +20,7 @@ cache.mkdir(parents=True, exist_ok=True)
 env = dict(os.environ, LUCE_BASE=str(args.base.resolve()),
            LUCE_STD=str(ROOT.parent / "luce-base/src/std"),
            LUCE_CACHE=str(cache))
-with tempfile.TemporaryDirectory(prefix="luce-ui-tests-") as temporary:
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True, prefix="luce-ui-tests-") as temporary:
     binary = Path(temporary) / "test"
     for compiler, entry in [(args.base, "main.lucb"), (args.luce, "controls.luc")]:
         for flags in modes:
