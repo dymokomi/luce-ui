@@ -43,12 +43,9 @@ pub func draw(painter: Painter*, kind: IconKind, bounds: gpu.Rect, color: gpu.Co
 pub func draw_named(painter: Painter*, name: str, bounds: gpu.Rect, color: gpu.Color) -> !:
     if bounds.width <= 0.0 or bounds.height <= 0.0:
         return
-    let source = icon_assets.source(name)
-    if source == "":
+    if icon_assets.source(name) == "":
         return
-    let drawing = try svg.parse(source)
-    defer drawing.release()
-    try render(painter, try drawing.get(), bounds, color)
+    try render(painter, name, bounds, color)
 
 ## Whether `name` is an icon in the set.
 pub func known(name: str) -> bool:
@@ -60,11 +57,48 @@ pub func draw_icon(target: interop.View[gpu.RenderTarget], name: str, bounds: gp
     defer painter.close()
     try draw_named(&painter, name, bounds, color)
 
-## Rasterise the drawing to an 8-bit coverage bitmap at the target's pixel scale
-## (round caps and joins, exact-area anti-aliasing, fill opacity — luce-svg's work)
-## and draw it the way glyphs are drawn: one coverage mask, tinted with `color`,
-## snapped so each texel lands on one physical pixel.
-func render(painter: Painter*, drawing: svg.Drawing*, bounds: gpu.Rect, color: gpu.Color) -> !:
+## One rasterised icon, kept for reuse: the name and pixel size it was drawn at.
+struct CachedIcon:
+    var name: u8[]
+    var width: u32
+    var height: u32
+    var coverage: u8[]
+    var used: u64
+
+## Icons are parsed and rasterised once per name and pixel size, then drawn from
+## here; the least recently used slot gives way. Icons draw on the UI thread only.
+var icon_cache: CachedIcon[128]
+var icon_clock: u64 = 0
+
+## The coverage bitmap for `name` at `width` by `height` pixels, cached.
+func cached(name: str, width: u32, height: u32) -> const u8[]!:
+    icon_clock += 1
+    var oldest: usize = 0
+    for index in 0..<icon_cache.length:
+        let entry = icon_cache[index]
+        if entry.width == width and entry.height == height and (str)entry.name == name:
+            icon_cache[index].used = icon_clock
+            return entry.coverage
+        if entry.used < icon_cache[oldest].used:
+            oldest = index
+    let drawing = try svg.parse(icon_assets.source(name))
+    defer drawing.release()
+    let coverage = try alloc u8[(usize)width * (usize)height] in memory.heap
+    errdefer free(coverage) in memory.heap
+    try svg.rasterize(try drawing.get(), width, height, coverage)
+    let copied = try alloc u8[name.length] in memory.heap
+    memory.copy(copied, name.bytes, name.length)
+    if icon_cache[oldest].coverage.length > 0:
+        free(icon_cache[oldest].coverage) in memory.heap
+    if icon_cache[oldest].name.length > 0:
+        free(icon_cache[oldest].name) in memory.heap
+    icon_cache[oldest] = CachedIcon(name = copied, width = width, height = height, coverage = coverage, used = icon_clock)
+    return coverage
+
+## Draw the icon from its coverage bitmap at the target's pixel scale (round caps
+## and joins, exact-area anti-aliasing, fill opacity — luce-svg's work) the way
+## glyphs are drawn: one tinted mask, snapped so each texel lands on one pixel.
+func render(painter: Painter*, name: str, bounds: gpu.Rect, color: gpu.Color) -> !:
     let view = painter.target()
     defer view.release()
     let destination = try view.get()
@@ -74,9 +108,19 @@ func render(painter: Painter*, drawing: svg.Drawing*, bounds: gpu.Rect, color: g
     let scale = math.clamp(size.scale, 0.5, 4.0)
     let width = (u32)math.max(1.0, math.floor(bounds.width * scale + 0.5))
     let height = (u32)math.max(1.0, math.floor(bounds.height * scale + 0.5))
-    let coverage = try alloc u8[(usize)width * (usize)height] in memory.heap
-    defer free(coverage) in memory.heap
-    try svg.rasterize(drawing, width, height, coverage)
+    let coverage = try cached(name, width, height)
     let x = math.floor(bounds.x * scale + 0.5) / scale
     let y = math.floor(bounds.y * scale + 0.5) / scale
     try destination.mask(coverage, width, height, gpu.Rect(x, y, (f64)width / scale, (f64)height / scale), color)
+
+test "the icon cache reuses a rasterised icon for the same name and size and evicts by age":
+    let first = try cached("brush-tool", 32, 32)
+    let again = try cached("brush-tool", 32, 32)
+    assert(first.data == again.data)
+    let other = try cached("brush-tool", 48, 48)
+    assert(other.data != first.data and other.length == 48 * 48)
+    var lit = false
+    for value in first:
+        if value == 255:
+            lit = true
+    assert(lit)
