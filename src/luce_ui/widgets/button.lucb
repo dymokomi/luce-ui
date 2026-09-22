@@ -177,6 +177,9 @@ pub struct Button: Widget:
         var x = theme.inset(self.font)
         if self.glyph.value.length > 0:
             let side = self.glyph_size()
+            # An icon alone sits in the middle of its square; before text it takes the inset.
+            if caption.value.length == 0:
+                x = math.max(0.0, (size.width - side) * 0.5)
             try icons.draw_named(&painter, self.glyph.value, gpu.Rect(x, math.max(0.0, (size.height - side) * 0.5), side, side), ink)
             x += side + (self.font.value().advance() * 0.5 if caption.value.length > 0 else 0.0)
         if caption.value.length > 0:
