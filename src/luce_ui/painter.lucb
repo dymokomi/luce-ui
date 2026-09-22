@@ -46,7 +46,7 @@ pub struct Painter:
     ## bit 1 top-left, 2 top-right, 4 bottom-right, 8 bottom-left (15 = all), so a
     ## tab can round its top only. One batched draw: a fan of triangles from the
     ## centre through eight-segment corner arcs.
-    pub func rounded_rectangle(rectangle: gpu.Rect, color: gpu.Color, radius: f64, opacity: f64 = 1.0, corners: u8 = 15) -> !:
+    pub func rounded_rectangle(rectangle: gpu.Rect, color: gpu.Color, radius: f64, opacity: f64 = 1.0, corners: i64 = 15) -> !:
         if not math.is_finite(radius) or radius < 0.0:
             error(result.invalid, "corner radius must be finite and nonnegative")
         let r = math.min(radius, math.min(rectangle.width, rectangle.height) * 0.5)
@@ -76,7 +76,7 @@ pub struct Painter:
             let oy = rectangle.y + r if corner == 0 or corner == 3 else rectangle.y + rectangle.height - r
             let start = -math.pi * 0.5 + (f64)corner * math.pi * 0.5
             # Clockwise from the top-right, the corner bits run 2, 4, 8, 1.
-            let bit: u8 = 2 if corner == 0 else (4 if corner == 1 else (8 if corner == 2 else 1))
+            let bit: i64 = 2 if corner == 0 else (4 if corner == 1 else (8 if corner == 2 else 1))
             let rounded = corners & bit != 0
             for step in 0..<(segments + 1):
                 let angle = start + (f64)step / (f64)segments * math.pi * 0.5
