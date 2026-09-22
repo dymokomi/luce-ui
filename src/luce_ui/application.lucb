@@ -1,3 +1,4 @@
+import dialogs
 import gpu
 import input
 import interop
@@ -164,6 +165,18 @@ pub struct Application:
     pub mutating func set_commands(commands: const interop.Reference[Command][]) -> !:
         try self.check()
         try self.commands.set(commands)
+
+    ## Show the desktop's open-file dialog with `message` and return the chosen
+    ## path, or an empty string when it was cancelled.
+    pub func open_file(message: str) -> interop.Owned[str]!:
+        let chosen = try dialogs.open_file(message) else return try interop.copy_text("")
+        return chosen
+
+    ## Show the desktop's save-file dialog suggesting `name` and return the chosen
+    ## path, or an empty string when it was cancelled.
+    pub func save_file(message: str, name: str) -> interop.Owned[str]!:
+        let chosen = try dialogs.save_file(message, name) else return try interop.copy_text("")
+        return chosen
 
     ## The registered command with this id, or none — for a keymap or script that
     ## drives the same commands the UI does. Trigger it, then release the reference.
