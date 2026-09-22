@@ -6,24 +6,31 @@ import luce_ui.result as result
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 
-## A one-point horizontal rule across its row: `border` between property rows,
-## or the backdrop for a structural edge when `structural`.
+## A one-point rule across its row (or down its column when `vertical`):
+## `border` between property rows, or the backdrop for a structural edge when
+## `structural`, such as the edge between a tool rail and a canvas.
 pub struct Rule: Widget:
     let box: interop.Reference[Layout]
     var structural: bool
+    var vertical: bool
 
-    pub func init(structural: bool = false) -> !:
+    pub func init(structural: bool = false, vertical: bool = false) -> !:
         let box = try layout.make_layout()
         errdefer box.release()
-        try box.value().set_shrink(vertical = 0.0)
+        if vertical:
+            try box.value().set_shrink(horizontal = 0.0)
+            try box.value().set_flex(horizontal = 0.0)
+        else:
+            try box.value().set_shrink(vertical = 0.0)
         self.box = box
         self.structural = structural
+        self.vertical = vertical
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
-        return result.success[Size](Size(0.0, 1.0))
+        return result.success[Size](Size(1.0, 0.0) if self.vertical else Size(0.0, 1.0))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
