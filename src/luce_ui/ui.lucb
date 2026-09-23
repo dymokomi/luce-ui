@@ -17,6 +17,8 @@ import luce_ui.widgets.dialog as dialog
 import luce_ui.widgets.hsb_field as hsb_field
 import luce_ui.widgets.shortcut_field as shortcut_field
 import luce_ui.widgets.shaded_field as shaded_field
+import luce_ui.widgets.accordion as accordion
+import luce_ui.widgets.tabs as tabs
 import luce_ui.widgets.text_field as text_field
 import luce_ui.widgets.number_field as number_field
 import luce_ui.widgets.curve_editor as curve_editor
@@ -54,6 +56,10 @@ pub type HsbField = hsb_field.HsbField
 pub type HueStrip = hsb_field.HueStrip
 pub type ShortcutField = shortcut_field.ShortcutField
 pub type ShadedField = shaded_field.ShadedField
+pub type Accordion = accordion.Accordion
+pub type SectionHeader = accordion.SectionHeader
+pub type Tabs = tabs.Tabs
+pub type TabBar = tabs.TabBar
 pub type TextField = text_field.TextField
 pub type NumberField = number_field.NumberField
 pub type ButtonStyle = button.ButtonStyle
@@ -80,6 +86,10 @@ pub let hsb_field_type = hsb_field.hsb_field_type
 pub let hue_strip_type = hsb_field.hue_strip_type
 pub let shortcut_field_type = shortcut_field.shortcut_field_type
 pub let shaded_field_type = shaded_field.shaded_field_type
+pub let accordion_type = accordion.accordion_type
+pub let section_header_type = accordion.section_header_type
+pub let tabs_type = tabs.tabs_type
+pub let tab_bar_type = tabs.tab_bar_type
 pub let text_field_type = text_field.text_field_type
 pub let number_field_type = number_field.number_field_type
 pub let curve_editor_type = curve_editor.curve_editor_type

@@ -1,0 +1,226 @@
+import gpu
+import interop
+import math
+import memory
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+import input
+from luce_ui.font import Font, selected_font
+
+## The bar of a tabbed panel: the titles on the strip, the selected one on the
+## surface with its top corners rounded, as the docking chrome draws panes.
+pub struct TabBar: Widget:
+    let box: interop.Reference[Layout]
+    let font: interop.Reference[Font]
+    var titles: interop.Owned[str][]
+    var selected: i64
+    ## A tab clicked but not yet taken by the panel, or -1.
+    var pending: i64
+
+    pub func init(titles: const str[], font: interop.Reference[Font]? = none, selected: i64 = 0) -> !:
+        if titles.length == 0:
+            error(result.invalid, "a tab bar needs at least one tab")
+        var chosen = try selected_font(font)
+        errdefer chosen.release()
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_shrink(vertical = 0.0)
+        box.value().set_cursor(input.Cursor.pointer)
+        var copies = try alloc interop.Owned[str][titles.length] in memory.heap
+        for index in 0..<titles.length:
+            copies[index] = try interop.copy_text(titles[index])
+        self.box = box
+        self.font = chosen
+        self.titles = copies
+        self.selected = math.iclamp(selected, 0, (i64)titles.length - 1)
+        self.pending = -1
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func selected_index() -> i64:
+        return self.selected
+
+    pub mutating func select(index: i64):
+        self.selected = math.iclamp(index, 0, (i64)self.titles.length - 1)
+        self.box.value().invalidate()
+
+    ## The tab clicked since the last take, or -1.
+    pub mutating func take_click() -> i64:
+        let was = self.pending
+        self.pending = -1
+        return was
+
+    func tab_width(index: usize) -> f64:
+        let text = self.font.value().measure(self.titles[index].value) catch failure:
+            discard(failure)
+            recover 0.0
+        return text + self.font.value().advance() * 2.5
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        var width = 0.0
+        for index in 0..<self.titles.length:
+            width += self.tab_width(index) + 2.0
+        return result.success[Size](Size(width, bar_height))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.strip)
+        let text_y = math.max(0.0, (size.height - self.font.value().height()) * 0.5)
+        var x = 0.0
+        for index in 0..<self.titles.length:
+            let width = self.tab_width(index)
+            let current = (i64)index == self.selected
+            if current:
+                try painter.rounded_rectangle(gpu.Rect(x, 2.0, width, size.height - 2.0), theme.panel, theme.control_radius + 1.0, 1.0, 3)
+            try painter.text(self.titles[index].value, x + self.font.value().advance() * 1.25, text_y, color = theme.foreground if current else theme.muted, font = self.font)
+            x += width + 2.0
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if event.cancelled or event.kind != input.EventKind.pointer_down or event.button != 0 or not event.inside:
+            return result.success[unit](())
+        var x = 0.0
+        for index in 0..<self.titles.length:
+            let width = self.tab_width(index)
+            if event.x >= x and event.x < x + width:
+                self.pending = (i64)index
+                self.box.value().invalidate()
+                return result.success[unit](())
+            x += width + 2.0
+        return result.success[unit](())
+
+    pub mutating func close():
+        for index in 0..<self.titles.length:
+            self.titles[index].release()
+        if self.titles.length > 0:
+            free(self.titles) in memory.heap
+        self.font.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+        for index in 0..<self.titles.length:
+            self.titles[index].trace(visit, context)
+
+pub let tab_bar_type: interop.Type[TabBar] = interop.Type[TabBar]("TabBar", TabBar.close, TabBar.trace, closeable = true, main_thread = true)
+
+let bar_height: f64 = 30.0
+
+## A tabbed panel: a bar of titles over one page at a time. Pages are any
+## widgets; the selected one is shown, the rest leave the layout.
+## `on_change` reports the selected index.
+pub struct Tabs: Widget:
+    let box: interop.Reference[Layout]
+    let bar: interop.Reference[TabBar]
+    var pages: interop.Reference[Layout][]
+    var selected: i64
+    let changed: interop.Signal[i64]
+
+    pub func init(titles: const str[], pages: const interop.Interface[Widget][], font: interop.Reference[Font]? = none, selected: i64 = 0) -> !:
+        if titles.length != pages.length or titles.length == 0:
+            error(result.invalid, "a tabbed panel needs one title per page and at least one page")
+        let box = try layout.make_layout(layout.Axis.vertical, 0.0, 0.0, layout.Alignment.stretch)
+        errdefer box.release()
+        let bar = try interop.Reference[TabBar].adopt(new TabBar(titles, font, selected) in memory.heap, tab_bar_type, memory.heap)
+        errdefer bar.release()
+        let changed = try interop.Signal[i64]()
+        errdefer changed.release()
+        var boxes = try alloc interop.Reference[Layout][pages.length] in memory.heap
+        var children = try alloc interop.Interface[Widget][pages.length + 1] in memory.heap
+        defer free(children) in memory.heap
+        children[0] = bar.as_interface[Widget](bar.value())
+        let chosen = math.iclamp(selected, 0, (i64)pages.length - 1)
+        for index in 0..<pages.length:
+            boxes[index] = pages[index].value().layout()
+            boxes[index].value().set_visible((i64)index == chosen)
+            children[index + 1] = pages[index]
+        try box.value().set_children(children)
+        self.box = box
+        self.bar = bar
+        self.pages = boxes
+        self.selected = chosen
+        self.changed = changed
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func selected_index() -> i64:
+        return self.selected
+
+    pub func on_change(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.changed.connect(callback)
+
+    ## Show page `index`.
+    pub mutating func select(index: i64) -> interop.Outcome[unit]:
+        let chosen = math.iclamp(index, 0, (i64)self.pages.length - 1)
+        if chosen == self.selected:
+            return result.success[unit](())
+        self.selected = chosen
+        self.bar.value().select(chosen)
+        for which in 0..<self.pages.length:
+            self.pages[which].value().set_visible((i64)which == chosen)
+        self.box.value().invalidate()
+        return self.changed.emit(chosen)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let size = self.box.value().content_size(available) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        return result.success[Size](size)
+
+    ## Each frame: take a click on the bar.
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        let clicked = self.bar.value().take_click()
+        if clicked >= 0:
+            return self.select(clicked)
+        return result.success[unit](())
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func close():
+        for index in 0..<self.pages.length:
+            self.pages[index].release()
+        if self.pages.length > 0:
+            free(self.pages) in memory.heap
+        self.changed.close()
+        self.changed.release()
+        self.bar.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+        self.bar.trace(visit, context)
+        self.changed.trace(visit, context)
+        for index in 0..<self.pages.length:
+            self.pages[index].trace(visit, context)
+
+pub let tabs_type: interop.Type[Tabs] = interop.Type[Tabs]("Tabs", Tabs.close, Tabs.trace, closeable = true, main_thread = true)
+
+test "a tabbed panel shows one page and switches":
+    let a = try interop.Reference[TabBar].adopt(new TabBar(["x"]) in memory.heap, tab_bar_type, memory.heap)
+    defer a.release()
+    let b = try interop.Reference[TabBar].adopt(new TabBar(["y"]) in memory.heap, tab_bar_type, memory.heap)
+    defer b.release()
+    let pages: interop.Interface[Widget][2] = [a.as_interface[Widget](a.value()), b.as_interface[Widget](b.value())]
+    var panel = try Tabs(["One", "Two"], pages)
+    defer panel.close()
+    assert(panel.selected_index() == 0)
+    let switched = panel.select(1)
+    assert(switched.is_success())
+    switched.release()
+    assert(panel.selected_index() == 1)
+    var bar = try TabBar(["A", "B", "C"], selected = 5)
+    defer bar.close()
+    assert(bar.selected_index() == 2 and bar.take_click() == -1)

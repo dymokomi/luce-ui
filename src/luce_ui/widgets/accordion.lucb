@@ -1,0 +1,278 @@
+import gpu
+import interop
+import math
+import memory
+import ownership
+import time
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.painter import Painter
+from luce_ui.geometry import Point
+import input
+from luce_ui.font import Font, selected_font
+
+## A section heading of an accordion: the title and a chevron, on the raised
+## surface; clicking asks the accordion to open (or close) the section.
+pub struct SectionHeader: Widget:
+    let box: interop.Reference[Layout]
+    let font: interop.Reference[Font]
+    var caption: interop.Owned[str]
+    var open: bool
+    ## A click not yet taken by the accordion, which polls each frame.
+    var pending: bool
+
+    pub func init(text: str, font: interop.Reference[Font]? = none) -> !:
+        var selected = try selected_font(font)
+        errdefer selected.release()
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_shrink(vertical = 0.0)
+        box.value().set_cursor(input.Cursor.pointer)
+        self.caption = try interop.copy_text(text)
+        self.box = box
+        self.font = selected
+        self.open = false
+        self.pending = false
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub mutating func set_open(open: bool):
+        self.open = open
+        self.box.value().invalidate()
+
+    ## Whether it was clicked since the last take.
+    pub mutating func take_click() -> bool:
+        let was = self.pending
+        self.pending = false
+        return was
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return result.success[Size](Size(120.0, header_height))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        let hovered = self.box.value().contains_pointer()
+        try painter.rounded_rectangle(gpu.Rect(width = size.width, height = size.height), theme.hover() if hovered else theme.raised, theme.control_radius)
+        let text_y = math.max(0.0, (size.height - self.font.value().height()) * 0.5)
+        try painter.text(self.caption.value, 26.0, text_y, color = theme.foreground, font = self.font)
+        # The chevron: pointing down when open, right when closed.
+        let cx = 13.0
+        let cy = size.height * 0.5
+        let ink = theme.accent if self.open else theme.muted
+        if self.open:
+            try painter.triangle(Point(cx - 4.5, cy - 2.5), Point(cx + 4.5, cy - 2.5), Point(cx, cy + 3.0), ink)
+        else:
+            try painter.triangle(Point(cx - 2.5, cy - 4.5), Point(cx + 3.0, cy), Point(cx - 2.5, cy + 4.5), ink)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if event.cancelled:
+            return result.success[unit](())
+        if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
+            self.pending = true
+            self.box.value().invalidate()
+            return result.success[unit](())
+        if event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_left:
+            self.box.value().invalidate()
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.font.release()
+        self.caption.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+        self.caption.trace(visit, context)
+
+pub let section_header_type: interop.Type[SectionHeader] = interop.Type[SectionHeader]("SectionHeader", SectionHeader.close, SectionHeader.trace, closeable = true, main_thread = true)
+
+let header_height: f64 = 26.0
+## How long a section takes to open or close, in nanoseconds (180 ms).
+let animation: f64 = 180000000.0
+
+## One section's state: its header, its content and the open animation.
+struct Section:
+    var header: interop.Reference[SectionHeader]
+    var content: interop.Interface[Widget]
+    var content_box: interop.Reference[Layout]
+    ## 0 closed .. 1 open, where the animation is now, and where it is going.
+    var progress: f64
+    var target: f64
+    var started: u64
+    var origin: f64
+
+## A column of titled sections of which one is open at a time, after
+## Photoshop's brush settings and every inspector since: clicking a header
+## opens its section and closes the open one, the heights easing over 180 ms;
+## clicking the open header closes it. `on_change` reports the open index, or
+## -1 for none.
+pub struct Accordion: Widget:
+    let box: interop.Reference[Layout]
+    var sections: Section[]
+    var count: usize
+    var open_index: i64
+    let changed: interop.Signal[i64]
+
+    ## `titles` and `contents` run in step; `open` is the section shown first.
+    pub func init(titles: const str[], contents: const interop.Interface[Widget][], font: interop.Reference[Font]? = none, open: i64 = 0) -> !:
+        if titles.length != contents.length or titles.length == 0:
+            error(result.invalid, "an accordion needs one title per section and at least one section")
+        let box = try layout.make_layout(layout.Axis.vertical, 4.0, 0.0, layout.Alignment.stretch)
+        errdefer box.release()
+        let changed = try interop.Signal[i64]()
+        errdefer changed.release()
+        var sections = try alloc Section[titles.length] in memory.heap
+        errdefer free(sections) in memory.heap
+        var children = try alloc interop.Interface[Widget][titles.length * 2] in memory.heap
+        defer free(children) in memory.heap
+        for index in 0..<titles.length:
+            let header = try interop.Reference[SectionHeader].adopt(new SectionHeader(titles[index], font) in memory.heap, section_header_type, memory.heap)
+            errdefer header.release()
+            let content_box = contents[index].value().layout()
+            errdefer content_box.release()
+            let opened = (i64)index == open
+            header.value().set_open(opened)
+            content_box.value().set_visible(opened)
+            sections[index] = Section(header = header, content = contents[index].clone(), content_box = content_box,
+                                      progress = 1.0 if opened else 0.0, target = 1.0 if opened else 0.0, started = 0, origin = 1.0 if opened else 0.0)
+            children[index * 2] = header.as_interface[Widget](header.value())
+            children[index * 2 + 1] = contents[index]
+        try box.value().set_children(children)
+        self.box = box
+        self.sections = sections
+        self.count = titles.length
+        self.open_index = open if open >= 0 and open < (i64)titles.length else -1
+        self.changed = changed
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func on_change(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.changed.connect(callback)
+
+    pub func open_section_index() -> i64:
+        return self.open_index
+
+    ## Open section `index` (closing the open one), or -1 to close all; animated.
+    pub mutating func open_section(index: i64) -> interop.Outcome[unit]:
+        if index >= (i64)self.count:
+            return result.success[unit](())
+        let now = time.now()
+        for which in 0..<self.count:
+            let opening = (i64)which == index
+            var section = &self.sections[which]
+            let wanted = 1.0 if opening else 0.0
+            if section.target != wanted:
+                section.origin = section.progress
+                section.target = wanted
+                section.started = now
+                section.header.value().set_open(opening)
+                if opening:
+                    section.content_box.value().set_visible(true)
+        self.open_index = index if index >= 0 else -1
+        self.box.value().invalidate()
+        return self.changed.emit(self.open_index)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let size = self.box.value().content_size(available) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        return result.success[Size](size)
+
+    ## Each frame: take any header click, then while a section moves ease its
+    ## height towards the target and ask for another frame; a closed section
+    ## leaves the layout when it reaches 0.
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        for index in 0..<self.count:
+            if self.sections[index].header.value().take_click():
+                let outcome = self.open_section(-1 if (i64)index == self.open_index else (i64)index)
+                if not outcome.is_success():
+                    return outcome
+                outcome.release()
+        self.animate() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    mutating func animate() -> !:
+        let now = time.now()
+        var moving = false
+        let width = self.box.value().bounds().width
+        for which in 0..<self.count:
+            var section = &self.sections[which]
+            if section.progress == section.target:
+                continue
+            let elapsed = (f64)(now - section.started) if now > section.started else 0.0
+            var t = math.min(1.0, elapsed / animation)
+            t = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t)
+            section.progress = section.origin + (section.target - section.origin) * t
+            if t >= 1.0:
+                section.progress = section.target
+            if section.progress <= 0.0:
+                section.content_box.value().set_visible(false)
+                try section.content_box.value().set_limits(Size(0.0, 0.0), Size(16384.0, 16384.0))
+            else:
+                let natural = section.content.value().measure(Constraints(math.max(1.0, width), 16384.0))
+                defer natural.release()
+                let full = natural.get() catch failure:
+                    error(failure.code, failure.message)
+                let shown = math.floor(full.height * section.progress + 0.5)
+                if section.progress >= 1.0:
+                    try section.content_box.value().set_limits(Size(0.0, 0.0), Size(16384.0, 16384.0))
+                else:
+                    try section.content_box.value().set_limits(Size(0.0, shown), Size(16384.0, shown))
+            if section.progress != section.target:
+                moving = true
+        if moving:
+            self.box.value().invalidate()
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func close():
+        for index in 0..<self.count:
+            self.sections[index].content.release()
+            self.sections[index].content_box.release()
+            self.sections[index].header.release()
+        if self.sections.length > 0:
+            free(self.sections) in memory.heap
+        self.changed.close()
+        self.changed.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+        self.changed.trace(visit, context)
+        for index in 0..<self.count:
+            self.sections[index].header.trace(visit, context)
+            self.sections[index].content_box.trace(visit, context)
+            self.sections[index].content.trace(visit, context)
+
+pub let accordion_type: interop.Type[Accordion] = interop.Type[Accordion]("Accordion", Accordion.close, Accordion.trace, closeable = true, main_thread = true)
+
+test "an accordion opens one section at a time":
+    let a = try interop.Reference[SectionHeader].adopt(new SectionHeader("A") in memory.heap, section_header_type, memory.heap)
+    defer a.release()
+    let b = try interop.Reference[SectionHeader].adopt(new SectionHeader("B") in memory.heap, section_header_type, memory.heap)
+    defer b.release()
+    let contents: interop.Interface[Widget][2] = [a.as_interface[Widget](a.value()), b.as_interface[Widget](b.value())]
+    var stack = try Accordion(["First", "Second"], contents, open = 0)
+    defer stack.close()
+    assert(stack.open_section_index() == 0)
+    let opened = stack.open_section(1)
+    assert(opened.is_success())
+    opened.release()
+    assert(stack.open_section_index() == 1)
+    let closed = stack.open_section(-1)
+    assert(closed.is_success())
+    closed.release()
+    assert(stack.open_section_index() == -1)
