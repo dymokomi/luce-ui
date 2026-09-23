@@ -10,9 +10,9 @@ from luce_ui.painter import Painter
 from luce_ui.geometry import Point
 import input
 
-## A picker field whose colours the host supplies: a square shaded from a grid
-## of `columns` × `rows` linear colours (the host computes them in whatever
-## model it edits — HSB, RGB, Lab, CAM16 — so the widget knows no colour
+## A picker field whose colors the host supplies: a square shaded from a grid
+## of `columns` × `rows` linear colors (the host computes them in whatever
+## model it edits — HSB, RGB, Lab, CAM16 — so the widget knows no color
 ## science), with a ring marker at (u, v) in 0..1, u left to right and v top to
 ## bottom. Dragging moves the marker and emits `on_change`; read `u()`/`v()`.
 pub struct ShadedField: Widget:
@@ -68,12 +68,12 @@ pub struct ShadedField: Widget:
         self.marker_v = math.clamp(v, 0.0, 1.0)
         self.box.value().invalidate()
 
-    ## The colours at the grid's corners, row-major, `columns` per row: the
+    ## The colors at the grid's corners, row-major, `columns` per row: the
     ## field is shaded between them. The widget keeps its own copy. A strip is
     ## a grid one column (vertical) or one row (horizontal) wide.
     pub mutating func set_grid(colors: const gpu.Color[], columns: i64) -> !:
         if columns < 2 or colors.length % (usize)columns != 0 or colors.length // (usize)columns < 2:
-            error(result.invalid, "a shaded grid needs at least two columns and two rows of colours")
+            error(result.invalid, "a shaded grid needs at least two columns and two rows of colors")
         let copied = try alloc gpu.Color[colors.length] in memory.heap
         for index in 0..<colors.length:
             copied[index] = colors[index]

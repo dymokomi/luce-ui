@@ -102,6 +102,28 @@ pub struct NumberField: Widget:
             error(result.invalid, "number field defaults must be finite")
         self.fallback = self.snap(value)
 
+    ## Show `decimals` places (0..6) from now on.
+    pub mutating func set_decimals(decimals: i64) -> !:
+        if decimals < 0 or decimals > 6:
+            error(result.invalid, "number field decimals must be 0..6")
+        self.decimals = decimals
+        self.box.value().invalidate()
+
+    ## Snap to multiples of `step` from the minimum (0 turns snapping off).
+    pub mutating func set_step(step: f64) -> !:
+        if not math.is_finite(step) or step < 0.0:
+            error(result.invalid, "a number field step must be finite and nonnegative")
+        self.step = step
+        self.current = self.snap(self.current)
+        self.box.value().invalidate()
+
+    ## The unit shown after the value, muted.
+    pub mutating func set_suffix(suffix: str) -> !:
+        let replacement = try interop.copy_text(suffix)
+        self.suffix.release()
+        self.suffix = replacement
+        self.box.value().invalidate()
+
     pub mutating func set_range(minimum: f64, maximum: f64) -> !:
         if not math.is_finite(minimum) or not math.is_finite(maximum) or maximum <= minimum:
             error(result.invalid, "a number field needs finite bounds with maximum above minimum")
@@ -188,7 +210,7 @@ pub struct NumberField: Widget:
         var digits: u8[48]
         let shown = try format_number(digits, self.current, self.decimals)
         let advance = self.font.value().advance()
-        # Right-aligned value, then the suffix in the muted colour.
+        # Right-aligned value, then the suffix in the muted color.
         let suffix_width = (f64)self.suffix.value.length * advance
         let value_width = try self.font.value().measure(shown)
         var x = size.width - inset - suffix_width - value_width
@@ -353,6 +375,11 @@ test "a number field clamps, snaps, formats and parses":
     assert((try format_number(digits, 2.5, 1)) == "2.5")
     assert((try format_number(digits, -0.25, 2)) == "-0.25")
     assert(trimmed("  12 ") == "12")
+    try field.set_decimals(2)
+    try field.set_step(0.01)
+    try field.set_value(33.456)
+    assert(math.abs(field.value() - 33.46) < 0.0001)
+    try field.set_suffix(" mm")
     var rejected = false
     discard(NumberField(0.0, 5.0, 5.0) catch failure:
         assert(failure.code == result.invalid)

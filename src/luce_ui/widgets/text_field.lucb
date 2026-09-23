@@ -11,10 +11,10 @@ import input
 from luce_ui.font import Font, selected_font
 
 ## A single-line text field after eleusis: a sunken well whose border thickens in
-## the focus colour, text inset by one cell, everything selected on focus, and a
+## the focus color, text inset by one cell, everything selected on focus, and a
 ## commit on Enter or on losing focus (`on_commit`); Escape puts the committed
 ## text back. `on_change` fires on every edit. An empty field shows its
-## `placeholder` in the muted colour.
+## `placeholder` in the muted color.
 pub struct TextField: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]

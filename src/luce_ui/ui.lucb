@@ -176,11 +176,11 @@ pub type IconKind = icons.IconKind
 pub func draw_icon(target: interop.View[gpu.RenderTarget], name: str, bounds: gpu.Rect, color: gpu.Color) -> !:
     try icons.draw_icon(target, name, bounds, color)
 
-## An sRGB colour from hue (0..360), saturation and brightness (0..1).
+## An sRGB color from hue (0..360), saturation and brightness (0..1).
 pub func hsb_to_rgb(hue: f64, saturation: f64, brightness: f64) -> gpu.Color:
     return hsb_field.hsb_to_rgb(hue, saturation, brightness)
 
-## The hue of an sRGB colour, 0..360 (0 for greys).
+## The hue of an sRGB color, 0..360 (0 for greys).
 pub func hue_of(color: gpu.Color) -> f64:
     var h = 0.0
     var s = 0.0
@@ -188,7 +188,7 @@ pub func hue_of(color: gpu.Color) -> f64:
     hsb_field.rgb_to_hsb(color, &h, &s, &b)
     return h
 
-## The saturation of an sRGB colour, 0..1.
+## The saturation of an sRGB color, 0..1.
 pub func saturation_of(color: gpu.Color) -> f64:
     var h = 0.0
     var s = 0.0
@@ -196,7 +196,7 @@ pub func saturation_of(color: gpu.Color) -> f64:
     hsb_field.rgb_to_hsb(color, &h, &s, &b)
     return s
 
-## The brightness of an sRGB colour, 0..1.
+## The brightness of an sRGB color, 0..1.
 pub func brightness_of(color: gpu.Color) -> f64:
     var h = 0.0
     var s = 0.0

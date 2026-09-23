@@ -38,7 +38,7 @@ pub struct Theme:
     pub var sunken: gpu.Color = gpu.Color(0.032, 0.044, 0.064)
     ## A raised surface: menus, popovers, raised buttons.
     pub var raised: gpu.Color = gpu.Color(0.028, 0.037, 0.053)
-    ## Text and icons on the accent colour.
+    ## Text and icons on the accent color.
     pub var accent_text: gpu.Color = gpu.Color(1.0, 1.0, 1.0)
     pub var shadow_offset: f64 = 4.0
     pub var shadow_opacity: f64 = 0.35

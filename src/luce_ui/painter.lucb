@@ -140,12 +140,12 @@ pub struct Painter:
                                          red = (f32)color.red, green = (f32)color.green, blue = (f32)color.blue)
         try target.triangles(vertices)
 
-    ## Fill many triangles with a colour per vertex, in one draw: `colors` runs
-    ## parallel to `points`. Gradients (a colour picker's field, a hue strip) are
+    ## Fill many triangles with a color per vertex, in one draw: `colors` runs
+    ## parallel to `points`. Gradients (a color picker's field, a hue strip) are
     ## drawn this way, as a grid of shaded cells.
     pub func shaded_mesh(points: const Point[], colors: const gpu.Color[], opacity: f64 = 1.0) -> !:
         if points.length != colors.length:
-            error(result.invalid, "a shaded mesh needs one colour per point")
+            error(result.invalid, "a shaded mesh needs one color per point")
         if not math.is_finite(opacity) or opacity < 0.0 or opacity > 1.0:
             error(result.invalid, "mesh opacity must be in 0..1")
         if points.length < 3:
@@ -183,7 +183,7 @@ pub struct Painter:
 
 pub let painter_type: interop.Type[Painter] = interop.Type[Painter]("UI painter", Painter.close, Painter.trace, closeable = true, main_thread = true)
 
-## A point in target coordinates as a clip-space vertex of one colour.
+## A point in target coordinates as a clip-space vertex of one color.
 func clip_vertex(x: f64, y: f64, width: f64, height: f64, color: gpu.Color, opacity: f64) -> gpu.Vertex:
     return gpu.Vertex(x = (f32)(x * 2.0 / width - 1.0), y = (f32)(1.0 - y * 2.0 / height),
                       red = (f32)color.red, green = (f32)color.green, blue = (f32)color.blue, alpha = (f32)opacity)

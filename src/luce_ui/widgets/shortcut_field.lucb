@@ -12,7 +12,7 @@ from luce_ui.font import Font, selected_font
 
 ## A field that records a keyboard shortcut, after eleusis's shortcut editor:
 ## it shows the chord ("⌘⇧S", or "None" muted); a click (or Enter/Space when
-## focused) starts recording, shown as "Press keys…" in the focus colour; the
+## focused) starts recording, shown as "Press keys…" in the focus color; the
 ## next key with its modifiers becomes the chord, Backspace or Delete unbinds,
 ## Escape stops recording. `on_change` fires on every recorded change. Hosts
 ## show it inside a popup, where the application's own shortcuts do not fire.

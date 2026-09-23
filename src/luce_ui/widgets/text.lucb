@@ -12,7 +12,7 @@ pub struct Text: Widget:
     let box: interop.Reference[Layout]
     var caption: interop.Owned[str]
     let font: interop.Reference[Font]
-    ## Drawn in the theme's muted colour: a label beside a value, metadata.
+    ## Drawn in the theme's muted color: a label beside a value, metadata.
     var muted: bool
 
     pub func init(text: str, font: interop.Reference[Font]? = none, muted: bool = false) -> !:

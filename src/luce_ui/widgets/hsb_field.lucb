@@ -10,7 +10,7 @@ from luce_ui.painter import Painter
 from luce_ui.geometry import Point
 import input
 
-## The colour picker's parts, after Photoshop's and Compositor's: a square
+## The color picker's parts, after Photoshop's and Compositor's: a square
 ## whose x is saturation and y brightness for one hue (`HsbField`), and a
 ## vertical strip of hues (`HueStrip`). Both are drawn as shaded meshes in
 ## sRGB steps so the ramps look as they do everywhere else, and both emit
@@ -56,7 +56,7 @@ pub struct HsbField: Widget:
     pub func brightness_value() -> f64:
         return self.brightness
 
-    ## Set the shown colour from code; no signal.
+    ## Set the shown color from code; no signal.
     pub mutating func set_hsb(hue: f64, saturation: f64, brightness: f64) -> !:
         if not math.is_finite(hue) or not math.is_finite(saturation) or not math.is_finite(brightness):
             error(result.invalid, "HSB components must be finite")
@@ -98,7 +98,7 @@ pub struct HsbField: Widget:
                     colors[index] = linear(hsb_to_rgb(self.hue, unit_point.x, 1.0 - unit_point.y))
                     index += 1
         try painter.shaded_mesh(points, colors)
-        # The marker: a white ring over a black one, at the chosen colour.
+        # The marker: a white ring over a black one, at the chosen color.
         let mx = self.saturation * size.width
         let my = (1.0 - self.brightness) * size.height
         try ring(&painter, mx, my, 6.0, 0.75, gpu.Color(0.0, 0.0, 0.0))
@@ -268,7 +268,7 @@ func ring(painter: Painter*, x: f64, y: f64, radius: f64, width: f64, color: gpu
         let b = (f64)(side + 1) / (f64)sides * math.pi * 2.0
         try painter.line(Point(x + math.cos(a) * radius, y + math.sin(a) * radius), Point(x + math.cos(b) * radius, y + math.sin(b) * radius), width, color)
 
-## An sRGB colour from hue (0..360), saturation and brightness (0..1).
+## An sRGB color from hue (0..360), saturation and brightness (0..1).
 pub func hsb_to_rgb(hue: f64, saturation: f64, brightness: f64) -> gpu.Color:
     let h = wrap_hue(hue) / 60.0
     let sector = (i64)math.floor(h)
@@ -288,7 +288,7 @@ pub func hsb_to_rgb(hue: f64, saturation: f64, brightness: f64) -> gpu.Color:
         return gpu.Color(t, p, brightness)
     return gpu.Color(brightness, p, q)
 
-## Hue, saturation and brightness of an sRGB colour, written to the pointers.
+## Hue, saturation and brightness of an sRGB color, written to the pointers.
 ## A grey keeps hue 0.
 pub func rgb_to_hsb(color: gpu.Color, hue: f64*, saturation: f64*, brightness: f64*):
     let top = math.max(color.red, math.max(color.green, color.blue))
@@ -308,7 +308,7 @@ pub func rgb_to_hsb(color: gpu.Color, hue: f64*, saturation: f64*, brightness: f
         h = 4.0 + (color.red - color.green) / delta
     *hue = wrap_hue(h * 60.0)
 
-## The linear components the GPU wants for an sRGB colour.
+## The linear components the GPU wants for an sRGB color.
 pub func linear(color: gpu.Color) -> gpu.Color:
     return gpu.Color(srgb_to_linear(color.red), srgb_to_linear(color.green), srgb_to_linear(color.blue))
 

@@ -48,13 +48,13 @@ pub struct Image:
         memory.copy(self.pixels, pixels, pixels.length)
         self.revision += 1
 
-    ## Set one pixel from a linear colour and straight alpha.
+    ## Set one pixel from a linear color and straight alpha.
     pub mutating func set_pixel(x: i64, y: i64, color: gpu.Color) -> !:
         try self.require_open()
         if x < 0 or y < 0 or x >= (i64)self.columns or y >= (i64)self.rows:
             error(result.invalid, "image pixel is out of bounds")
         if not (color.red >= 0.0 and color.red <= 1.0 and color.green >= 0.0 and color.green <= 1.0 and color.blue >= 0.0 and color.blue <= 1.0 and color.alpha >= 0.0 and color.alpha <= 1.0):
-            error(result.invalid, "image colours must be finite and in 0..1")
+            error(result.invalid, "image colors must be finite and in 0..1")
         let offset = (usize)(y * (i64)self.columns + x) * 4
         self.pixels[offset] = encode(color.red)
         self.pixels[offset + 1] = encode(color.green)
