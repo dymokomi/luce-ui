@@ -1,0 +1,79 @@
+from ui import Application, Widget, Layout, Size, Constraints, Event, HStack
+from gpu import RenderTarget
+from input import EventKind
+
+## A drop area that records what reaches it; with `images_only` it refuses
+## anything that is not a .png, as an image well would.
+class Well: Widget:
+    let box: Layout
+    let images_only: bool
+    pub var events: list[str]
+    pub var dropped: list[str]
+
+    pub func init(self, images_only: bool) -> unit!:
+        self.box = Layout()
+        self.box.set_flex()
+        self.box.set_drop_target(true)
+        self.images_only = images_only
+        self.events = []
+        self.dropped = []
+
+    pub func layout(self) -> Layout:
+        return self.box
+
+    pub func measure(self, available: Constraints) -> Size!:
+        return Size(100.0, 100.0)
+
+    pub func draw(self, target: RenderTarget) -> unit!:
+        discard(target)
+
+    pub func event(self, event: Event) -> unit!:
+        if event.kind == EventKind.drag_entered:
+            self.events.append(f"entered {int(event.x)}")
+            if self.images_only:
+                var all_images = true
+                var index = 0
+                while index < self.box.drop_count():
+                    if not self.box.drop_path(index).ends_with(".png"):
+                        all_images = false
+                    index += 1
+                self.box.set_drop_accepted(all_images)
+        elif event.kind == EventKind.drag_moved:
+            self.events.append("moved")
+        elif event.kind == EventKind.drag_left:
+            self.events.append("left")
+        elif event.kind == EventKind.drop:
+            var index = 0
+            while index < self.box.drop_count():
+                self.dropped.append(self.box.drop_path(index))
+                index += 1
+
+## Drags go to the drop area under the pointer, in its coordinates; each area
+## decides for itself, and the one it refuses is neither lit nor dropped on.
+pub func drops() -> unit!:
+    let anything = Well(false)
+    let images = Well(true)
+    let app = Application(HStack([anything, images], spacing = 0.0))
+    app.layout(200.0, 100.0)
+    let right = images.layout().bounds()
+    app.set_drop_paths(["/tmp/photo.png", "/tmp/notes.txt"])
+    app.dispatch(Event(kind = EventKind.drag_entered, x = 30.0, y = 40.0))
+    assert(anything.layout().is_drop_hovered() and not images.layout().is_drop_hovered())
+    app.dispatch(Event(kind = EventKind.drag_moved, x = 35.0, y = 40.0))
+    app.dispatch(Event(kind = EventKind.drag_moved, x = right.x + 10.0, y = 40.0))
+    assert(images.layout().is_drop_hovered() and not anything.layout().is_drop_hovered())
+    assert(not images.layout().is_drop_accepted())
+    app.dispatch(Event(kind = EventKind.drop, x = right.x + 10.0, y = 40.0))
+    assert(images.dropped.length == 0 and not images.layout().is_drop_hovered())
+    assert(anything.events == ["entered 30", "moved", "left"])
+    assert(images.events == ["entered 10"])
+    # Only images this time: the image well takes them.
+    app.set_drop_paths(["/tmp/a.png", "/tmp/b.png"])
+    app.dispatch(Event(kind = EventKind.drag_entered, x = right.x + 20.0, y = 50.0))
+    assert(images.layout().is_drop_accepted())
+    app.dispatch(Event(kind = EventKind.drop, x = right.x + 20.0, y = 50.0))
+    assert(images.dropped == ["/tmp/a.png", "/tmp/b.png"] and anything.dropped.length == 0)
+    # A drag that leaves the window reaches nobody after.
+    app.dispatch(Event(kind = EventKind.drag_entered, x = 30.0, y = 40.0))
+    app.dispatch(Event(kind = EventKind.drag_left))
+    assert(not anything.layout().is_drop_hovered() and anything.events[anything.events.length - 1] == "left")

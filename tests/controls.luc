@@ -11,6 +11,7 @@ from panes import panes
 from contextual import contextual
 from hover import hover
 from buttons import buttons
+from drops import drops
 from ui import ListItem
 from headers import headers
 from docking import docking
@@ -63,6 +64,7 @@ pub func main(arguments: list[str]) -> int!:
     contextual()
     hover()
     buttons()
+    drops()
     headers()
     docking()
     cursors()

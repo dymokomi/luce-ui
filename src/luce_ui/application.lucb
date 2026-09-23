@@ -225,19 +225,23 @@ pub struct Application:
                                       x = event.x, y = event.y, button = (u32)event.button,
                                       repeated = event.repeated, modifiers = input.Modifiers(shift = event.shift,
                                                                                              control = event.control, alt = event.alt, super = event.meta), codepoint = (u32)event.codepoint,
-                                      scroll_x = event.scroll_x, scroll_y = event.scroll_y, scroll_unit = event.scroll_unit))
+                                      scroll_x = event.scroll_x, scroll_y = event.scroll_y, scroll_unit = event.scroll_unit), false)
 
     mutating func dispatch_native(event: input.Event) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer self.end_operation()
-        return self.route(event)
+        return self.route(event, true)
 
-    mutating func route(event: input.Event) -> interop.Outcome[unit]:
+    ## `native` events come from the window; the others from `dispatch`, whose
+    ## drags carry the files given to `set_drop_paths`.
+    mutating func route(event: input.Event, native: bool) -> interop.Outcome[unit]:
         let arranged = self.tree.refresh()
         if not arranged.is_success():
             return arranged
         arranged.release()
+        if event.kind == input.EventKind.drag_entered or event.kind == input.EventKind.drag_moved or event.kind == input.EventKind.drag_left or event.kind == input.EventKind.drop:
+            return self.route_drag(event, native)
         if not self.tree.has_popup():
             let dispatched = self.commands.dispatch(event)
             defer dispatched.release()
@@ -246,6 +250,29 @@ pub struct Application:
             if handled:
                 return result.success[unit](())
         return self.tree.dispatch(event)
+
+    ## Files dragged from another application: the window's paths become what the
+    ## drop areas read, the tree routes the drag, and the window learns whether a
+    ## drop would be taken so the OS can say so.
+    mutating func route_drag(event: input.Event, native: bool) -> interop.Outcome[unit]:
+        if event.kind == input.EventKind.drag_entered and native and self.running:
+            let paths = self.session_host.drop_paths() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            layout.set_drop_payload(paths) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+        let routed = self.tree.dispatch(event)
+        if not routed.is_success():
+            return routed
+        routed.release()
+        if native and self.running:
+            self.session_host.set_drop_accepted(self.tree.drop_accepted()) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    ## The files a drag carries, for tests and embedders that dispatch drag events
+    ## themselves; a running window supplies them on its own.
+    pub func set_drop_paths(paths: const str[]) -> !:
+        try layout.set_drop_payload(paths)
 
     pub mutating func render(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:

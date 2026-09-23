@@ -125,6 +125,10 @@ pub struct Layout:
     var pointer: Point
     var editing: bool
     var hover_transparent: bool
+    var drop_target: bool
+    var drop_overlay: bool
+    var drop_accepted: bool
+    var drop_hovered: bool
 
     pub func init(axis: Axis = Axis.overlay, spacing: f64 = 0.0, padding: f64 = 0.0,
                   alignment: Alignment = Alignment.stretch) -> !:
@@ -175,6 +179,10 @@ pub struct Layout:
         self.pointer = Point()
         self.editing = false
         self.hover_transparent = false
+        self.drop_target = false
+        self.drop_overlay = true
+        self.drop_accepted = true
+        self.drop_hovered = false
 
     pub func is_visible() -> bool:
         return self.visible
@@ -265,6 +273,47 @@ pub struct Layout:
     ## Coordinates are local to this layout, valid while contains_pointer is true.
     pub func pointer_position() -> Point:
         return self.pointer
+
+    # mark: Drop areas =========================================================================
+
+    ## Make this box an area files dragged from other applications can be dropped
+    ## on. While a drag is over it, its widget gets `drag_entered`, `drag_moved`,
+    ## `drag_left` and finally `drop` (local coordinates), reads the files with
+    ## `drop_count`/`drop_path`, and may refuse them with `set_drop_accepted`.
+    ## The innermost drop area under the pointer takes the drag. With `overlay`
+    ## the area is lit in the accent while a drop would be taken there.
+    pub mutating func set_drop_target(enabled: bool, overlay: bool = true):
+        self.drop_target = enabled
+        self.drop_overlay = overlay
+        self.invalidate()
+
+    pub func is_drop_target() -> bool:
+        return self.drop_target
+
+    ## Whether a drag is over this drop area now.
+    pub func is_drop_hovered() -> bool:
+        return self.drop_hovered
+
+    ## Take or refuse the drag over this area, answered from its drag events;
+    ## an area takes a drag unless it says otherwise. A refused drag is not lit
+    ## and the OS shows that dropping does nothing.
+    pub mutating func set_drop_accepted(accepted: bool):
+        if self.drop_accepted != accepted:
+            self.drop_accepted = accepted
+            self.invalidate()
+
+    pub func is_drop_accepted() -> bool:
+        return self.drop_accepted
+
+    ## How many files the drag in progress (or the drop just made) carries.
+    pub func drop_count() -> i64:
+        return (i64)drop_payload_count
+
+    ## The path of dragged file `index`, as UTF-8.
+    pub func drop_path(index: i64) -> interop.Owned[str]!:
+        if index < 0 or index >= (i64)drop_payload_count:
+            error(result.invalid, "no dragged file has that index")
+        return try interop.copy_text(drop_payload[(usize)index])
 
     ## Cursor changes do not invalidate geometry. The application resolves the
     ## current hit or capture after dispatch and after each layout refresh.
@@ -549,6 +598,8 @@ pub struct Tree:
     var pointer_x: f64
     var pointer_y: f64
     var animating: bool
+    ## The drop area a drag is over, or 0.
+    var drop_hover: u64
 
     pub func init(content: interop.Interface[Widget], theme: Theme = Theme()) -> !:
         try require_main_thread()
@@ -571,6 +622,7 @@ pub struct Tree:
         self.pointer_x = 0.0
         self.pointer_y = 0.0
         self.animating = false
+        self.drop_hover = 0
 
     ## Whether a popup is still easing toward its placement, so the run loop keeps
     ## drawing frames until it settles instead of blocking.
@@ -726,6 +778,99 @@ pub struct Tree:
         self.update_hover()
         return result.success[unit](())
 
+    # mark: Drags from other applications ======================================================
+
+    ## Whether a drop would be taken where the drag is now: the application tells
+    ## the window so after every drag event.
+    pub func drop_accepted() -> bool:
+        let index = self.find(self.drop_hover) else return false
+        return self.entries[index].box.value().drop_accepted
+
+    ## The innermost visible, enabled drop area under a point (a popup's, while one is open).
+    func drop_at(x: f64, y: f64) -> u64:
+        let modal = self.has_popup()
+        var index = self.count
+        while index > 0:
+            index -= 1
+            let box = self.entries[index].box.value()
+            if box.drop_target and (not modal or in_popup(self.entries, index)) and path_enabled(self.entries, index) and inside(box.clipping, x, y):
+                return box.identifier
+        return 0
+
+    ## Route a drag: the area under the pointer gets entered/moved, the one it
+    ## left gets left, and a drop goes to the area that takes it.
+    mutating func dispatch_drag(event: input.Event) -> interop.Outcome[unit]:
+        let target = 0 if event.kind == input.EventKind.drag_left else self.drop_at(event.x, event.y)
+        if target != self.drop_hover:
+            let left = self.leave_drop()
+            if not left.is_success():
+                return left
+            left.release()
+            if let index = self.find(target):
+                let box = self.entries[index].box.value()
+                box.drop_accepted = true
+                box.drop_hovered = true
+                box.invalidate()
+                self.drop_hover = target
+                let entered = self.send_drag(index, input.EventKind.drag_entered, event.x, event.y)
+                if not entered.is_success():
+                    return entered
+                entered.release()
+        elif event.kind == input.EventKind.drag_moved:
+            if let index = self.find(target):
+                let moved = self.send_drag(index, input.EventKind.drag_moved, event.x, event.y)
+                if not moved.is_success():
+                    return moved
+                moved.release()
+        if event.kind == input.EventKind.drop:
+            if let index = self.find(self.drop_hover):
+                let box = self.entries[index].box.value()
+                box.drop_hovered = false
+                box.invalidate()
+                self.drop_hover = 0
+                if box.drop_accepted:
+                    return self.send_drag(index, input.EventKind.drop, event.x, event.y)
+        return result.success[unit](())
+
+    mutating func leave_drop() -> interop.Outcome[unit]:
+        let found = self.find(self.drop_hover)
+        if found == none:
+            self.drop_hover = 0
+            return result.success[unit](())
+        let index = found else return result.success[unit](())
+        let box = self.entries[index].box.value()
+        box.drop_hovered = false
+        box.invalidate()
+        self.drop_hover = 0
+        return self.send_drag(index, input.EventKind.drag_left, 0.0, 0.0)
+
+    func send_drag(index: usize, kind: input.EventKind, x: f64, y: f64) -> interop.Outcome[unit]:
+        let box = self.entries[index].box.value()
+        return self.send(index, Event(kind = kind, x = x - box.rectangle.x, y = y - box.rectangle.y, inside = true))
+
+    ## The lit drop area: the accent laid thinly over it with a two-point edge,
+    ## so the place a drop would land is plain.
+    func draw_drop_overlay(target: interop.View[gpu.RenderTarget]) -> !:
+        let index = self.find(self.drop_hover) else return
+        let box = self.entries[index].box.value()
+        if not box.drop_overlay or not box.drop_accepted or box.clipping.width <= 0.0 or box.clipping.height <= 0.0:
+            return
+        let native_target = try target.get()
+        let clipped = try native_target.clipped(box.clipping)
+        defer clipped.release()
+        let region = try (try clipped.get()).region(box.rectangle)
+        defer region.release()
+        var painter = try Painter(region)
+        defer painter.close()
+        let theme = box.appearance
+        let area = gpu.Rect(width = box.rectangle.width, height = box.rectangle.height)
+        try painter.rounded_rectangle(area, theme.accent, theme.control_radius, 0.14)
+        let edge = 2.0
+        try painter.rectangle(gpu.Rect(0.0, 0.0, area.width, edge), theme.accent)
+        try painter.rectangle(gpu.Rect(0.0, area.height - edge, area.width, edge), theme.accent)
+        try painter.rectangle(gpu.Rect(0.0, 0.0, edge, area.height), theme.accent)
+        try painter.rectangle(gpu.Rect(area.width - edge, 0.0, edge, area.height), theme.accent)
+
     pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         for pass in 0..<2:
             for index in 0..<self.count:
@@ -758,6 +903,11 @@ pub struct Tree:
                 if not drawn.is_success():
                     return drawn
                 drawn.release()
+            # Over everything in its pass, the lit drop area.
+            if let hovered = self.find(self.drop_hover):
+                if in_popup(self.entries, hovered) == (pass == 1):
+                    self.draw_drop_overlay(target) catch failure:
+                        return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
     ## A soft drop shadow around the whole popup: several expanding layers, densest at
@@ -790,6 +940,8 @@ pub struct Tree:
             self.pointer_present = false
             self.update_hover()
             return result.success[unit](())
+        if event.kind == input.EventKind.drag_entered or event.kind == input.EventKind.drag_moved or event.kind == input.EventKind.drag_left or event.kind == input.EventKind.drop:
+            return self.dispatch_drag(event)
         if event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_down or event.kind == input.EventKind.pointer_up or event.kind == input.EventKind.scroll or event.kind == input.EventKind.magnify:
             self.pointer_x = event.x
             self.pointer_y = event.y
@@ -1158,6 +1310,29 @@ func release_entries(entries: Entry[], count: usize):
         entry.box.release()
     if entries.length > 0:
         free(entries) in memory.heap
+
+## The files of the drag in progress, or of the last drop, copied from the window
+## (or given by a test); read through a drop area's `drop_path`. UI thread only.
+var drop_payload: str[16]
+var drop_payload_count: usize = 0
+
+## Replace the dragged files the drop areas see. The application does this from
+## the window when a drag enters; tests and embedders call it themselves.
+pub func set_drop_payload(paths: const str[]) -> !:
+    for index in 0..<drop_payload_count:
+        let old = drop_payload[index]
+        free(u8[]((u8*)old.bytes.data, old.length + 1)) in memory.heap
+        drop_payload[index] = ""
+    drop_payload_count = 0
+    for path in paths:
+        if drop_payload_count >= drop_payload.length:
+            break
+        let copy = try alloc u8[path.length + 1] in memory.heap
+        for index in 0..<path.length:
+            copy[index] = path.bytes[index]
+        copy[path.length] = 0
+        drop_payload[drop_payload_count] = (str)copy[..<path.length]
+        drop_payload_count += 1
 
 func path_enabled(entries: const Entry[], index: usize) -> bool:
     var cursor = (i64)index
