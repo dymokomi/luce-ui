@@ -361,4 +361,4 @@ popups and ancestor clipping otherwise follow ordinary hit testing.
 `Application.cursor()` refreshes layout and returns the resolved shape for
 portable tests or embedding. `run()` applies it through `window.Window` after
 events and rendering. Native handles and platform cursor names never enter UI
-or application code. See [standard window cursors](https://github.com/dymokomi/luce-base/blob/main/docs/CURSORS.md).
+or application code. See [standard window cursors](https://github.com/dymokomi/luce-window/blob/main/docs/CURSORS.md).

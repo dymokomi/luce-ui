@@ -1,7 +1,7 @@
 #prisma 4.0
 def package "luce-ui" {
     str owner = "dymokomi"
-    str version = "0.5.9"
+    str version = "0.5.10"
     str kind = "package"
     str language = "luce-base"
     str description = "A UI framework written in Luce Base, consumed through ordinary Base structs or Luce objects. Controls implement Widget; an Application owns the native event loop, layout, input routing and presentation."
@@ -21,5 +21,41 @@ def package "luce-ui" {
         str owner = "dymokomi"
         str version = "^0.2.0"
         str path = "../luce-svg"
+    }
+
+    def dependency "luce-std" {
+        str owner = "dymokomi"
+        str version = "^0.1.0"
+        str path = "../luce-std"
+    }
+
+    def dependency "luce-window" {
+        str owner = "dymokomi"
+        str version = "^0.1.0"
+        str path = "../luce-window"
+    }
+
+    def dependency "luce-gpu" {
+        str owner = "dymokomi"
+        str version = "^0.1.0"
+        str path = "../luce-gpu"
+    }
+
+    def dependency "luce-fonts" {
+        str owner = "dymokomi"
+        str version = "^0.1.0"
+        str path = "../luce-fonts"
+    }
+
+    def dependency "luce-clipboard" {
+        str owner = "dymokomi"
+        str version = "^0.1.0"
+        str path = "../luce-clipboard"
+    }
+
+    def dependency "luce-dialogs" {
+        str owner = "dymokomi"
+        str version = "^0.1.0"
+        str path = "../luce-dialogs"
     }
 }
