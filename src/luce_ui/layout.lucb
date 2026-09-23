@@ -67,8 +67,11 @@ pub struct Event:
 ## code. The framework invokes it under an active interface guard.
 pub interface Widget:
     func layout() -> interop.Reference[Layout]
+
     func measure(available: Constraints) -> interop.Outcome[Size]
+
     mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]
+
     mutating func event(event: Event) -> interop.Outcome[unit]
 
 var serial: u64 = 0
@@ -776,7 +779,7 @@ pub struct Tree:
         for ring in 0..<layers:
             let grow = step * (f64)(ring + 1)
             try painter.rectangle(Rect(bounds.x - grow, bounds.y - grow + bias,
-                bounds.width + grow * 2.0, bounds.height + grow * 2.0), theme.shadow, per)
+                                       bounds.width + grow * 2.0, bounds.height + grow * 2.0), theme.shadow, per)
 
     pub mutating func dispatch(event: input.Event) -> interop.Outcome[unit]:
         let arranged = self.arrange(self.width, self.height)
@@ -828,9 +831,9 @@ pub struct Tree:
             # Tab stays within the popup; its widget chooses how to navigate.
             if event.kind == input.EventKind.key_down or event.kind == input.EventKind.key_up or event.kind == input.EventKind.text_input or event.kind == input.EventKind.modifiers_changed:
                 let delivered = self.send(popup, Event(kind = event.kind, key = event.key,
-                    repeated = event.repeated, shift = event.modifiers.shift,
-                    control = event.modifiers.control, alt = event.modifiers.alt, meta = event.modifiers.super,
-                    codepoint = (i64)event.codepoint))
+                                                       repeated = event.repeated, shift = event.modifiers.shift,
+                                                       control = event.modifiers.control, alt = event.modifiers.alt, meta = event.modifiers.super,
+                                                       codepoint = (i64)event.codepoint))
                 if not delivered.is_success():
                     return delivered
                 delivered.release()
@@ -856,7 +859,7 @@ pub struct Tree:
                         self.set_focus(destination)
                     if not box.context_menu:
                         let selected = self.send(target, Event(kind = event.kind, button = 1,
-                            x = event.x - box.rectangle.x, y = event.y - box.rectangle.y, inside = true))
+                                                               x = event.x - box.rectangle.x, y = event.y - box.rectangle.y, inside = true))
                         if not selected.is_success():
                             return selected
                         selected.release()
@@ -907,8 +910,17 @@ pub struct Tree:
                 self.set_focus(destination if self.entries[index].box.value().accepts_focus else 0)
             else:
                 self.set_focus(0)
-        elif event.kind == input.EventKind.pointer_up and event.button == 0:
-            destination = self.capture
+        elif event.kind == input.EventKind.pointer_down and event.button >= 2:
+            # Middle and extra buttons go to what is under the pointer and hold it for
+            # the drag, as the primary button does, but leave keyboard focus alone.
+            destination = self.hit(event.x, event.y)
+            let held_cancelled = self.cancel(self.capture)
+            if not held_cancelled.is_success():
+                return held_cancelled
+            held_cancelled.release()
+            self.capture = destination
+        elif event.kind == input.EventKind.pointer_up and (event.button == 0 or event.button >= 2):
+            destination = self.capture if self.capture != 0 else self.hit(event.x, event.y)
             self.capture = 0
         elif event.kind == input.EventKind.pointer_moved:
             destination = self.capture if self.capture != 0 else self.hit(event.x, event.y)
@@ -919,11 +931,11 @@ pub struct Tree:
         if let index = self.find(destination):
             let box = self.entries[index].box.value()
             let translated = Event(kind = event.kind, key = event.key,
-                x = event.x - box.rectangle.x, y = event.y - box.rectangle.y,
-                button = (i64)event.button, repeated = event.repeated, shift = event.modifiers.shift,
-                control = event.modifiers.control, alt = event.modifiers.alt, meta = event.modifiers.super,
-                codepoint = (i64)event.codepoint, scroll_unit = event.scroll_unit,
-                inside = inside(box.clipping, event.x, event.y), scroll_x = event.scroll_x, scroll_y = event.scroll_y, pressure = event.pressure)
+                                   x = event.x - box.rectangle.x, y = event.y - box.rectangle.y,
+                                   button = (i64)event.button, repeated = event.repeated, shift = event.modifiers.shift,
+                                   control = event.modifiers.control, alt = event.modifiers.alt, meta = event.modifiers.super,
+                                   codepoint = (i64)event.codepoint, scroll_unit = event.scroll_unit,
+                                   inside = inside(box.clipping, event.x, event.y), scroll_x = event.scroll_x, scroll_y = event.scroll_y, pressure = event.pressure)
             let delivered = self.send(index, translated)
             if not delivered.is_success():
                 return delivered
@@ -1218,9 +1230,9 @@ func along(size: Size, horizontal: bool) -> f64:
 ## animates, so the motion is fast at first and eases in as it approaches its place.
 func ease_rect(current: Rect, target: Rect, factor: f64) -> Rect:
     return Rect(current.x + (target.x - current.x) * factor,
-        current.y + (target.y - current.y) * factor,
-        current.width + (target.width - current.width) * factor,
-        current.height + (target.height - current.height) * factor)
+                current.y + (target.y - current.y) * factor,
+                current.width + (target.width - current.width) * factor,
+                current.height + (target.height - current.height) * factor)
 
 ## Within half a pixel on every side, so the ease can snap to the target and stop.
 func settled(a: Rect, b: Rect) -> bool:
@@ -1232,7 +1244,7 @@ func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect) -> !:
     box.clipping = intersection(bounds, clip)
     let horizontal = box.axis == Axis.horizontal
     let inner = Rect(bounds.x + box.padding, bounds.y + box.padding,
-        math.max(0.0, bounds.width - box.padding * 2.0), math.max(0.0, bounds.height - box.padding * 2.0))
+                     math.max(0.0, bounds.width - box.padding * 2.0), math.max(0.0, bounds.height - box.padding * 2.0))
     # A child may retain its minimum size in a smaller window. Clip it to the
     # content area so it cannot paint or hit-test over its parent's frame.
     let content_clip = intersection(box.clipping, inner)
@@ -1368,7 +1380,7 @@ func place_split(entries: Entry[], index: usize, bounds: Rect, clip: Rect, fract
     let gap = along(handle.measured, horizontal)
     let available = math.max(0.0, (bounds.width if horizontal else bounds.height) - gap)
     let sizes = splitting.distribute(available, fraction, along(leading.minimum, horizontal),
-        along(leading.maximum, horizontal), along(trailing.minimum, horizontal), along(trailing.maximum, horizontal))
+                                     along(leading.maximum, horizontal), along(trailing.minimum, horizontal), along(trailing.maximum, horizontal))
     if horizontal:
         try place(entries, first, Rect(bounds.x, bounds.y, sizes.first, math.clamp(bounds.height, leading.minimum.height, leading.maximum.height)), clip)
         try place(entries, divider, Rect(bounds.x + sizes.first, bounds.y, gap, bounds.height), clip)

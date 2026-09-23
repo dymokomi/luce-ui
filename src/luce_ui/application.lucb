@@ -1,3 +1,5 @@
+import core
+import crash
 import dialogs
 import gpu
 import input
@@ -220,10 +222,10 @@ pub struct Application:
         if event.codepoint < 0 or event.codepoint > 0x10FFFF or (event.codepoint >= 0xD800 and event.codepoint <= 0xDFFF):
             return result.failure[unit](result.invalid, "text input requires a Unicode scalar")
         return self.route(input.Event(kind = event.kind, key = event.key,
-            x = event.x, y = event.y, button = (u32)event.button,
-            repeated = event.repeated, modifiers = input.Modifiers(shift = event.shift,
-                control = event.control, alt = event.alt, super = event.meta), codepoint = (u32)event.codepoint,
-            scroll_x = event.scroll_x, scroll_y = event.scroll_y, scroll_unit = event.scroll_unit))
+                                      x = event.x, y = event.y, button = (u32)event.button,
+                                      repeated = event.repeated, modifiers = input.Modifiers(shift = event.shift,
+                                                                                             control = event.control, alt = event.alt, super = event.meta), codepoint = (u32)event.codepoint,
+                                      scroll_x = event.scroll_x, scroll_y = event.scroll_y, scroll_unit = event.scroll_unit))
 
     mutating func dispatch_native(event: input.Event) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:
@@ -286,6 +288,11 @@ pub struct Application:
             return result.failure[unit](result.busy, "the application is already running")
         if frame_limit < 0:
             return result.failure[unit](result.invalid, "a frame limit must be nonnegative")
+        # A windowed program has nowhere to print a trap; unless it chose its own
+        # name and version, report crashes under the window title.
+        if not core.crash_reports_enabled():
+            crash.enable(self.title.value) catch failure:
+                discard(failure)
         self.session_host = window.Window.open(window.Options(title = self.title.value, width = (u32)self.width, height = (u32)self.height, fullscreen = self.fullscreen)) catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer self.session_host.destroy()
@@ -504,8 +511,6 @@ pub struct Application:
 func check_fps(fps: f64) -> !:
     if not math.is_finite(fps) or fps < 0.0 or fps > 1000.0:
         error(result.invalid, "game fps must be finite and in 0..1000")
-
-
 
 pub let application_type: interop.Type[Application] = interop.Type[Application]("UI application", Application.dispose, Application.trace, main_thread = true)
 

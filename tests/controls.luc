@@ -10,6 +10,7 @@ from text_views import text_views
 from panes import panes
 from contextual import contextual
 from hover import hover
+from buttons import buttons
 from ui import ListItem
 from headers import headers
 from docking import docking
@@ -61,6 +62,7 @@ pub func main(arguments: list[str]) -> int!:
     raster_surface()
     contextual()
     hover()
+    buttons()
     headers()
     docking()
     cursors()

@@ -1,0 +1,55 @@
+from ui import Application, Widget, Layout, Size, Constraints, Event, Button, VStack, Font
+from gpu import RenderTarget
+from input import EventKind
+
+## Records the pointer buttons it is sent, as a canvas that pans with the middle button would.
+class Pad: Widget:
+    let box: Layout
+    pub var downs: list[int]
+    pub var ups: list[int]
+    pub var moves: int = 0
+
+    pub func init(self) -> unit!:
+        self.box = Layout()
+        self.box.set_focusable(true)
+        self.box.set_flex()
+        self.downs = []
+        self.ups = []
+
+    pub func layout(self) -> Layout:
+        return self.box
+
+    pub func measure(self, available: Constraints) -> Size!:
+        return Size(200.0, 200.0)
+
+    pub func draw(self, target: RenderTarget) -> unit!:
+        discard(target)
+
+    pub func event(self, event: Event) -> unit!:
+        if event.kind == EventKind.pointer_down:
+            self.downs.append(event.button)
+        elif event.kind == EventKind.pointer_up:
+            self.ups.append(event.button)
+        elif event.kind == EventKind.pointer_moved:
+            self.moves += 1
+
+## The middle button reaches the widget under the pointer, the drag stays with it
+## even outside, and keyboard focus stays where it was.
+pub func buttons() -> unit!:
+    let font = Font()
+    let pad = Pad()
+    let other = Button("Other", font = font)
+    let app = Application(VStack([other, pad], spacing = 0.0))
+    app.layout(300.0, 300.0)
+    app.focus(other.layout())
+    app.layout(300.0, 300.0)
+    let area = pad.layout().bounds()
+    let x = area.x + area.width * 0.5
+    let y = area.y + area.height * 0.5
+    app.dispatch(Event(kind = EventKind.pointer_down, button = 2, x = x, y = y))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = -40.0, y = -40.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, button = 2, x = -40.0, y = -40.0))
+    assert(pad.downs.length == 1 and pad.downs[0] == 2)
+    assert(pad.ups.length == 1 and pad.ups[0] == 2)
+    assert(pad.moves >= 1)
+    assert(other.layout().is_focused() and not pad.layout().is_focused())
