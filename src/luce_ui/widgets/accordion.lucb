@@ -104,7 +104,6 @@ let animation: f64 = 180000000.0
 ## One section's state: its header, its content and the open animation.
 struct Section:
     var header: interop.Reference[SectionHeader]
-    var content: interop.Interface[Widget]
     var content_box: interop.Reference[Layout]
     ## 0 closed .. 1 open, where the animation is now, and where it is going.
     var progress: f64
@@ -144,11 +143,14 @@ pub struct Accordion: Widget:
             let opened = (i64)index == open
             header.value().set_open(opened)
             content_box.value().set_visible(opened)
-            sections[index] = Section(header = header, content = contents[index].clone(), content_box = content_box,
+            sections[index] = Section(header = header, content_box = content_box,
                                       progress = 1.0 if opened else 0.0, target = 1.0 if opened else 0.0, started = 0, origin = 1.0 if opened else 0.0)
             children[index * 2] = header.as_interface[Widget](header.value())
             children[index * 2 + 1] = contents[index]
         try box.value().set_children(children)
+        # The layout retained its children; the header carriers were ours to drop.
+        for index in 0..<titles.length:
+            children[index * 2].release()
         self.box = box
         self.sections = sections
         self.count = titles.length
@@ -221,10 +223,8 @@ pub struct Accordion: Widget:
                 section.content_box.value().set_visible(false)
                 try section.content_box.value().set_limits(Size(0.0, 0.0), Size(16384.0, 16384.0))
             else:
-                let natural = section.content.value().measure(Constraints(math.max(1.0, width), 16384.0))
-                defer natural.release()
-                let full = natural.get() catch failure:
-                    error(failure.code, failure.message)
+                # Sections are stacks of rows, so their layout knows their natural height.
+                let full = try section.content_box.value().content_size(Constraints(math.max(1.0, width), 16384.0))
                 let shown = math.floor(full.height * section.progress + 0.5)
                 if section.progress >= 1.0:
                     try section.content_box.value().set_limits(Size(0.0, 0.0), Size(16384.0, 16384.0))
@@ -240,7 +240,6 @@ pub struct Accordion: Widget:
 
     pub mutating func close():
         for index in 0..<self.count:
-            self.sections[index].content.release()
             self.sections[index].content_box.release()
             self.sections[index].header.release()
         if self.sections.length > 0:
@@ -255,7 +254,6 @@ pub struct Accordion: Widget:
         for index in 0..<self.count:
             self.sections[index].header.trace(visit, context)
             self.sections[index].content_box.trace(visit, context)
-            self.sections[index].content.trace(visit, context)
 
 pub let accordion_type: interop.Type[Accordion] = interop.Type[Accordion]("Accordion", Accordion.close, Accordion.trace, closeable = true, main_thread = true)
 

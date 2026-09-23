@@ -147,6 +147,7 @@ pub struct Tabs: Widget:
             boxes[index].value().set_visible((i64)index == chosen)
             children[index + 1] = pages[index]
         try box.value().set_children(children)
+        children[0].release()
         self.box = box
         self.bar = bar
         self.pages = boxes
