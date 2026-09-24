@@ -154,18 +154,21 @@ pub struct Application:
     pub mutating func set_close_handler(callback: interop.Callback[unit, bool]) -> !:
         try self.check()
         let replacement = callback.clone()
-        if let previous = self.close_handler:
-            previous.release()
+        # Replace, then release: a release can run the cycle collector, which traces this.
+        let previous = self.close_handler
         self.close_handler = replacement
+        if let old = previous:
+            old.release()
 
     ## Recoverable input errors can be reported without discarding an editing
     ## session. Without a handler, run preserves its normal failure behavior.
     pub mutating func set_error_handler(callback: interop.Callback[str, unit]) -> !:
         try self.check()
         let replacement = callback.clone()
-        if let previous = self.error_handler:
-            previous.release()
+        let previous = self.error_handler
         self.error_handler = replacement
+        if let old = previous:
+            old.release()
 
     ## Replace the registered commands whose shortcuts `dispatch` and `run` match
     ## before the widget tree sees a key.

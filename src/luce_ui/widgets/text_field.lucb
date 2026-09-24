@@ -63,8 +63,9 @@ pub struct TextField: Widget:
     pub mutating func set_text(text: str) -> !:
         try self.input.set_text(text)
         let replacement = try interop.copy_text(text)
-        self.committed.release()
+        let previous_committed = self.committed
         self.committed = replacement
+        previous_committed.release()
         self.box.value().invalidate()
 
     ## Called with the whole text after each edit that changes it.
@@ -84,8 +85,9 @@ pub struct TextField: Widget:
             return result.success[unit](())
         let replacement = interop.copy_text(current.value) catch failure:
             return result.failure[unit](failure.code, failure.message)
-        self.committed.release()
+        let previous_committed = self.committed
         self.committed = replacement
+        previous_committed.release()
         self.box.value().invalidate()
         return self.submitted.emit(current.value)
 

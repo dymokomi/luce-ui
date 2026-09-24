@@ -205,10 +205,15 @@ pub struct Tree:
             entry.box.value().focus_within = false
             entry.box.value().hovered = false
             entry.box.value().pointer_within = false
-        release_entries(self.entries, self.count)
+        # Swap first, release after: a release can run the cycle collector,
+        # which traces `self.entries`, so they must never name references
+        # already given up.
+        let previous = self.entries
+        let previous_count = self.count
         committed = true
         self.entries = replacement
         self.count = count
+        release_entries(previous, previous_count)
         self.width = width
         self.height = height
         self.version = started
@@ -747,10 +752,13 @@ pub struct Tree:
                 box.focus_within = false
                 box.hovered = false
                 box.pointer_within = false
-        release_entries(self.entries, self.count)
+        # As in `arrange`: forget the entries before releasing them.
+        let previous = self.entries
+        let previous_count = self.count
         self.count = 0
         var empty: Entry[]
         self.entries = empty
+        release_entries(previous, previous_count)
         self.root.release()
 
     pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):

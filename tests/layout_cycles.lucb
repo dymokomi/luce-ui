@@ -5,7 +5,7 @@ import interop
 import memory
 import ownership
 import ui
-from ui import Layout, Widget, Size, Constraints, Event
+from ui import Layout, Widget, Size, Constraints, Event, Spacer, HStack, Application
 
 struct Child: Widget:
     let box: interop.Reference[Layout]
@@ -50,3 +50,68 @@ pub func collect() -> !:
     let widget = child.as_interface[Widget](child.value())
     defer widget.release()
     try parent.value().set_children([widget])
+
+## Keeps a widget alive through a traced edge, as a Luce object's field would.
+struct Holder:
+    let widget: interop.Interface[Widget]
+
+    pub mutating func close():
+        self.widget.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.widget.trace(visit, context)
+
+let holder_type: interop.Type[Holder] = interop.Type[Holder]("Layout cycle holder", Holder.close, Holder.trace, closeable = true)
+
+func spacer() -> interop.Reference[Spacer]!:
+    return try interop.Reference[Spacer].adopt(new Spacer(1.0) in memory.heap, ui.spacer_type, memory.heap)
+
+## A widget leaves the tree, held on only by a traced owner, and the next
+## layout releases the tree's old entries. A collection that the release
+## sets off must see the tree's new entries, not the ones just given up: it
+## once traced those and took one reference too many from the widget. How
+## many candidates are waiting decides where the collection fires, so every
+## count around the collector's limit is tried.
+pub func relayout_during_collection() -> !:
+    var prefill: usize = 990
+    while prefill <= 1030:
+        try relayout_once(prefill)
+        prefill += 1
+
+func relayout_once(prefill: usize) -> !:
+    let flexible = try spacer()
+    let space = flexible.as_interface[Widget](flexible.value())
+    flexible.release()
+    let row = try interop.Reference[HStack].adopt(new HStack([space], 0.0, 0.0) in memory.heap, ui.hstack_type, memory.heap)
+    defer row.release()
+    let root = row.as_interface[Widget](row.value())
+    defer root.release()
+    let app = try interop.Reference[Application].adopt(new Application(root) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    let first = app.value().layout(300.0, 100.0)
+    first.release()
+    var nothing: interop.Interface[Widget][]
+    try row.value().set_children(nothing)
+    let holder = try interop.Reference[Holder].adopt(new Holder(widget = space.clone()) in memory.heap, holder_type, memory.heap)
+    defer holder.release()
+    space.release()
+    # An empty candidate buffer, then the app, the holder and `prefill` others in it.
+    ownership.collect()
+    let app_alias = app.clone()
+    app_alias.release()
+    let holder_alias = holder.clone()
+    holder_alias.release()
+    let fillers = try alloc interop.Reference[Spacer][prefill + 1] in memory.heap
+    defer free(fillers) in memory.heap
+    var index: usize = 0
+    while index < prefill:
+        fillers[index] = try spacer()
+        let alias = fillers[index].clone()
+        alias.release()
+        index += 1
+    let second = app.value().layout(300.0, 100.0)
+    second.release()
+    index = 0
+    while index < prefill:
+        fillers[index].release()
+        index += 1

@@ -97,8 +97,9 @@ pub struct Font:
     ## Font object, so a settings reload updates all of them together.
     pub mutating func configure(size: f64, family: str = "") -> !:
         let replacement = try Font(size, family)
-        self.state.release()
+        let previous_state = self.state
         self.state = replacement.state
+        previous_state.release()
 
     pub func size() -> f64:
         return self.state.value().face.size

@@ -280,8 +280,9 @@ pub struct Layout:
         try source.enter()
         defer source.leave()
         let retained = source.clone()
-        if let previous = self.cursor_source: previous.release()
+        let previous = self.cursor_source
         self.cursor_source = retained
+        if let old = previous: old.release()
 
     pub func is_enabled() -> bool:
         return self.active

@@ -51,8 +51,9 @@ pub struct PaneHeader: Widget:
             return
         discard(try self.font.value().measure(text))
         let replacement = try interop.copy_text(text)
-        self.caption.release()
+        let previous_caption = self.caption
         self.caption = replacement
+        previous_caption.release()
         self.box.value().invalidate()
 
     pub mutating func set_detail(detail: str) -> !:
@@ -60,8 +61,9 @@ pub struct PaneHeader: Widget:
             return
         discard(try self.font.value().measure(detail))
         let replacement = try interop.copy_text(detail)
-        self.description.release()
+        let previous_description = self.description
         self.description = replacement
+        previous_description.release()
         self.box.value().invalidate()
 
     pub mutating func set_icon(icon: IconKind):

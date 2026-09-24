@@ -108,8 +108,9 @@ pub struct Button: Widget:
             error(result.invalid, "an action button takes its label from the action")
         discard(try self.font.value().measure(text))
         let replacement = try interop.copy_text(text)
-        self.caption.release()
+        let previous_caption = self.caption
         self.caption = replacement
+        previous_caption.release()
         self.box.value().invalidate()
 
     ## Change how the button rests; `selected` marks it as the active choice.

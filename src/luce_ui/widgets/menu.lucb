@@ -55,8 +55,9 @@ pub struct Menu: Widget:
             return
         discard(try self.font.value().measure(text))
         let replacement = try interop.copy_text(text)
-        self.caption.release()
+        let previous_caption = self.caption
         self.caption = replacement
+        previous_caption.release()
         self.box.value().invalidate()
 
     pub mutating func open() -> !:

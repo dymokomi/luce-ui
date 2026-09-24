@@ -62,10 +62,12 @@ pub struct TextPrompt: Widget:
         let label = try interop.copy_text(accept)
         errdefer label.release()
         try self.text.set_text(text)
-        self.caption.release()
-        self.accept.release()
+        let previous_caption = self.caption
+        let previous_accept = self.accept
         self.caption = caption
+        previous_caption.release()
         self.accept = label
+        previous_accept.release()
         self.editable = editable
         self.pressed = -1
         self.box.value().set_text_input(editable)

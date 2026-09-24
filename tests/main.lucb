@@ -241,6 +241,8 @@ pub func main(arguments: str[]) -> i32!:
         try docking_allocations(&tracker)
         try layout_cycles.collect()
         assert(ownership.finish_run(0) == 0)
+        try layout_cycles.relayout_during_collection()
+        assert(ownership.finish_run(0) == 0)
         assert(tracker.live == 0)
         try ownership_and_layout(&tracker)
         assert(ownership.finish_run(0) == 0)

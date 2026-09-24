@@ -103,8 +103,9 @@ pub struct Command:
     ## Relabel a live command, for one whose caption reflects its state.
     pub mutating func set_text(text: str) -> !:
         let replacement = try interop.copy_text(text)
-        self.caption.release()
+        let previous_caption = self.caption
         self.caption = replacement
+        previous_caption.release()
 
     pub func shortcut() -> Shortcut:
         return self.binding

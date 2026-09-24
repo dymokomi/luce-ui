@@ -121,8 +121,9 @@ pub struct NumberField: Widget:
     ## The unit shown after the value, muted.
     pub mutating func set_suffix(suffix: str) -> !:
         let replacement = try interop.copy_text(suffix)
-        self.suffix.release()
+        let previous_suffix = self.suffix
         self.suffix = replacement
+        previous_suffix.release()
         self.box.value().invalidate()
 
     ## Change the bounds and re-clamp and re-snap the value; no signal.
