@@ -1,0 +1,49 @@
+from ui import Application, Font, Text, VStack, Accordion, ShadedField, HsbField, HueStrip, Tabs, Event
+from gpu import Frame
+from input import EventKind
+import window
+
+func click(app: Application, x: float, y: float) -> unit!:
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x, y = y))
+
+## Controls that act on a click receive it through the application's hit test,
+## not only when handed an event directly: accordion headers, tabs, and the
+## color fields and strips.
+pub func clicks() -> unit!:
+    let font = Font()
+    let accordion = Accordion(["One", "Two"], [Text("first"), Text("second")], font = font, open = 0)
+    let field = ShadedField(100.0, 100.0)
+    let hsb = HsbField(100.0)
+    let hue = HueStrip(100.0)
+    let tabs = Tabs(["A", "B"], [Text("page a"), Text("page b")], font = font)
+    let app = Application(VStack([accordion, field, hsb, hue, tabs], spacing = 0.0))
+    let frame = Frame(window.Size(400.0, 800.0, 400.0, 800.0, 1.0))
+    app.layout(400.0, 800.0)
+    app.render(frame.target())
+
+    # the second header sits below the first section's header and content
+    let open = accordion.layout().bounds()
+    click(app, open.x + 20.0, open.y + open.height - 5.0)
+    app.render(frame.target())
+    assert(accordion.open_section_index() == 1)
+
+    let area = field.layout().bounds()
+    click(app, area.x + area.width * 0.75, area.y + area.height * 0.25)
+    assert(field.u() > 0.5 and field.v() < 0.5)
+
+    let square = hsb.layout().bounds()
+    click(app, square.x + square.width * 0.75, square.y + square.height * 0.25)
+    assert(hsb.saturation_value() > 0.5 and hsb.brightness_value() > 0.5)
+
+    let strip = hue.layout().bounds()
+    click(app, strip.x + strip.width * 0.5, strip.y + strip.height * 0.5)
+    assert(hue.hue_value() > 90.0 and hue.hue_value() < 270.0)
+
+    app.layout(400.0, 800.0)
+    let bar = tabs.layout().bounds()
+    let second = font.measure("A") + font.advance() * 2.5 + 2.0 + 4.0
+    click(app, bar.x + second, bar.y + 10.0)
+    app.render(frame.target())
+    assert(tabs.selected_index() == 1)
+    frame.close()

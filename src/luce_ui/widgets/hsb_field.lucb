@@ -31,6 +31,8 @@ pub struct HsbField: Widget:
         errdefer box.release()
         try box.value().set_shrink(0.0, 0.0)
         box.value().set_cursor(input.Cursor.pointer)
+        # clickable: a box receives pointer events only once it says so
+        box.value().set_interactive(true)
         let changed = try interop.Signal[unit]()
         errdefer changed.release()
         self.box = box
@@ -153,6 +155,8 @@ pub struct HueStrip: Widget:
         errdefer box.release()
         try box.value().set_shrink(0.0, 0.0)
         box.value().set_cursor(input.Cursor.pointer)
+        # clickable: a box receives pointer events only once it says so
+        box.value().set_interactive(true)
         let changed = try interop.Signal[f64]()
         errdefer changed.release()
         self.box = box

@@ -29,6 +29,8 @@ pub struct SectionHeader: Widget:
         errdefer box.release()
         try box.value().set_shrink(vertical = 0.0)
         box.value().set_cursor(input.Cursor.pointer)
+        # clickable: a box receives pointer events only once it says so
+        box.value().set_interactive(true)
         self.caption = try interop.copy_text(text)
         self.box = box
         self.font = selected

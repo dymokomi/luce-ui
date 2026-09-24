@@ -34,6 +34,8 @@ pub struct ShadedField: Widget:
         errdefer box.release()
         try box.value().set_shrink(0.0, 0.0)
         box.value().set_cursor(input.Cursor.pointer)
+        # clickable: a box receives pointer events only once it says so
+        box.value().set_interactive(true)
         let changed = try interop.Signal[unit]()
         errdefer changed.release()
         var empty: gpu.Color[]
