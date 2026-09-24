@@ -11,7 +11,9 @@ pub struct Layout:
     var items: interop.Interface[Widget][]
     let axis: Axis
     let spacing: f64
-    let padding: f64
+    ## Padding left and right, and above and below: the same unless `set_padding` splits them.
+    var padding_x: f64
+    var padding_y: f64
     let alignment: Alignment
     var minimum: Size
     var maximum: Size
@@ -72,7 +74,8 @@ pub struct Layout:
         self.focus_requested = false
         self.axis = axis
         self.spacing = spacing
-        self.padding = padding
+        self.padding_x = padding
+        self.padding_y = padding
         self.alignment = alignment
         self.minimum = Size()
         self.maximum = Size(16384.0, 16384.0)
@@ -482,9 +485,17 @@ pub struct Layout:
                 size.width = math.max(size.width, measured.width)
                 size.height = math.max(size.height, measured.height)
         let gaps = (f64)(count - 1) * self.spacing if count > 0 else 0.0
-        size.width += self.padding * 2.0 + (gaps if self.axis == Axis.horizontal else 0.0)
-        size.height += self.padding * 2.0 + (gaps if self.axis == Axis.vertical else 0.0)
+        size.width += self.padding_x * 2.0 + (gaps if self.axis == Axis.horizontal else 0.0)
+        size.height += self.padding_y * 2.0 + (gaps if self.axis == Axis.vertical else 0.0)
         return Size(math.min(size.width, available.width), math.min(size.height, available.height))
+
+    ## Pad the box by `horizontal` points left and right and `vertical` above and below.
+    pub mutating func set_padding(horizontal: f64, vertical: f64) -> !:
+        try extent(horizontal)
+        try extent(vertical)
+        self.padding_x = horizontal
+        self.padding_y = vertical
+        bump_revision()
 
     mutating func finish_edit():
         self.editing = false

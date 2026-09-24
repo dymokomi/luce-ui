@@ -11,20 +11,28 @@ from luce_ui.font import Font, selected_font
 
 ## A horizontal bar of controls on the panel surface with a one-point border
 ## beneath, at least one control row tall, its children centered vertically.
+## With a `gap` it stands apart like a docked pane instead: the backdrop shows
+## `gap` points above and below it, as between panes, and there is no border.
 pub struct Toolbar: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]
 
+    let gap: f64
+
     ## Children keep their own intrinsic widths; Spacer consumes remaining room.
-    ## No outer padding is added to the shared one-line control height.
-    pub func init(children: const interop.Interface[Widget][], font: interop.Reference[Font]? = none) -> !:
+    ## `inset` pads them left and right; no padding is added to the one-line
+    ## control height but the `gap`.
+    pub func init(children: const interop.Interface[Widget][], font: interop.Reference[Font]? = none,
+                  inset: f64 = 0.0, gap: f64 = 0.0) -> !:
         let selected = try selected_font(font)
         errdefer selected.release()
         let box = try layout.make_layout(layout.Axis.horizontal, 0.0, 0.0, layout.Alignment.center)
         errdefer box.release()
         try box.value().set_shrink(vertical = 0.0)
+        try box.value().set_padding(inset, gap)
         try box.value().set_children(children)
         self.box = box
+        self.gap = gap
         self.font = selected
 
     pub func layout() -> interop.Reference[Layout]:
@@ -37,7 +45,7 @@ pub struct Toolbar: Widget:
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         let size = self.box.value().content_size(available) catch failure:
             return result.failure[Size](failure.code, failure.message)
-        return result.success[Size](Size(size.width, math.max(size.height, self.box.value().theme().row_height(self.font))))
+        return result.success[Size](Size(size.width, math.max(size.height, self.box.value().theme().row_height(self.font) + self.gap * 2.0)))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
@@ -49,6 +57,10 @@ pub struct Toolbar: Widget:
         defer painter.close()
         let size = try target.get().size()
         let theme = self.box.value().theme()
+        if self.gap > 0.0:
+            try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.background)
+            try painter.rectangle(gpu.Rect(y = self.gap, width = size.width, height = math.max(0.0, size.height - self.gap * 2.0)), theme.panel)
+            return
         try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.panel)
         try painter.rectangle(gpu.Rect(y = math.max(0.0, size.height - 1.0), width = size.width, height = 1.0), theme.border)
 

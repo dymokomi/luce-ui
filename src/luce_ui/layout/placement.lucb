@@ -40,8 +40,8 @@ func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect) -> !:
     box.rectangle = bounds
     box.clipping = intersection(bounds, clip)
     let horizontal = box.axis == Axis.horizontal
-    let inner = Rect(bounds.x + box.padding, bounds.y + box.padding,
-                     math.max(0.0, bounds.width - box.padding * 2.0), math.max(0.0, bounds.height - box.padding * 2.0))
+    let inner = Rect(bounds.x + box.padding_x, bounds.y + box.padding_y,
+                     math.max(0.0, bounds.width - box.padding_x * 2.0), math.max(0.0, bounds.height - box.padding_y * 2.0))
     # A child may retain its minimum size in a smaller window. Clip it to the
     # content area so it cannot paint or hit-test over its parent's frame.
     let content_clip = intersection(box.clipping, inner)

@@ -83,6 +83,9 @@ pub struct State: Arrangement, CursorSource:
     var pressed_add: usize
     var resize: usize
     pub var focused_divider: usize
+    ## Whether the keys have moved the focused divider since it was pressed:
+    ## only then does it keep its accent line, so a mouse resize leaves none.
+    pub var divider_keyed: bool
     var grab: f64
     var start: Point
     pub var drag_pointer: Point
@@ -138,6 +141,7 @@ pub struct State: Arrangement, CursorSource:
         self.pressed_add = 0
         self.resize = 0
         self.focused_divider = 0
+        self.divider_keyed = false
         self.grab = 0.0
         self.start = Point()
         self.drag_pointer = Point()
@@ -594,6 +598,7 @@ pub struct State: Arrangement, CursorSource:
         if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
             self.cancel()
             self.focused_divider = 0
+            self.divider_keyed = false
             self.start = Point(event.x, event.y)
             for node in 1..<self.model.nodes.length:
                 if self.model.nodes[node].used and self.model.nodes[node].first != 0 and strip.contains(geometry.dividers[node], event.x, event.y):
@@ -685,6 +690,8 @@ pub struct State: Arrangement, CursorSource:
                 let horizontal = self.model.nodes[node].horizontal
                 let backward = event.key == input.Key.left if horizontal else event.key == input.Key.up
                 let forward = event.key == input.Key.right if horizontal else event.key == input.Key.down
+                if event.key == input.Key.home or event.key == input.Key.end or backward or forward:
+                    self.divider_keyed = true
                 if event.key == input.Key.home or event.key == input.Key.end:
                     self.model.nodes[node].fraction = 0.0 if event.key == input.Key.home else 1.0
                     self.invalidate()

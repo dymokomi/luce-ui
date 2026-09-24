@@ -32,7 +32,7 @@ pub func draw(state: State*, target: interop.View[gpu.RenderTarget]) -> !:
         if not node.used: continue
         if node.first != 0:
             let divider = geometry.dividers[group]
-            if (hovered and strip.contains(divider, pointer.x, pointer.y)) or (focused and state.focused_divider == group):
+            if (hovered and strip.contains(divider, pointer.x, pointer.y)) or (focused and state.divider_keyed and state.focused_divider == group):
                 let line = gpu.Rect(divider.x + (divider.width - 1.0) * 0.5, divider.y, 1.0, divider.height) if node.horizontal else gpu.Rect(divider.x, divider.y + (divider.height - 1.0) * 0.5, divider.width, 1.0)
                 try painter.rectangle(line, theme.accent)
             continue
