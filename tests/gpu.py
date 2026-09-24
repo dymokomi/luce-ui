@@ -11,7 +11,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--base", type=Path, default=ROOT.parent / "luce-base/build/luce-base")
-parser.add_argument("--base-source", type=Path, default=ROOT.parent / "luce-base")
+parser.add_argument("--gpu-source", type=Path, default=ROOT.parent / "luce-gpu")
 parser.add_argument("--opt", type=int, choices=range(4))
 args = parser.parse_args()
 modes = [["--native", "--opt", str(level)] for level in ([args.opt] if args.opt is not None else range(4))]
@@ -22,8 +22,9 @@ with tempfile.TemporaryDirectory(prefix="luce-ui-gpu-") as temporary:
     shutil.copy2(ROOT / "tests/gpu_pixels_main.lucb", project / "main.lucb")
     shutil.copy2(ROOT / "tests/style_pixels.lucb", project / "style_pixels.lucb")
     shutil.copy2(ROOT / "tests/docking_pixels.lucb", project / "docking_pixels.lucb")
-    shutil.copy2(args.base_source / "tests/programs/gpu/native.lucb", project / "native.lucb")
-    (project / "package.prisma").write_text('#prisma 4.0\ndef package "ui-pixels" {\n    str owner = "dymokomi"\n    str version = "0.0.0"\n    str kind = "tool"\n    str language = "luce-base"\n    str entry = "main.lucb"\n    def dependency "luce-ui" {\n        str owner = "dymokomi"\n        str version = "^0.1.0"\n        str path = ' + json.dumps(str(ROOT)) + '\n    }\n}\n')
+    shutil.copy2(args.gpu_source / "tests/programs/gpu/native.lucb", project / "native.lucb")
+    dependencies = ''.join(f'    def dependency "{name}" {{\n        str path = {json.dumps((ROOT if name == "luce-ui" else ROOT.parent / name).as_posix())}\n    }}\n' for name in ('luce-ui', 'luce-std', 'luce-gpu', 'luce-window'))
+    (project / "package.prisma").write_text('#prisma 4.0\ndef package "ui-pixels" {\n    str source = "."\n' + dependencies + '}\n')
     for flags in modes:
         binary = project / "pixels"
         subprocess.run([str(args.base.resolve()), "build", str(project / "main.lucb"), *flags, "-o", str(binary)], check=True, timeout=180)
