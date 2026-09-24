@@ -1,0 +1,84 @@
+#==============================================================================================
+#
+#   docking/state/frame - The chrome widget behind a floating panel
+#
+#==============================================================================================
+
+## The chrome behind one floating panel: it takes the presses on the title and
+## border that the panel's content does not cover, and hands them to the state.
+pub struct Frame: Widget:
+    let box: interop.Reference[Layout]
+    let state: interop.WeakReference[State]
+    let slot: usize
+
+    pub func init(state: interop.Reference[State], slot: usize) -> !:
+        let box = try layout.make_layout()
+        errdefer box.release()
+        box.value().set_interactive(true)
+        let cursor = try interop.Reference[FrameCursor].adopt(new FrameCursor(state, slot) in memory.heap, frame_cursor_type, memory.heap)
+        defer cursor.release()
+        let source = cursor.as_interface[CursorSource](cursor.value())
+        defer source.release()
+        try box.value().set_cursor_source(source)
+        self.box = box
+        self.state = interop.WeakReference[State](state)
+        self.slot = slot
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func measure(available: layout.Constraints) -> interop.Outcome[Size]:
+        return result.success[Size](Size())
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        let state = self.state.get() else return result.success[unit](())
+        defer state.release()
+        draw_float(state.value(), self.slot, target, self.box.value().pointer_position(), self.box.value().contains_pointer()) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        let state = self.state.get() else return result.success[unit](())
+        defer state.release()
+        let stack = state.value().box.get() else return result.success[unit](())
+        defer stack.release()
+        let mine = self.box.value().bounds()
+        let base = stack.value().bounds()
+        float_event(state.value(), self.slot, event, event.x + mine.x - base.x, event.y + mine.y - base.y) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.state.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+
+pub let frame_type: interop.Type[Frame] = interop.Type[Frame]("Floating panel frame", Frame.close, Frame.trace, closeable = true, main_thread = true)
+
+func make_frame(state: interop.Reference[State], slot: usize) -> interop.Reference[Frame]!:
+    return try interop.Reference[Frame].adopt(new Frame(state, slot) in memory.heap, frame_type, memory.heap)
+
+## A frame's cursors; it holds the state weakly, so the frame's box can keep it.
+struct FrameCursor: CursorSource:
+    let state: interop.WeakReference[State]
+    let slot: usize
+
+    pub func init(state: interop.Reference[State], slot: usize):
+        self.state = interop.WeakReference[State](state)
+        self.slot = slot
+
+    pub func cursor(position: Point, captured: bool) -> input.Cursor:
+        let state = self.state.get() else return input.Cursor.arrow
+        defer state.release()
+        let window = state.value().floats[self.slot]
+        return float_cursor(state.value(), self.slot, position.x + window.x, position.y + window.y)
+
+    pub mutating func close():
+        self.state.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        discard(context)
+
+let frame_cursor_type: interop.Type[FrameCursor] = interop.Type[FrameCursor]("Floating frame cursor", FrameCursor.close, FrameCursor.trace, closeable = true, main_thread = true)

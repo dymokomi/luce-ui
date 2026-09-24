@@ -1,3 +1,5 @@
+## The HSB color picker parts (HsbField, HueStrip) and the sRGB/HSB conversions
+## they and the rest of the library use.
 import gpu
 import interop
 import math
@@ -46,6 +48,8 @@ pub struct HsbField: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
+    ## Fires on each press and drag step that picks a saturation and brightness;
+    ## `set_hsb` does not fire it.
     pub func on_change(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
 
@@ -175,6 +179,7 @@ pub struct HueStrip: Widget:
     pub func hue_value() -> f64:
         return self.hue
 
+    ## Set the hue from code, wrapped into 0..360; no signal.
     pub mutating func set_hue(hue: f64) -> !:
         if not math.is_finite(hue):
             error(result.invalid, "hue must be finite")
@@ -293,7 +298,7 @@ pub func hsb_to_rgb(hue: f64, saturation: f64, brightness: f64) -> gpu.Color:
     return gpu.Color(brightness, p, q)
 
 ## Hue, saturation and brightness of an sRGB color, written to the pointers.
-## A grey keeps hue 0.
+## A gray keeps hue 0.
 pub func rgb_to_hsb(color: gpu.Color, hue: f64*, saturation: f64*, brightness: f64*):
     let top = math.max(color.red, math.max(color.green, color.blue))
     let bottom = math.min(color.red, math.min(color.green, color.blue))

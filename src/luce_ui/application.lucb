@@ -1,3 +1,6 @@
+## The native application: one window, its widget tree, commands, timers and
+## frame callbacks, and the run loop that polls input, services timers, lays out
+## and presents a frame only when something changed.
 import core
 import crash
 import dialogs
@@ -164,18 +167,20 @@ pub struct Application:
             previous.release()
         self.error_handler = replacement
 
+    ## Replace the registered commands whose shortcuts `dispatch` and `run` match
+    ## before the widget tree sees a key.
     pub mutating func set_commands(commands: const interop.Reference[Command][]) -> !:
         try self.check()
         try self.commands.set(commands)
 
     ## Show the desktop's open-file dialog with `message` and return the chosen
-    ## path, or an empty string when it was cancelled.
+    ## path, or an empty string when it was canceled.
     pub func open_file(message: str) -> interop.Owned[str]!:
         let chosen = try dialogs.open_file(message) else return try interop.copy_text("")
         return chosen
 
     ## Show the desktop's save-file dialog suggesting `name` and return the chosen
-    ## path, or an empty string when it was cancelled.
+    ## path, or an empty string when it was canceled.
     pub func save_file(message: str, name: str) -> interop.Owned[str]!:
         let chosen = try dialogs.save_file(message, name) else return try interop.copy_text("")
         return chosen
@@ -193,6 +198,8 @@ pub struct Application:
         try self.check()
         self.tree.focus_layout(target)
 
+    ## The cursor the widget under the pointer (or the capturing widget) asks for,
+    ## after refreshing the layout.
     pub mutating func cursor() -> input.Cursor!:
         try self.begin_operation()
         defer self.end_operation()
@@ -204,6 +211,7 @@ pub struct Application:
     mutating func update_cursor(host: window.Window) -> !:
         try host.set_cursor(try self.cursor())
 
+    ## Arrange the widget tree for a window of this size.
     pub mutating func layout(width: f64, height: f64) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -211,6 +219,8 @@ pub struct Application:
         return self.tree.arrange(width, height)
 
     ## Portable entry points allow embedding and deterministic input/drawing tests.
+    ## An event with `cancelled` set becomes focus loss; otherwise command
+    ## shortcuts see the event first (unless a popup is open), then the tree.
     pub mutating func dispatch(event: Event) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -242,7 +252,10 @@ pub struct Application:
         arranged.release()
         if event.kind == input.EventKind.drag_entered or event.kind == input.EventKind.drag_moved or event.kind == input.EventKind.drag_left or event.kind == input.EventKind.drop:
             return self.route_drag(event, native)
-        if not self.tree.has_popup():
+        # Shortcuts wait while a modal popup is open, and a field taking text
+        # keeps its plain keys: typing "b" in a name must not pick the brush.
+        let typing = self.tree.wants_text_input() and not event.modifiers.control and not event.modifiers.super
+        if not self.tree.has_popup() and not typing:
             let dispatched = self.commands.dispatch(event)
             defer dispatched.release()
             let handled = dispatched.get() catch failure:
@@ -274,6 +287,8 @@ pub struct Application:
     pub func set_drop_paths(paths: const str[]) -> !:
         try layout.set_drop_payload(paths)
 
+    ## Arrange the tree at the target's size and draw it into the target. The
+    ## caller acquires and presents the frame.
     pub mutating func render(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -308,6 +323,10 @@ pub struct Application:
             return result.failure[unit](failure.code, failure.message))
         return result.success[unit](())
 
+    ## Open the window and GPU surface and drive the loop until `stop`, `close` or
+    ## an allowed close request. A positive `frame_limit` stops after that many
+    ## iterations and never blocks waiting for input, for deterministic tests; 0
+    ## runs until stopped. Fails when the application is already running.
     pub mutating func run(frame_limit: i64 = 0) -> interop.Outcome[unit]:
         self.check() catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -415,9 +434,15 @@ pub struct Application:
                 rendered.release()
                 self.update_cursor(self.session_host) catch failure:
                     return result.failure[unit](failure.code, failure.message)
+                # The window may change size between a frame and its present; that
+                # frame is dropped and the next one drawn at the new size.
+                var resized = false
                 discard(frame.value().present(self.tree.theme().background) catch failure:
-                    return result.failure[unit](failure.code, failure.message))
-                self.dirty = false
+                    if failure.code != gpu.frame_resized:
+                        return result.failure[unit](failure.code, failure.message)
+                    resized = true
+                    recover gpu.PresentResult.skipped)
+                self.dirty = resized
                 self.last_epoch = epoch_now
                 self.last_render = moment
             count += 1
@@ -486,7 +511,9 @@ pub struct Application:
                 if budget == 0 or delta < budget:
                     budget = delta
             return budget
-        if self.dirty or self.tree.is_animating():
+        # A widget that changed the layout while drawing (an accordion easing a
+        # section open) wants the next frame at once, not after the next event.
+        if self.dirty or self.tree.is_animating() or layout.epoch() != self.last_epoch:
             return 0
         let now = time.now()
         var budget: u64 = 1000000000
@@ -500,6 +527,7 @@ pub struct Application:
             budget = 30000000
         return budget
 
+    ## End the run loop after the current iteration; the application stays usable.
     pub mutating func stop():
         self.running = false
 

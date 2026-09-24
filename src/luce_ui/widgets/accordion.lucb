@@ -1,3 +1,5 @@
+## Accordion: a vertical stack of titled sections, one open at a time, and the
+## SectionHeader widget that heads each section.
 import gpu
 import interop
 import math
@@ -162,6 +164,8 @@ pub struct Accordion: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
+    ## Called with the open index, or -1, whenever a section opens or closes,
+    ## whether from a header click or `open_section`.
     pub func on_change(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
 
@@ -169,6 +173,7 @@ pub struct Accordion: Widget:
         return self.open_index
 
     ## Open section `index` (closing the open one), or -1 to close all; animated.
+    ## An index past the last section is ignored.
     pub mutating func open_section(index: i64) -> interop.Outcome[unit]:
         if index >= (i64)self.count:
             return result.success[unit](())

@@ -1,3 +1,4 @@
+## The ShadedField widget: a host-shaded color field or strip with a draggable marker.
 import gpu
 import interop
 import math
@@ -53,6 +54,8 @@ pub struct ShadedField: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
+    ## Fires on each press and drag step that moves the marker; `set_marker` does
+    ## not fire it.
     pub func on_change(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
 

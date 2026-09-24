@@ -1,3 +1,5 @@
+## The cursor policy a widget can attach to its Layout to choose the pointer
+## shape by position.
 import input
 from luce_ui.geometry import Point
 

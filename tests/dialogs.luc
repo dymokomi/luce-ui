@@ -1,0 +1,64 @@
+from ui import Application, Font, Button, TextField, TextPrompt, VStack, Dialog, Command, Shortcut, Event
+from gpu import Frame
+from input import EventKind, Key
+import window
+
+class Count:
+    pub var clicks: int = 0
+    pub var triggers: int = 0
+    pub func click(self):
+        self.clicks += 1
+    pub func trigger(self):
+        self.triggers += 1
+
+func click(app: Application, x: float, y: float) -> unit!:
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x, y = y))
+
+func render(app: Application) -> unit!:
+    let frame = Frame(window.Size(600.0, 500.0, 600.0, 500.0, 1.0))
+    app.layout(600.0, 500.0)
+    app.render(frame.target())
+    frame.close()
+
+## A Dialog is a non-modal floating card: a click behind it reaches what is
+## there, and its own field takes focus and typing. A plain-key shortcut waits
+## while a field takes text. A prompt is still modal.
+pub func dialogs() -> unit!:
+    let font = Font()
+    let count = Count()
+    let behind = Button("Behind", font = font)
+    let clicked = behind.on_click(count.click)
+    let inside = TextField("", font = font, cells = 12.0)
+    let dialog = Dialog([inside], width = 240.0)
+    let prompt = TextPrompt(font = font)
+    let app = Application(VStack([behind, dialog, prompt], spacing = 0.0))
+    let brush = Command("Brush", Shortcut(Key.b), id = "brush")
+    let triggered = brush.on_trigger(count.trigger)
+    app.set_commands([brush])
+    dialog.open()
+    render(app)
+    let button = behind.layout().bounds()
+    click(app, button.x + 4.0, button.y + 4.0)
+    render(app)
+    assert(count.clicks == 1 and dialog.is_open())
+    # The key reaches the command while nothing takes text.
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.b))
+    assert(count.triggers == 1)
+    let field = inside.layout().bounds()
+    click(app, field.x + 6.0, field.y + field.height * 0.5)
+    render(app)
+    assert(inside.layout().is_focused())
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.b))
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 98))
+    render(app)
+    assert(inside.text() == "b" and count.triggers == 1)
+    # A prompt holds input: the click behind it is swallowed.
+    prompt.open("Name", "")
+    render(app)
+    click(app, button.x + 4.0, button.y + 4.0)
+    render(app)
+    assert(count.clicks == 1)
+    clicked.disconnect()
+    triggered.disconnect()
+    app.close()

@@ -1,3 +1,4 @@
+## The Viewport widget: an application-drawn area inside the widget tree.
 import gpu
 import interop
 import math
@@ -7,6 +8,9 @@ import luce_ui.result as result
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 
+## A flexible area, at least `width` by `height` points, that the application
+## draws itself: each frame it hands its clipped render target to the
+## `on_render` callbacks. It takes no input.
 pub struct Viewport: Widget:
     let box: interop.Reference[Layout]
     let rendering: interop.Signal[interop.View[gpu.RenderTarget]]
@@ -23,6 +27,7 @@ pub struct Viewport: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
+    ## Called every time the viewport draws, with a target local to its bounds.
     pub func on_render(callback: interop.Callback[interop.View[gpu.RenderTarget], unit]) -> interop.Reference[interop.Connection]!:
         return try self.rendering.connect(callback)
 

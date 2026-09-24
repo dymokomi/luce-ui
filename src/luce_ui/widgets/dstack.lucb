@@ -15,9 +15,12 @@ from luce_ui.font import Font, selected_font
 from luce_ui.command import Command, command_type
 from luce_ui.widgets.panel import Panel
 from luce_ui.widgets.action_popup import ActionPopup, action_popup_type
-from luce_ui.docking.state import State, DockRequest, state_type
+from luce_ui.docking.state import State, DockRequest, state_type, set_owner, add_floating, make_floating, floating, float_bounds, floating_count, default_window
 from luce_ui.docking.model import DockPosition
 
+## The top child of the stack: draws the drag previews (drop target, floating
+## window outline, the label following a dragged tab) over the panels and is
+## transparent to hover.
 struct Overlay: Widget:
     let box: interop.Reference[Layout]
     let state: interop.WeakReference[State]
@@ -53,10 +56,16 @@ struct Overlay: Widget:
 
 let overlay_type: interop.Type[Overlay] = interop.Type[Overlay]("Dock preview", Overlay.close, Overlay.trace, closeable = true, main_thread = true)
 
+## A docking workspace of Panels: tab groups in a resizable split tree, plus
+## panels floating in their own windows over it. Users drag tabs to regroup,
+## split or float them, resize with the dividers, and add or close panels
+## through the header buttons; the application answers through `on_add`,
+## `on_close` and the close handler.
 pub struct DStack: Widget:
     let box: interop.Reference[Layout]
     let state: interop.Reference[State]
 
+    ## A stack holding `panels` as tabs of one group, the last one selected.
     pub func init(panels: const interop.Reference[Panel][], font: interop.Reference[Font]? = none) -> !:
         let selected = try selected_font(font)
         defer selected.release()
@@ -67,7 +76,7 @@ pub struct DStack: Widget:
         let state = try interop.Reference[State].adopt(new State(box, selected) in memory.heap, state_type, memory.heap)
         errdefer state.release()
         errdefer state.close()
-        state.value().set_owner(state)
+        set_owner(state.value(), state)
         let arrangement = state.as_interface[Arrangement](state.value())
         defer arrangement.release()
         try box.value().set_arrangement(arrangement)
@@ -104,24 +113,30 @@ pub struct DStack: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
+    ## Dock `panel` relative to `relative_to`, or to the active docked panel, and
+    ## select and focus it. At most 128 panels.
     pub mutating func add(panel: interop.Reference[Panel], relative_to: interop.Reference[Panel]? = none, position: DockPosition = DockPosition.tab) -> !:
         try self.state.value().add(panel, relative_to, position)
 
+    ## Redock `panel` relative to `relative_to`, docking it back when it floats,
+    ## and select it.
     pub mutating func move(panel: interop.Reference[Panel], relative_to: interop.Reference[Panel], position: DockPosition = DockPosition.tab) -> !:
         try self.state.value().move(panel, relative_to, position)
 
+    ## Take `panel` out and release it, then emit `on_close`. The close handler is
+    ## not asked; it only guards the user's close button.
     pub mutating func remove(panel: interop.Reference[Panel]) -> !:
         try self.state.value().remove(panel)
 
     ## Float a panel in its own window over the panes: a docked one leaves its
     ## group, one not in the stack yet is added. `window` is in the stack's
-    ## coordinates; without one a new window is centred and a floating one stays.
+    ## coordinates; without one a new window is centered and a floating one stays.
     pub mutating func float(panel: interop.Reference[Panel], window: gpu.Rect? = none) -> !:
         let state = self.state.value()
         let index = state.index(panel) catch failure:
-            try state.add_floating(panel, window)
+            try add_floating(state, panel, window)
             return
-        try state.float(index, window else (state.float_bounds(index) if state.floating(index) else state.default_window(index)))
+        try make_floating(state, index, window else (float_bounds(state, index) if floating(state, index) else default_window(state, index)))
 
     ## Whether the panel is in this stack, docked or floating.
     pub func contains(panel: interop.Reference[Panel]) -> bool:
@@ -129,14 +144,16 @@ pub struct DStack: Widget:
         return true
 
     pub func is_floating(panel: interop.Reference[Panel]) -> bool!:
-        return self.state.value().floating(try self.state.value().index(panel))
+        return floating(self.state.value(), try self.state.value().index(panel))
 
     ## A floating panel's window, title bar included, in the stack's coordinates.
     pub func float_bounds(panel: interop.Reference[Panel]) -> gpu.Rect!:
         let index = try self.state.value().index(panel)
-        if not self.state.value().floating(index): error(result.invalid, "the panel is docked")
-        return self.state.value().float_bounds(index)
+        if not floating(self.state.value(), index): error(result.invalid, "the panel is docked")
+        return float_bounds(self.state.value(), index)
 
+    ## Show `panel` (raising its window when it floats), focus its content and emit
+    ## `on_select`. Cancels any drag in progress.
     pub mutating func select(panel: interop.Reference[Panel]) -> !:
         self.state.value().cancel()
         try self.state.value().select(try self.state.value().index(panel))
@@ -148,7 +165,8 @@ pub struct DStack: Widget:
         state.cancel()
         if state.model.root == 0: return
         let geometry = state.geometry(state.size())
-        let current = state.model.tabs[state.active()].group
+        # From a floating window, move among the panes from the last docked one.
+        let current = state.model.tabs[state.model.active if floating(state, state.active()) else state.active()].group
         var next: usize = 0
         var wrap: usize = 0
         for group in 1..<state.model.nodes.length:
@@ -170,7 +188,8 @@ pub struct DStack: Widget:
         state.cancel()
         if state.model.root == 0: return
         let geometry = state.geometry(state.size())
-        let current = state.model.tabs[state.active()].group
+        # From a floating window, move among the panes from the last docked one.
+        let current = state.model.tabs[state.model.active if floating(state, state.active()) else state.active()].group
         let origin = geometry.panes[current]
         let cx = origin.x + origin.width * 0.5
         let cy = origin.y + origin.height * 0.5
@@ -191,47 +210,62 @@ pub struct DStack: Widget:
         if best != 0:
             try state.select(state.model.nodes[best].selected)
 
+    ## The panel holding keyboard focus, else the last selected docked one, or none.
     pub func active_panel() -> interop.Reference[Panel]?!:
         let index = self.state.value().active()
         return none if index == 0 else try self.state.value().panel(index)
 
+    ## Every panel in the stack, docked or floating.
     pub func panel_count() -> i64:
-        return (i64)(self.state.value().model.count() + self.state.value().floating_count())
+        return (i64)(self.state.value().model.count() + floating_count(self.state.value()))
 
+    ## The docked tab groups; floating windows do not count.
     pub func group_count() -> i64:
         return (i64)self.state.value().model.group_count()
 
+    ## How many tabs share `panel`'s group; 0 for a floating panel.
     pub func tab_count(panel: interop.Reference[Panel]) -> i64!:
         let index = try self.state.value().index(panel)
         return (i64)self.state.value().model.tab_count(self.state.value().model.tabs[index].group)
 
+    ## Whether two panels are tabs of one group.
     pub func same_group(first: interop.Reference[Panel], second: interop.Reference[Panel]) -> bool!:
         let a = try self.state.value().index(first)
         let b = try self.state.value().index(second)
-        return self.state.value().model.tabs[a].group == self.state.value().model.tabs[b].group
+        let group = self.state.value().model.tabs[a].group
+        # Floating panels have no group; each window stands alone.
+        return group != 0 and group == self.state.value().model.tabs[b].group
 
+    ## The pane of `panel`'s group, header included, or its window when it floats,
+    ## in the stack's coordinates.
     pub func panel_bounds(panel: interop.Reference[Panel]) -> gpu.Rect!:
         let index = try self.state.value().index(panel)
-        if self.state.value().floating(index): return self.state.value().float_bounds(index)
+        if floating(self.state.value(), index): return float_bounds(self.state.value(), index)
         let geometry = self.state.value().geometry(self.state.value().size())
         let model = self.state.value().visible_model()
         return geometry.panes[model.tabs[index].group]
 
+    ## Where `panel`'s tab sits in its group's header; fails for a floating panel.
     pub func tab_bounds(panel: interop.Reference[Panel]) -> gpu.Rect!:
         return try self.state.value().tab_bounds(try self.state.value().index(panel))
 
+    ## The add button in the header of `panel`'s group; empty for a floating panel.
     pub func add_bounds(panel: interop.Reference[Panel]) -> gpu.Rect!:
         let index = try self.state.value().index(panel)
         let model = self.state.value().visible_model()
         let group = model.tabs[index].group
         return gpu.Rect() if group == 0 else self.state.value().strip(group, try self.panel_bounds(panel)).add
 
+    ## The pane a dragged tab would take if released now, or an empty rectangle.
     pub func drop_preview() -> gpu.Rect:
         return self.state.value().current_drop().preview
 
+    ## The label that follows a dragged tab, or an empty rectangle.
     pub func drag_bounds() -> gpu.Rect:
         return self.state.value().drag_bounds()
 
+    ## Set the split directly containing `panel`'s group so that `fraction` of it
+    ## goes to its first side. Fails for a group that is not in a split.
     pub mutating func set_fraction(panel: interop.Reference[Panel], fraction: f64) -> !:
         self.state.value().cancel()
         let index = try self.state.value().index(panel)
@@ -242,15 +276,21 @@ pub struct DStack: Widget:
         self.state.value().model.nodes[branch].fraction = fraction
         self.box.value().invalidate()
 
+    ## Called with the panel whenever a selection shows it: a click on its tab,
+    ## stepping through tabs, a focus move, `select` or `add`.
     pub func on_select(callback: interop.Callback[interop.Reference[Panel], unit]) -> interop.Reference[interop.Connection]!:
         return try self.state.value().selected.connect(callback)
 
+    ## Called with a DockRequest when the user picks an entry of an add menu: the
+    ## application creates the panel and adds it where the request says.
     pub func on_add(callback: interop.Callback[interop.Reference[DockRequest], unit]) -> interop.Reference[interop.Connection]!:
         return try self.state.value().added.connect(callback)
 
+    ## Called with each panel after it is removed, by the user or `remove`.
     pub func on_close(callback: interop.Callback[interop.Reference[Panel], unit]) -> interop.Reference[interop.Connection]!:
         return try self.state.value().closed.connect(callback)
 
+    ## Ask `callback` before a user close removes a closable panel; false keeps it.
     pub mutating func set_close_handler(callback: interop.Callback[interop.Reference[Panel], bool]):
         self.state.value().set_close_handler(callback)
 

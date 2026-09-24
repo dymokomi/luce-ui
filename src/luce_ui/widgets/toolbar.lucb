@@ -1,3 +1,4 @@
+## The Toolbar widget.
 import gpu
 import interop
 import math
@@ -8,6 +9,8 @@ from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 from luce_ui.font import Font, selected_font
 
+## A horizontal bar of controls on the panel surface with a one-point border
+## beneath, at least one control row tall, its children centered vertically.
 pub struct Toolbar: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]
@@ -27,6 +30,7 @@ pub struct Toolbar: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
+    ## Replace the bar's controls.
     pub mutating func set_children(children: const interop.Interface[Widget][]) -> !:
         try self.box.value().set_children(children)
 

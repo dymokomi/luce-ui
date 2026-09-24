@@ -1,3 +1,5 @@
+## A CPU paint surface for simple drawing programs and tests: round brush dabs,
+## fills, compositing and pixel reads, drawn to the screen as a texture.
 import gpu
 import window
 import interop
@@ -50,6 +52,8 @@ pub struct Raster:
     var revision: u64 = 1
     var uploaded: u64
 
+    ## A transparent `width` by `height` raster, each dimension in 1..16384 and at
+    ## most 67108864 pixels in all.
     pub func init(width: i64, height: i64) -> !:
         try dimensions(width, height)
         let pixels = try alloc Pixel[(usize)(width * height)] in memory.heap
@@ -73,6 +77,12 @@ pub struct Raster:
         if self.pixels.length == 0:
             error(result.invalid, "raster is closed")
 
+    ## Stamp one round brush mark centered at `x`, `y` (pixel centers sit at half
+    ## coordinates). `diameter` is in 1..512 pixels. `hardness` 0..1 is the fraction
+    ## of the radius painted at full coverage; beyond it coverage falls smoothly to
+    ## zero at the edge. The mark is composited source-over in `color`, whose alpha
+    ## is ignored; with `erase` it removes that much coverage instead, and `color`
+    ## is validated but unused. Pixels outside the raster are skipped.
     pub mutating func dab(x: f64, y: f64, diameter: f64, hardness: f64, color: gpu.Color, erase: bool = false) -> !:
         self.revision += 1
         try self.require_open()
@@ -108,6 +118,7 @@ pub struct Raster:
                 else:
                     self.pixels[index] = over(previous, Pixel((f32)color.red * alpha, (f32)color.green * alpha, (f32)color.blue * alpha, alpha))
 
+    ## Make every pixel transparent.
     pub mutating func clear():
         self.revision += 1
         for index in 0..<self.pixels.length:
@@ -131,6 +142,7 @@ pub struct Raster:
             error(result.invalid, "raster color components must be in 0..1")
         self.pixels[offset] = Pixel((f32)color.red, (f32)color.green, (f32)color.blue, (f32)1.0)
 
+    ## Set every pixel to opaque `color`.
     pub mutating func fill(color: gpu.Color) -> !:
         self.revision += 1
         try self.require_open()
@@ -140,6 +152,7 @@ pub struct Raster:
         for index in 0..<self.pixels.length:
             self.pixels[index] = pixel
 
+    ## Set the pixels of a rectangle to opaque `color`, clipped to the raster.
     pub mutating func fill_rect(x: i64, y: i64, width: i64, height: i64, color: gpu.Color) -> !:
         self.revision += 1
         try self.require_open()
@@ -159,6 +172,7 @@ pub struct Raster:
             for column in left..<right:
                 self.pixels[start + (usize)column] = pixel
 
+    ## The pixel's premultiplied color, without alpha; see `alpha_at`.
     pub func color_at(x: i64, y: i64) -> gpu.Color!:
         try self.require_open()
         if x < 0 or y < 0 or x >= self.columns or y >= self.rows:
@@ -166,9 +180,13 @@ pub struct Raster:
         let pixel = self.pixels[(usize)(y * self.columns + x)]
         return gpu.Color((f64)pixel.red, (f64)pixel.green, (f64)pixel.blue)
 
+    ## A new raster with the same size and pixels.
     pub func copy() -> interop.Reference[Raster]!:
         return try self.resized(self.columns, self.rows)
 
+    ## A new `width` by `height` raster holding this one's pixels anchored at the
+    ## top-left: cropped where it is smaller, transparent where it is larger. No
+    ## resampling.
     pub func resized(width: i64, height: i64) -> interop.Reference[Raster]!:
         try self.require_open()
         let copied = try interop.Reference[Raster].adopt(new Raster(width, height) in memory.heap, raster_type, memory.heap)
@@ -182,6 +200,8 @@ pub struct Raster:
                 destination.pixels[destination_start + column] = self.pixels[source_start + column]
         return copied
 
+    ## Composite `source`, scaled by `opacity`, over this raster. Both must have the
+    ## same dimensions; `source` may be this raster itself.
     pub mutating func composite(source: interop.Reference[Raster], opacity: f64 = 1.0) -> !:
         self.revision += 1
         try self.require_open()
@@ -243,6 +263,8 @@ pub struct Raster:
         self.uploaded = self.revision
         return texture
 
+    ## Release the texture, the device reference and the pixels; later calls fail.
+    ## Closing twice is harmless.
     pub mutating func close():
         if let texture = self.texture:
             var owned = texture

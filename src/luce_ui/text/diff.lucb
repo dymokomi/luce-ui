@@ -338,7 +338,7 @@ test "line diff classifies additions, modifications and deletions":
     # Identical text has no marks at all.
     try run(&diff, "a\nb\nc", "a\nb\nc")
     assert(not diff.present())
-    # One inserted line is an addition; its neighbours stay unchanged.
+    # One inserted line is an addition; its neighbors stay unchanged.
     try run(&diff, "a\nb", "a\nX\nb")
     assert(diff.present() and diff.mark(1) == ChangeKind.added)
     assert(diff.mark(0) == ChangeKind.unchanged and diff.mark(2) == ChangeKind.unchanged)

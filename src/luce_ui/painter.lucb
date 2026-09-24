@@ -1,3 +1,6 @@
+## Immediate-mode drawing for widgets and applications: filled and rounded
+## rectangles, triangles, meshes, lines, images and text on a render target,
+## in the target's logical points.
 import gpu
 import interop
 import ownership
@@ -20,6 +23,8 @@ pub struct Painter:
     pub func target() -> interop.View[gpu.RenderTarget]:
         return self.target_view.clone()
 
+    ## Fill `rectangle` with `color` at `opacity` (0..1). An empty rectangle or
+    ## target draws nothing.
     pub func rectangle(rectangle: gpu.Rect, color: gpu.Color, opacity: f64 = 1.0) -> !:
         if not math.is_finite(opacity) or opacity < 0.0 or opacity > 1.0:
             error(result.invalid, "rectangle opacity must be in 0..1")
@@ -45,7 +50,7 @@ pub struct Painter:
     ## shorter side); zero draws a plain rectangle. `corners` picks which round:
     ## bit 1 top-left, 2 top-right, 4 bottom-right, 8 bottom-left (15 = all), so a
     ## tab can round its top only. One batched draw: a fan of triangles from the
-    ## centre through eight-segment corner arcs.
+    ## center through eight-segment corner arcs.
     pub func rounded_rectangle(rectangle: gpu.Rect, color: gpu.Color, radius: f64, opacity: f64 = 1.0, corners: i64 = 15) -> !:
         if not math.is_finite(radius) or radius < 0.0:
             error(result.invalid, "corner radius must be finite and nonnegative")
@@ -59,7 +64,7 @@ pub struct Painter:
         let size = try target.size()
         if size.width <= 0.0 or size.height <= 0.0:
             return
-        # The outline: 8 segments per corner, so 36 points around, fanned from the centre.
+        # The outline: 8 segments per corner, so 36 points around, fanned from the center.
         let segments: usize = 8
         let around = (segments + 1) * 4
         var vertices = try alloc gpu.Vertex[around * 3] in memory.heap
@@ -71,7 +76,7 @@ pub struct Painter:
         defer free(outline) in memory.heap
         var index: usize = 0
         for corner in 0..<(usize)4:
-            # Corner centres clockwise from the top-right; angles sweep a quarter turn each.
+            # Corner centers clockwise from the top-right; angles sweep a quarter turn each.
             let ox = rectangle.x + rectangle.width - r if corner == 0 or corner == 1 else rectangle.x + r
             let oy = rectangle.y + r if corner == 0 or corner == 3 else rectangle.y + rectangle.height - r
             let start = -math.pi * 0.5 + (f64)corner * math.pi * 0.5
@@ -99,6 +104,8 @@ pub struct Painter:
                    filter: gpu.Filter = gpu.Filter.linear) -> !:
         try image.value().draw(self.target_view, rectangle, source, opacity, filter)
 
+    ## Draw one line of `text` with its top-left at `x`, `y`, in `font` or the
+    ## default monospace font.
     pub func text(text: str, x: f64 = 0.0, y: f64 = 0.0,
                   color: gpu.Color = gpu.Color(red = 0.82, green = 0.9, blue = 1.0),
                   font: interop.Reference[Font]? = none) -> !:
@@ -161,6 +168,8 @@ pub struct Painter:
             vertices[index] = clip_vertex(points[index].x, points[index].y, size.width, size.height, colors[index], opacity)
         try target.triangles(vertices)
 
+    ## A straight segment from `a` to `b`, `width` points thick, with square
+    ## (unextended) ends. A zero-length segment draws nothing.
     pub func line(a: Point, b: Point, width: f64, color: gpu.Color) -> !:
         if not math.is_finite(width) or width <= 0.0:
             error(result.invalid, "line width must be positive and finite")

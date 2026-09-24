@@ -1,3 +1,4 @@
+## The HStack container widget.
 import gpu
 import interop
 import math
@@ -7,6 +8,8 @@ import luce_ui.result as result
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 
+## Children laid out in a row, `spacing` points apart inside `padding`, and
+## aligned across the row by `alignment`. It draws nothing itself.
 pub struct HStack: Widget:
     let box: interop.Reference[Layout]
 
@@ -20,6 +23,7 @@ pub struct HStack: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
+    ## Replace the children; see `Layout.set_children`.
     pub mutating func set_children(children: const interop.Interface[Widget][]) -> !:
         try self.box.value().set_children(children)
 

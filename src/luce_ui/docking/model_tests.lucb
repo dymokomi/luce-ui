@@ -1,3 +1,6 @@
+## Tests for the dock model: random moves and removals keep the split tree
+## valid, geometry honors minimum sizes, and a rejected edit leaves the
+## published model unchanged.
 import math
 from luce_ui.docking.model import Model, Geometry, DockPosition
 from luce_ui.geometry import Size

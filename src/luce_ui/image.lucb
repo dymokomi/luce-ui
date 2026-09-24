@@ -1,3 +1,5 @@
+## CPU-side pictures that widgets and painters draw as GPU textures, uploaded
+## lazily and re-uploaded only after their pixels change.
 import gpu
 import interop
 import math
@@ -96,6 +98,8 @@ pub struct Image:
         if self.pixels.length == 0:
             error(result.invalid, "the image is closed")
 
+    ## Release the texture, the device reference and the pixels; later writes and
+    ## draws fail. Closing twice is harmless.
     pub mutating func close():
         if let texture = self.texture:
             var owned = texture

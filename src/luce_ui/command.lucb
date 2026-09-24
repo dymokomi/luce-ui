@@ -8,6 +8,9 @@ import ownership
 import memory
 import luce_ui.result as result
 
+## A key chord: `key` with or without the primary modifier (Command or Control;
+## either one matches), Shift and Alt, compared exactly. An unknown key binds
+## nothing.
 pub struct Shortcut:
     pub let key: input.Key = input.Key.unknown
     pub let primary: bool = false
@@ -61,6 +64,8 @@ pub struct Shortcut:
         let length = write_storable(self, buffer)
         return try interop.copy_text((str)buffer[..<length])
 
+## A named action: its caption, shortcut, optional registry id, enabled state
+## and the callbacks that triggering it runs.
 pub struct Command:
     let name: interop.Owned[str]
     var caption: interop.Owned[str]
@@ -116,12 +121,14 @@ pub struct Command:
     pub func is_enabled() -> bool:
         return self.enabled
 
+    ## A disabled command ignores `trigger`; its shortcut still consumes the key.
     pub mutating func set_enabled(enabled: bool):
         self.enabled = enabled
 
     pub func on_trigger(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         return try self.triggered.connect(callback)
 
+    ## Run the connected callbacks; nothing while disabled.
     pub func trigger() -> interop.Outcome[unit]:
         return self.triggered.emit(()) if self.enabled else result.success[unit](())
 
@@ -160,6 +167,7 @@ pub struct Commands:
                 return item.clone()
         return none
 
+    ## Replace the registry with `items`, at most 128, retaining each.
     pub mutating func set(items: const interop.Reference[Command][]) -> !:
         if items.length > 128:
             error(result.invalid, "a command registry supports at most 128 entries")
@@ -173,6 +181,9 @@ pub struct Commands:
         self.close()
         self.items = copied
 
+    ## Match a key press against the shortcuts in registry order. The first match
+    ## consumes the event and triggers its command, unless the press is a key
+    ## repeat or the command is disabled. Returns whether a shortcut consumed it.
     pub func dispatch(event: input.Event) -> interop.Outcome[bool]:
         for item in self.items:
             if item.value().shortcut().matches(event):

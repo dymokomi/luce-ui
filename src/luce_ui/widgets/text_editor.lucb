@@ -1,3 +1,5 @@
+## The TextEditor widget: a multiline code editor with highlighting, color chips,
+## folding, soft wrap and change bars.
 import clipboard
 import gpu
 import input
@@ -136,12 +138,15 @@ pub struct TextEditor: Widget:
     pub mutating func select_all() -> !:
         try self.set_selection(0, self.length())
 
+    ## Copy the selection to the clipboard; nothing without a selection.
     pub func copy() -> !:
         if self.has_selection():
             let text = try self.selected_text()
             defer text.release()
             try clipboard.write_text(text.value)
 
+    ## Copy the selection and delete it. Does nothing when read-only or when
+    ## nothing is selected.
     pub mutating func cut() -> interop.Outcome[unit]:
         if self.read_only or not self.has_selection():
             return result.success[unit](())
@@ -149,6 +154,8 @@ pub struct TextEditor: Widget:
             return result.failure[unit](failure.code, failure.message)
         return self.insert("")
 
+    ## Replace the selection with the clipboard's text, newlines normalized. Does
+    ## nothing when read-only.
     pub mutating func paste() -> interop.Outcome[unit]:
         if self.read_only:
             return result.success[unit](())
@@ -157,18 +164,24 @@ pub struct TextEditor: Widget:
         defer text.release()
         return self.insert(text.value)
 
+    ## The document version, which every edit, undo, redo and `set_text` moves on.
+    ## Analysis results carry it back to `update_highlights` and `set_folds`.
     pub func version() -> i64:
         return (i64)self.document.version()
 
     pub func length() -> i64:
         return (i64)self.document.length()
 
+    ## The caret's scalar offset.
     pub func caret() -> i64:
         return (i64)self.document.caret()
 
+    ## The caret's 1-based line.
     pub func line() -> i64:
         return (i64)self.document.line_number(self.document.caret()) + 1
 
+    ## The caret's 1-based display column: tabs expanded, and color chips counted
+    ## when soft wrap is off.
     pub func column() -> i64:
         return (i64)editing.column(&self.document, self.document.caret(), self.active_swatches()) + 1
 
@@ -186,14 +199,19 @@ pub struct TextEditor: Widget:
         self.ai_last = last if last >= first else first
         self.box.value().invalidate()
 
+    ## Remove the AI line marking; the same as `set_ai_lines(0, 0)`.
     pub mutating func clear_ai_lines():
         self.ai_first = 0
         self.ai_last = 0
         self.box.value().invalidate()
 
+    ## Called after every change to the text, from typing or from code
+    ## (`set_text`, `insert`, `cut`, `paste`, `undo`, `redo`); `change` describes it.
     pub func on_change(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
 
+    ## Load new text: newlines are normalized, history is cleared, the caret goes
+    ## to the start and scrolling resets. Notifies `on_change`.
     pub mutating func set_text(text: str) -> interop.Outcome[unit]:
         let normalized = editing.normalize_lines(text) catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -204,6 +222,7 @@ pub struct TextEditor: Widget:
         self.scroll_y = 0.0
         return self.notify_changed()
 
+    ## Select scalar offsets `anchor` to `caret` and scroll the caret into view.
     pub mutating func set_selection(anchor: i64, caret: i64) -> !:
         if anchor < 0 or caret < 0:
             error(result.invalid, "selection offsets must be nonnegative")
@@ -213,12 +232,16 @@ pub struct TextEditor: Widget:
         try self.reveal_caret()
         self.box.value().invalidate()
 
-    ## Replace a complete decoration set, or publish a bounded analysis result.
-    ## Stale results are ignored before validation and cannot recolor newer text.
+    ## Replace every highlight with this complete, ordered set.
     pub mutating func set_highlights(highlights: const Highlight[]) -> !:
         try self.highlights.replace(0, (i64)self.document.length(), highlights)
         self.box.value().invalidate()
 
+    ## Publish a bounded analysis result: replace the highlights within
+    ## `start..<end` with `highlights`, which lie inside it, computed against
+    ## document `version`. A stale result (another version) is ignored before
+    ## validation, so it cannot recolor newer text; returns whether it was applied.
+    ## Highlights already applied shift with later edits on their own.
     pub mutating func update_highlights(start: i64, end: i64, highlights: const Highlight[], version: i64) -> bool!:
         if version != self.version():
             return false
@@ -228,6 +251,7 @@ pub struct TextEditor: Widget:
         self.box.value().invalidate()
         return true
 
+    ## The color of the highlight covering scalar `offset`, or none.
     pub func highlight_at(offset: i64) -> gpu.Color?:
         return self.highlights.color_at(offset)
 
@@ -243,6 +267,7 @@ pub struct TextEditor: Widget:
     func active_swatches() -> const Swatch[]:
         return self.swatches.values() if not self.wrap else self.swatches.values()[..<0]
 
+    ## Called with the chip's offset when a color chip is clicked.
     pub func on_swatch_activate(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
         return try self.swatch_activated.connect(callback)
 
@@ -285,7 +310,7 @@ pub struct TextEditor: Widget:
         return marks[0].offset if marks.length > 0 else -1
 
     ## Scan the document for CSS-style hex colors (`#rgb` or `#rrggbb`) and draw a color
-    ## chip over each leading `#`. A convenience over set_swatches for editing themes and
+    ## chip before each leading `#`. A convenience over set_swatches for editing themes and
     ## stylesheets; call it after each change, next to syntax highlighting. Offsets come
     ## straight from scalar positions, so the chips stay aligned in non-ASCII documents.
     pub mutating func set_hex_swatches() -> !:
@@ -340,19 +365,25 @@ pub struct TextEditor: Widget:
             channels[channel] = channel_linear(value)
         return gpu.Color(channels[0], channels[1], channels[2])
 
+    ## The latest change to the text, for incremental reanalysis: the replaced
+    ## range, the new end and the version it produced.
     pub func change() -> TextChange:
         return self.document.last_change()
 
+    ## The text of scalar offsets `start..<end`; fails outside the document.
     pub func text_range(start: i64, end: i64) -> interop.Owned[str]!:
         if start < 0 or end < start or end > self.length():
             error(result.invalid, "text interval is outside the document")
         return try self.document.text((usize)start, (usize)end)
 
+    ## The offset where the line containing `offset` starts.
     pub func line_start(offset: i64) -> i64!:
         if offset < 0 or offset > self.length():
             error(result.invalid, "line offset is outside the document")
         return (i64)self.document.line_start((usize)offset)
 
+    ## The offset of the newline ending the line containing `offset`, or the
+    ## length on the last line.
     pub func line_end(offset: i64) -> i64!:
         if offset < 0 or offset > self.length():
             error(result.invalid, "line offset is outside the document")
@@ -364,6 +395,8 @@ pub struct TextEditor: Widget:
             error(result.invalid, "line offset is outside the document")
         return (i64)self.document.line_number((usize)offset)
 
+    ## Replace the selection with `text` (newlines normalized) as one undoable
+    ## edit. Unlike the other editing calls, this fails on a read-only editor.
     pub mutating func insert(text: str) -> interop.Outcome[unit]:
         if self.read_only:
             return result.failure[unit](result.invalid, "the text editor is read only")
@@ -375,6 +408,7 @@ pub struct TextEditor: Widget:
             return result.failure[unit](failure.code, failure.message)
         return self.notify_changed() if before != self.document.version() else result.success[unit](())
 
+    ## Undo the latest edit; nothing when read-only or there is none.
     pub mutating func undo() -> interop.Outcome[unit]:
         if self.read_only:
             return result.success[unit](())
@@ -382,6 +416,7 @@ pub struct TextEditor: Widget:
             return result.failure[unit](failure.code, failure.message)
         return self.notify_changed() if changed else result.success[unit](())
 
+    ## Redo the next undone edit; nothing when read-only or there is none.
     pub mutating func redo() -> interop.Outcome[unit]:
         if self.read_only:
             return result.success[unit](())
@@ -391,6 +426,8 @@ pub struct TextEditor: Widget:
 
     ## Fold headers and endpoints are scalar offsets; user-facing line numbers
     ## are one-based, matching line(). Collapsing never edits source or history.
+    ## Replaces every fold range; returns false, changing nothing, when `version`
+    ## is stale.
     pub mutating func set_folds(ranges: const FoldRange[], version: i64) -> bool!:
         if version != self.version():
             return false
@@ -398,6 +435,9 @@ pub struct TextEditor: Widget:
         try self.finish_folding()
         return true
 
+    ## Collapse or expand the fold whose header is on 1-based `line`, returning
+    ## whether a fold starts there. A caret the collapse hides moves to the end of
+    ## the header line.
     pub mutating func set_folded(line: i64, collapsed: bool) -> bool!:
         try self.refresh_view()
         if line < 1 or line > (i64)self.projection.line_count():
@@ -407,9 +447,11 @@ pub struct TextEditor: Widget:
             try self.finish_folding()
         return changed
 
+    ## Flip the fold whose header is on 1-based `line`; see `set_folded`.
     pub mutating func toggle_fold(line: i64) -> bool!:
         return try self.set_folded(line, not self.is_folded(line))
 
+    ## Whether a collapsed fold starts on 1-based `line`.
     pub func is_folded(line: i64) -> bool:
         if line < 1 or line > (i64)self.projection.line_count():
             return false
@@ -424,6 +466,7 @@ pub struct TextEditor: Widget:
         self.folds.set_all(false)
         try self.finish_folding()
 
+    ## The visual rows shown: lines left after folding, split further by soft wrap.
     pub func visible_line_count() -> i64:
         return (i64)self.projection.visible_count()
 
@@ -449,6 +492,7 @@ pub struct TextEditor: Widget:
         self.diff_version = -1
         self.box.value().invalidate()
 
+    ## Whether the text differed from the baseline when the view last refreshed.
     pub func has_changes() -> bool:
         return self.diff.present()
 
@@ -463,6 +507,7 @@ pub struct TextEditor: Widget:
         try self.reveal_caret()
         self.box.value().invalidate()
 
+    ## The horizontal and vertical scroll in points, clamped to the content.
     pub func scroll_offset() -> Size:
         return Size(math.clamp(self.scroll_x, 0.0, self.maximum_scroll_x()), math.clamp(self.scroll_y, 0.0, self.maximum_scroll()))
 

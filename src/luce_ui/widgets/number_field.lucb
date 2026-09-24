@@ -1,3 +1,4 @@
+## The NumberField widget and the number formatting it uses.
 import gpu
 import interop
 import math
@@ -124,6 +125,7 @@ pub struct NumberField: Widget:
         self.suffix = replacement
         self.box.value().invalidate()
 
+    ## Change the bounds and re-clamp and re-snap the value; no signal.
     pub mutating func set_range(minimum: f64, maximum: f64) -> !:
         if not math.is_finite(minimum) or not math.is_finite(maximum) or maximum <= minimum:
             error(result.invalid, "a number field needs finite bounds with maximum above minimum")
@@ -132,12 +134,16 @@ pub struct NumberField: Widget:
         self.current = self.snap(self.current)
         self.box.value().invalidate()
 
+    ## Called with the new value after each user change: a scrub step, an arrow
+    ## key, a committed edit or a cmd/ctrl-click reset. `set_value` does not call it.
     pub func on_change(callback: interop.Callback[f64, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
 
+    ## Called when a drag starts scrubbing, before its first change.
     pub func on_begin(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         return try self.began.connect(callback)
 
+    ## Called when a scrub ends, on release or cancellation.
     pub func on_end(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         return try self.ended.connect(callback)
 
@@ -327,7 +333,8 @@ func trimmed(text: str) -> str:
         end -= 1
     return (str)text.bytes[start..<end]
 
-## `value` with `decimals` places, into `digits`.
+## `value` rounded to `decimals` places, written right-aligned into `digits`;
+## the result is a view of `digits`.
 pub func format_number(digits: u8[], value: f64, decimals: i64) -> str!:
     var scale = 1.0
     for _ in 0..<decimals:

@@ -1,3 +1,5 @@
+## The package's error codes and helpers that wrap values and failures in
+## interop Outcomes for widget interface methods.
 import interop
 import memory
 

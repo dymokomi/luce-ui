@@ -27,6 +27,8 @@ struct Edit:
     var after_anchor: usize
     var after_caret: usize
 
+## The text, its selection (an anchor and a caret) and an undo history of at
+## most 128 edits, dropping the oldest once they retain over 16 MiB of text.
 pub struct Document:
     var characters: u32[]
     var count: usize
@@ -57,6 +59,8 @@ pub struct Document:
     pub func length() -> usize:
         return self.count
 
+    ## Starts at 0 and increases with every change to the text: an edit, undo,
+    ## redo or load.
     pub func version() -> u64:
         return self.revision
 
@@ -69,28 +73,35 @@ pub struct Document:
     pub func last_change() -> TextChange:
         return self.change
 
+    ## The moving end of the selection, where typing goes.
     pub func caret() -> usize:
         return self.selection_caret
 
+    ## The fixed end of the selection; equal to the caret when nothing is selected.
     pub func anchor() -> usize:
         return self.selection_anchor
 
+    ## The selection's start: the lesser of anchor and caret.
     pub func first() -> usize:
         return self.selection_anchor if self.selection_anchor < self.selection_caret else self.selection_caret
 
+    ## The selection's end: the greater of anchor and caret.
     pub func last() -> usize:
         return self.selection_anchor if self.selection_anchor > self.selection_caret else self.selection_caret
 
+    ## The scalar at `index`, which must be below `length`.
     pub func scalar(index: usize) -> u32:
         assert(index < self.count)
         return self.characters[index]
 
+    ## Set the selection without touching history. Offsets past the end fail.
     pub mutating func select(anchor: usize, caret: usize) -> !:
         if anchor > self.count or caret > self.count:
             error(result.invalid, "selection is outside the document")
         self.selection_anchor = anchor
         self.selection_caret = caret
 
+    ## The text of scalars `start..<end` (to the end by default) as UTF-8.
     pub func text(start: usize = 0, end: usize? = none) -> interop.Owned[str]!:
         let finish = end else self.count
         if start > finish or finish > self.count:
@@ -106,6 +117,7 @@ pub struct Document:
 
     ## Loading replaces the document and its history only after validation and
     ## allocation succeed. File newline policy is the application's responsibility.
+    ## The history is cleared and the selection collapses to the start.
     pub mutating func set_text(text: str) -> !:
         let replacement = try decode(text)
         self.change = TextChange(0, (i64)self.count, (i64)replacement.length, (i64)self.revision + 1)
@@ -117,9 +129,14 @@ pub struct Document:
         self.selection_caret = 0
         self.revision += 1
 
+    ## Replace the selection with `text`; see `replace`.
     pub mutating func insert(text: str) -> !:
         try self.replace(self.first(), self.last(), text)
 
+    ## Replace scalars `start..<finish` with `text` as one undoable edit, leaving a
+    ## caret after the inserted text. Any redo history is discarded, and the
+    ## oldest edits are dropped to stay within the history bounds. Replacing an
+    ## empty range with nothing changes nothing, not even the version.
     pub mutating func replace(start: usize, finish: usize, text: str) -> !:
         if start > finish or finish > self.count:
             error(result.invalid, "replacement is outside the document")
@@ -151,6 +168,8 @@ pub struct Document:
         self.selection_anchor = self.selection_caret
         self.revision += 1
 
+    ## Revert the latest edit and restore the selection from before it. False
+    ## when there is nothing to undo.
     pub mutating func undo() -> bool!:
         if self.edit_position == 0:
             return false
@@ -163,6 +182,8 @@ pub struct Document:
         self.revision += 1
         return true
 
+    ## Reapply the next undone edit and the selection it ended with. False when
+    ## there is nothing to redo.
     pub mutating func redo() -> bool!:
         if self.edit_position == self.edit_count:
             return false
@@ -183,18 +204,22 @@ pub struct Document:
             self.edits[self.edit_position - 1].after_anchor = anchor
             self.edits[self.edit_position - 1].after_caret = caret
 
+    ## The offset where the line containing `position` starts (clamped to the end).
     pub func line_start(position: usize) -> usize:
         var index = position if position < self.count else self.count
         while index > 0 and self.characters[index - 1] != 10:
             index -= 1
         return index
 
+    ## The offset of the newline ending the line containing `position`, or the
+    ## document's length on the last line.
     pub func line_end(position: usize) -> usize:
         var index = position if position < self.count else self.count
         while index < self.count and self.characters[index] != 10:
             index += 1
         return index
 
+    ## The 0-based line containing `position`, counted by newlines before it.
     pub func line_number(position: usize) -> usize:
         var row: usize = 0
         for index in 0..<(position if position < self.count else self.count):
@@ -202,6 +227,8 @@ pub struct Document:
                 row += 1
         return row
 
+    ## The offset where 0-based line `row` starts; the document's length when
+    ## there are fewer lines.
     pub func line_offset(row: usize) -> usize:
         var remaining = row
         var index: usize = 0

@@ -1,3 +1,4 @@
+## The Slider widget: a labeled horizontal value slider.
 import gpu
 import interop
 import math
@@ -12,7 +13,8 @@ from luce_ui.font import Font, selected_font
 
 ## A horizontal slider over `minimum..maximum` with an optional label and the
 ## value shown after it. Dragging anywhere on the track sets the value; arrow
-## keys step by `step` (a tenth of the range when zero), shift by ten steps.
+## keys step by `step` (a tenth of the range when zero), shift by ten steps,
+## and Home and End jump to the bounds.
 ## `on_change` fires with the new value on every change the user makes; the
 ## value can also be set from code without a signal. `show_value = false`
 ## leaves the readout to a field beside the slider.
@@ -70,6 +72,7 @@ pub struct Slider: Widget:
         self.current = math.clamp(value, self.minimum, self.maximum)
         self.box.value().invalidate()
 
+    ## Change the bounds and re-clamp the value; no change signal.
     pub mutating func set_range(minimum: f64, maximum: f64) -> !:
         if not math.is_finite(minimum) or not math.is_finite(maximum) or maximum <= minimum:
             error(result.invalid, "a slider needs finite bounds with maximum above minimum")

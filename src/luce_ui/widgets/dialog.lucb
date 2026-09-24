@@ -1,3 +1,4 @@
+## The Dialog widget: a centered, non-modal floating card of rows that the host opens and hides.
 import gpu
 import interop
 import math
@@ -8,10 +9,13 @@ from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 
 ## A floating card after Compositor's live-previewing panels: a raised face with
-## a one-point border and the surface radius, centred in the window over the
-## content, holding a column of rows. It is not modal and does not close when
-## the pointer goes elsewhere; the host shows and hides it (`open`, `hide`)
-## around an edit and gives it Cancel/OK buttons in its last row.
+## a one-point border and the surface radius, centered in the window over the
+## content, holding a column of rows. It is a non-modal popup: drawn over
+## everything and hit first, while the rest of the window keeps working — a
+## click on the canvas behind it reaches the canvas (a picker samples there),
+## its own fields take focus and keys, and shortcuts stay live except plain
+## keys while one of its fields is taking text. The host shows and hides it
+## (`open`, `hide`) around an edit and gives it Cancel/OK buttons in its last row.
 pub struct Dialog: Widget:
     let box: interop.Reference[Layout]
     var width: f64
@@ -23,6 +27,7 @@ pub struct Dialog: Widget:
         let box = try layout.make_layout(layout.Axis.vertical, spacing, padding, layout.Alignment.stretch)
         errdefer box.release()
         box.value().set_popup(true)
+        box.value().set_modal(false)
         box.value().set_popup_placement(layout.PopupPlacement.window_center)
         box.value().set_visible(false)
         try box.value().set_children(children)
@@ -32,6 +37,7 @@ pub struct Dialog: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
+    ## Replace the card's rows.
     pub mutating func set_children(children: const interop.Interface[Widget][]) -> !:
         try self.box.value().set_children(children)
 

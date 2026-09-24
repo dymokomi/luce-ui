@@ -62,7 +62,7 @@ pub struct ColorEditor: Widget:
     pub func is_open() -> bool:
         return self.box.value().is_visible()
 
-    ## Show the editor at (x, y) in the parent's coordinates, seeded from `hex`.
+    ## Show the editor at (x, y) in the parent's coordinates, seeded from `value`.
     pub mutating func open_at(value: str, x: f64, y: f64) -> !:
         self.parse(value)
         try self.field.set_text(value)

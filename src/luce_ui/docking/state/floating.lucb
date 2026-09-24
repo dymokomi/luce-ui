@@ -1,0 +1,297 @@
+#==============================================================================================
+#
+#   docking/state/floating - Floating windows
+#
+#   DESCRIPTION:
+#       A floating panel leaves the model and sits in a window inside the stack, over the
+#       panes: these place, raise, move, resize, dock and draw those windows. Each works on
+#       the State; the frame widget in frame.lucb hands them the presses on a window's chrome.
+#
+#==============================================================================================
+
+## Give the state its own reference, for the frames it makes.
+pub func set_owner(state: State*, owner: interop.Reference[State]):
+    if let previous = state.me: previous.release()
+    state.me = interop.WeakReference[State](owner)
+
+## A floating panel's window, title bar included.
+pub func float_bounds(state: const State*, index: usize) -> gpu.Rect:
+    return state.floats[index]
+
+pub func floating_count(state: const State*) -> usize:
+    return state.float_count
+
+pub func floating(state: const State*, index: usize) -> bool:
+    if index == 0: return false
+    for order in 0..<state.float_count:
+        if state.stacking[order] == index: return true
+    return false
+
+## A floating window's title bar, close button and content, in stack coordinates.
+pub func float_title(state: const State*, index: usize) -> gpu.Rect:
+    let window = state.floats[index]
+    return gpu.Rect(window.x, window.y, window.width, state.height() + 1.0)
+
+pub func float_close(state: const State*, index: usize) -> gpu.Rect:
+    let title = float_title(state, index)
+    let extent = math.min(title.width, title.height)
+    return gpu.Rect(title.x + title.width - extent, title.y, extent, extent)
+
+pub func float_content(state: const State*, index: usize) -> gpu.Rect:
+    let window = state.floats[index]
+    let top = state.height() + 1.0
+    return gpu.Rect(window.x + float_border, window.y + top, math.max(0.0, window.width - float_border * 2.0),
+        math.max(0.0, window.height - top - float_border))
+
+## The smallest window that holds the panel's content.
+func float_minimum(state: const State*, index: usize) -> Size:
+    var minimum = Size(120.0, 60.0)
+    if let panel = state.panels[index]:
+        let box = panel.value().layout()
+        defer box.release()
+        let content = box.value().minimum_size()
+        minimum = Size(math.max(minimum.width, content.width), math.max(minimum.height, content.height))
+    return Size(minimum.width + float_border * 2.0, minimum.height + state.height() + 1.0 + float_border)
+
+## `window` no smaller than its panel needs, no larger than the stack, and inside it.
+func fitted(state: const State*, index: usize, window: gpu.Rect) -> gpu.Rect:
+    let size = state.size()
+    let minimum = float_minimum(state, index)
+    let width = math.min(math.max(window.width, minimum.width), math.max(minimum.width, size.width))
+    let height = math.min(math.max(window.height, minimum.height), math.max(minimum.height, size.height))
+    return gpu.Rect(math.clamp(window.x, 0.0, math.max(0.0, size.width - width)),
+        math.clamp(window.y, 0.0, math.max(0.0, size.height - height)), width, height)
+
+## The window a tab floats into when let go at `pointer`: about its pane's
+## size, with the title under the pointer.
+func float_window(state: const State*, index: usize, pointer: Point) -> gpu.Rect:
+    let size = state.size()
+    var width = size.width * 0.35
+    var height = size.height * 0.5
+    let group = state.model.tabs[index].group
+    if group != 0:
+        let pane = state.geometry_for(state.model, size).panes[group]
+        width = math.min(pane.width, size.width * 0.5)
+        height = math.min(pane.height, size.height * 0.6)
+    return fitted(state, index, gpu.Rect(pointer.x - math.min(60.0, width * 0.5), pointer.y - state.height() * 0.5, width, height))
+
+## A window for a panel that has none yet: centered, tall, as wide as it asks.
+pub func default_window(state: const State*, index: usize) -> gpu.Rect:
+    let size = state.size()
+    let width = math.max(float_minimum(state, index).width, 360.0)
+    let height = size.height * 0.7
+    return fitted(state, index, gpu.Rect((size.width - width) * 0.5, (size.height - height) * 0.5, width, height))
+
+func unstack(state: State*, index: usize):
+    var kept: usize = 0
+    for order in 0..<state.float_count:
+        if state.stacking[order] != index:
+            state.stacking[kept] = state.stacking[order]
+            kept += 1
+    state.float_count = kept
+
+func stack_on_top(state: State*, index: usize):
+    unstack(state, index)
+    state.stacking[state.float_count] = index
+    state.float_count += 1
+
+## Bring a floating window to the front.
+func raise_window(state: State*, index: usize) -> !:
+    if state.float_count > 0 and state.stacking[state.float_count - 1] == index: return
+    stack_on_top(state, index)
+    try state.children()
+    state.invalidate()
+
+func ensure_frame(state: State*, index: usize) -> !:
+    if state.frames[index] != none: return
+    let me = state.me else error(result.invalid, "dynamic stack state has no owner")
+    let owner = me.get() else error(result.invalid, "dynamic stack is closed")
+    defer owner.release()
+    state.frames[index] = try make_frame(owner, index)
+
+## Float a docked panel in `window`, or move a floating one there.
+pub func make_floating(state: State*, index: usize, window: gpu.Rect) -> !:
+    state.cancel()
+    if floating(state, index):
+        state.floats[index] = fitted(state, index, window)
+        try state.select(index)
+        return
+    var next = state.model
+    try next.remove(index)
+    try ensure_frame(state, index)
+    state.floats[index] = fitted(state, index, window)
+    stack_on_top(state, index)
+    errdefer unstack(state, index)
+    try state.children()
+    state.publish(next)
+    try state.select(index)
+
+## Add a panel that is not in the stack yet as a floating window: in
+## `window`, or centered when none.
+pub func add_floating(state: State*, panel: interop.Reference[Panel], window: gpu.Rect?) -> !:
+    state.cancel()
+    var slot: usize = 0
+    for index in 1..<state.panels.length:
+        if state.panels[index] == none:
+            slot = index
+            break
+    if slot == 0: error(result.limit, "a dynamic stack supports at most 128 panels")
+    try ensure_frame(state, slot)
+    stack_on_top(state, slot)
+    errdefer unstack(state, slot)
+    try state.children(slot, panel)
+    state.panels[slot] = panel.clone()
+    state.floats[slot] = default_window(state, slot)
+    if let chosen = window: state.floats[slot] = fitted(state, slot, chosen)
+    state.show_visible()
+    try state.select(slot)
+
+## Dock a floating panel: `next` is the model with it already added.
+func dock(state: State*, index: usize, next: Model) -> !:
+    unstack(state, index)
+    errdefer stack_on_top(state, index)
+    try state.children()
+    state.publish(next)
+    try state.select(index)
+
+## The window edges at a point: 1 left, 2 right, 4 top, 8 bottom. A corner
+## grip at the bottom right is wider than the border.
+func edges_at(state: const State*, index: usize, x: f64, y: f64) -> u8:
+    let window = state.floats[index]
+    let right = window.x + window.width
+    let bottom = window.y + window.height
+    if x >= right - 12.0 and y >= bottom - 12.0: return 10
+    var edges: u8 = 0
+    if x < window.x + float_border: edges |= 1
+    elif x >= right - float_border: edges |= 2
+    if y < window.y + 3.0: edges |= 4
+    elif y >= bottom - float_border: edges |= 8
+    return edges
+
+## A pointer event on floating window `index`'s frame, at stack coordinates:
+## the title moves the window and, let go over a header or a pane's edge,
+## docks it there; a double press on the title docks it with the active
+## group; the border resizes it.
+pub func float_event(state: State*, index: usize, event: Event, x: f64, y: f64) -> !:
+    if event.cancelled:
+        if state.gesture == Gesture.moving and state.float_pressed == index: state.floats[index] = state.float_origin
+        state.gesture = Gesture.idle
+        state.float_pressed = 0
+        state.invalidate()
+        return
+    if not floating(state, index): return
+    if event.kind == input.EventKind.pointer_down and event.button == 0:
+        state.cancel()
+        try state.select(index)
+        state.float_pressed = index
+        state.start = Point(x, y)
+        state.float_origin = state.floats[index]
+        state.float_moved = false
+        state.edges = edges_at(state, index, x, y)
+        if state.edges != 0:
+            state.gesture = Gesture.resizing
+            return
+        let panel = try state.panel(index)
+        defer panel.release()
+        if panel.value().is_closable() and strip.contains(float_close(state, index), x, y):
+            state.gesture = Gesture.closing
+            return
+        if strip.contains(float_title(state, index), x, y):
+            # A second click on the title soon after a first, neither of them a drag.
+            if state.last_pressed == index and time.now() - state.last_press < double_press:
+                state.last_press = 0
+                state.cancel()
+                var next = state.model
+                try next.add(index, 0 if next.root == 0 else next.active, DockPosition.tab)
+                try dock(state, index, next)
+                return
+            state.gesture = Gesture.moving
+        state.last_press = 0
+        return
+    if state.float_pressed != index: return
+    let dx = x - state.start.x
+    let dy = y - state.start.y
+    let origin = state.float_origin
+    if event.kind == input.EventKind.pointer_moved:
+        if state.gesture == Gesture.moving:
+            state.floats[index] = fitted(state, index, gpu.Rect(origin.x + dx, origin.y + dy, origin.width, origin.height))
+            state.float_moved = state.float_moved or dx * dx + dy * dy >= 16.0
+            state.drag_pointer = Point(x, y)
+            state.invalidate()
+        elif state.gesture == Gesture.resizing:
+            let minimum = float_minimum(state, index)
+            var window = origin
+            if (state.edges & 1) != 0:
+                let shift = math.min(dx, origin.width - minimum.width)
+                window.x = origin.x + shift
+                window.width = origin.width - shift
+            if (state.edges & 2) != 0: window.width = origin.width + dx
+            if (state.edges & 4) != 0:
+                let shift = math.min(dy, origin.height - minimum.height)
+                window.y = origin.y + shift
+                window.height = origin.height - shift
+            if (state.edges & 8) != 0: window.height = origin.height + dy
+            state.floats[index] = fitted(state, index, window)
+            state.invalidate()
+    elif event.kind == input.EventKind.pointer_up and event.button == 0:
+        let gesture = state.gesture
+        let moved = state.float_moved
+        state.last_press = time.now() if gesture == Gesture.moving and not moved else 0
+        state.last_pressed = index
+        state.gesture = Gesture.idle
+        state.float_pressed = 0
+        state.float_moved = false
+        if gesture == Gesture.closing and strip.contains(float_close(state, index), x, y):
+            try state.request_close(index)
+        elif gesture == Gesture.moving and moved:
+            let drop = state.drop_for(index, state.model, x, y, false)
+            if drop.accepted:
+                try dock(state, index, try state.inserted(index, state.model, drop, x, y))
+        state.invalidate()
+
+## The pointer over floating window `index` at stack coordinates.
+pub func float_cursor(state: const State*, index: usize, x: f64, y: f64) -> input.Cursor:
+    if state.gesture == Gesture.moving and state.float_pressed == index: return input.Cursor.grabbing
+    let edges = state.edges if state.gesture == Gesture.resizing and state.float_pressed == index else edges_at(state, index, x, y)
+    if (edges & 12) != 0 and (edges & 3) == 0: return input.Cursor.resize_vertical
+    if edges != 0: return input.Cursor.resize_horizontal
+    if let panel = state.panels[index]:
+        if panel.value().is_closable() and strip.contains(float_close(state, index), x, y): return input.Cursor.pointer
+    if strip.contains(float_title(state, index), x, y): return input.Cursor.grab
+    return input.Cursor.arrow
+
+## A floating window's chrome, in its own coordinates: border, title bar
+## with the panel's name and close button, and the surface under the content.
+pub func draw_float(state: const State*, index: usize, target: interop.View[gpu.RenderTarget], pointer: Point, hovered: bool) -> !:
+    let panel = try state.panel(index)
+    defer panel.release()
+    let content = panel.value().layout()
+    defer content.release()
+    var painter = try Painter(target)
+    defer painter.close()
+    let theme = state.theme()
+    let window = state.floats[index]
+    let title = state.height()
+    try painter.rectangle(gpu.Rect(width = window.width, height = window.height), theme.active_border if content.value().contains_focus() else theme.strip)
+    try painter.rectangle(gpu.Rect(1.0, 1.0, math.max(0.0, window.width - 2.0), math.max(0.0, window.height - 2.0)), theme.panel)
+    try painter.rectangle(gpu.Rect(1.0, 1.0, math.max(0.0, window.width - 2.0), title - 1.0), theme.strip)
+    try painter.rectangle(gpu.Rect(1.0, title, math.max(0.0, window.width - 2.0), 1.0), theme.background)
+    let close = float_close(state, index)
+    let closing = panel.value().is_closable()
+    let label_end = close.x - window.x if closing else window.width
+    let inset = theme.inset(state.font)
+    let label = panel.value().text()
+    defer label.release()
+    let clipped = try target.get().clipped(gpu.Rect(inset, 0.0, math.max(0.0, label_end - inset * 2.0), title))
+    defer clipped.release()
+    var labels = try Painter(clipped)
+    defer labels.close()
+    try labels.text(label.value, inset, (title - state.font.value().height()) * 0.5, theme.foreground, state.font)
+    if closing:
+        let button = gpu.Rect(close.x - window.x, close.y - window.y, close.width, close.height)
+        if hovered and strip.contains(button, pointer.x, pointer.y):
+            try painter.rectangle(button, theme.hover())
+        let middle = Point(button.x + button.width * 0.5, button.y + button.height * 0.5)
+        let extent = state.font.value().advance() * 0.3
+        try painter.line(Point(middle.x - extent, middle.y - extent), Point(middle.x + extent, middle.y + extent), 1.0, theme.muted)
+        try painter.line(Point(middle.x - extent, middle.y + extent), Point(middle.x + extent, middle.y - extent), 1.0, theme.muted)

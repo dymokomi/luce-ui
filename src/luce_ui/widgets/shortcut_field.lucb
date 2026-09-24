@@ -1,3 +1,4 @@
+## The ShortcutField widget: records a keyboard chord for a command.
 import gpu
 import interop
 import math
@@ -56,6 +57,7 @@ pub struct ShortcutField: Widget:
     pub func is_recording() -> bool:
         return self.recording
 
+    ## Fires when recording binds or unbinds a chord; read it with `shortcut`.
     pub func on_change(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
 

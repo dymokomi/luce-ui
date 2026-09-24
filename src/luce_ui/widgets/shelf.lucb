@@ -1,3 +1,4 @@
+## The Shelf widget: a pane's bottom toolbar strip.
 import gpu
 import interop
 import math
@@ -9,8 +10,8 @@ from luce_ui.painter import Painter
 
 ## A pane's bottom toolbar, after eleusis: a fixed 30-point shelf on the
 ## sunken surface with a one-point rule of the backdrop above it, its children
-## (plain icon buttons and a Spacer, by convention) centred with six points of
-## side padding. Below a list a bar reads as acting on it; above, as a header.
+## (plain icon buttons and a Spacer, by convention) in a row two points apart,
+## centered vertically. Below a list a bar reads as acting on it; above, as a header.
 pub struct Shelf: Widget:
     let box: interop.Reference[Layout]
 

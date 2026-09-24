@@ -193,13 +193,11 @@ func paint_line(document: const Document*, painter: Painter*, start: usize, end:
 func same_color(a: gpu.Color, b: gpu.Color) -> bool:
     return a.red == b.red and a.green == b.green and a.blue == b.blue
 
-## Draw a color chip filling one character cell at `x`, replacing that scalar's
-## glyph. A thin frame in the line-number color keeps a chip that matches the
-## background legible; the fill shows the literal color the text encodes.
-## Draw a color chip filling `span` cells starting at `x`. A square about a line tall
-## (capped to the slot width), centred in the slot with a small margin so it never
-## touches the neighbouring glyphs; a thin frame keeps a chip on a matching background
-## legible.
+## Draw a color chip in the `span` cells starting at `x`: a square the font's
+## height (capped to the slot's width) less a small margin, centered in the slot
+## so it never touches the neighboring glyphs, filled with `color` inside a
+## one-point frame in the line-number color that keeps a chip on a matching
+## background legible.
 func draw_swatch(painter: Painter*, x: f64, y: f64, advance: f64, span: usize, font: interop.Reference[Font], theme: EditorTheme, color: gpu.Color) -> !:
     let extent = font.value().height()
     let slot = (f64)span * advance

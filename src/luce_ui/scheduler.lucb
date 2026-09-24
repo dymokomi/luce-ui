@@ -1,4 +1,5 @@
-## A small main-thread timer wheel for the run loop. `after` runs a callback once,
+## The run loop's main-thread timers: a flat array of at most 256, scanned
+## linearly on every query and service pass. `after` runs a callback once,
 ## `every` repeats it, `post` runs it on the next serviced turn, and `cancel` stops
 ## one by the handle it was given. `service` fires everything due, so an application
 ## drives periodic work — a settings poll, a status message that fades, a check for a
@@ -17,6 +18,8 @@ struct Timer:
     var callback: interop.Callback[unit, unit]?
     var active: bool
 
+## The timers and the next handle to give out; handles start at 1 and are never
+## reused.
 pub struct Scheduler:
     var timers: Timer[]
     var next_id: i64

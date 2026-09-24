@@ -1,3 +1,4 @@
+## The Spacer widget.
 import gpu
 import interop
 import math
@@ -7,6 +8,8 @@ import luce_ui.result as result
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 
+## Empty space that takes no room of its own and grows with `weight` along
+## both axes, to push its siblings apart in a stack.
 pub struct Spacer: Widget:
     let box: interop.Reference[Layout]
 

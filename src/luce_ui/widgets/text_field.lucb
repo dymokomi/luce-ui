@@ -1,3 +1,4 @@
+## The TextField widget: a single-line editable text well.
 import gpu
 import interop
 import math
@@ -66,9 +67,12 @@ pub struct TextField: Widget:
         self.committed = replacement
         self.box.value().invalidate()
 
+    ## Called with the whole text after each edit that changes it.
     pub func on_change(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
 
+    ## Called with the text on Enter or focus loss, only when it differs from the
+    ## last committed text.
     pub func on_commit(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
         return try self.submitted.connect(callback)
 

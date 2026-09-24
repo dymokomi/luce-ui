@@ -1,3 +1,4 @@
+## Tabbed panels: the Tabs widget and the TabBar of titles it shows its pages under.
 import gpu
 import interop
 import math
@@ -46,6 +47,8 @@ pub struct TabBar: Widget:
     pub func selected_index() -> i64:
         return self.selected
 
+    ## Mark tab `index` (clamped to the tabs) selected; the panel's pages are
+    ## unaffected.
     pub mutating func select(index: i64):
         self.selected = math.iclamp(index, 0, (i64)self.titles.length - 1)
         self.box.value().invalidate()
@@ -162,10 +165,12 @@ pub struct Tabs: Widget:
     pub func selected_index() -> i64:
         return self.selected
 
+    ## Called with the new index whenever the shown page changes, from a click or
+    ## `select`.
     pub func on_change(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
 
-    ## Show page `index`.
+    ## Show page `index`, clamped to the pages.
     pub mutating func select(index: i64) -> interop.Outcome[unit]:
         let chosen = math.iclamp(index, 0, (i64)self.pages.length - 1)
         if chosen == self.selected:

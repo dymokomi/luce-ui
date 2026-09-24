@@ -1,3 +1,4 @@
+## The Text widget.
 import gpu
 import interop
 import math
@@ -8,6 +9,7 @@ from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 from luce_ui.font import Font, selected_font
 
+## A one-line text label in the theme's foreground, or muted; it takes no input.
 pub struct Text: Widget:
     let box: interop.Reference[Layout]
     var caption: interop.Owned[str]

@@ -1,577 +1,8 @@
-from luce_ui.theme import Theme
-from luce_ui.painter import Painter
-import luce_ui.splitting as splitting
-import gpu
-import input
-import interop
-import math
-import memory
-import ownership
-import thread
-import luce_ui.result as result
-import luce_ui.geometry as geometry
-from luce_ui.arrangement import Arrangement
-from luce_ui.cursor import CursorSource
-
-pub type Rect = gpu.Rect
-
-pub type Point = geometry.Point
-pub type Size = geometry.Size
-
-pub struct Constraints:
-    pub var width: f64 = 16384.0
-    pub var height: f64 = 16384.0
-
-pub enum Axis as u8:
-    overlay = 0
-    horizontal = 1
-    vertical = 2
-
-pub enum Alignment as u8:
-    start = 0
-    center = 1
-    end = 2
-    stretch = 3
-
-pub enum PopupPlacement as u8:
-    below = 0
-    point = 1
-    window_top = 2
-    window_center = 3
-
-## Coordinates are local to the receiving widget. Cancellation clears any press.
-pub struct Event:
-    pub var kind: input.EventKind
-    pub var key: input.Key
-    pub var x: f64
-    pub var y: f64
-    pub var button: i64
-    pub var repeated: bool
-    pub var shift: bool
-    pub var control: bool
-    pub var alt: bool
-    pub var meta: bool
-    pub var codepoint: i64
-    pub var inside: bool
-    pub var cancelled: bool
-    ## Menu triggers receive this request when an open menu session changes peer.
-    pub var menu_requested: bool
-    pub var scroll_x: f64
-    pub var scroll_y: f64
-    pub var scroll_unit: input.ScrollUnit
-    ## Stylus pressure 0..1 for pointer events; zero from a mouse.
-    pub var pressure: f64
-
-## layout returns one retained reference to the same Layout for this widget's
-## lifetime. A measure/draw/event implementation may fail or reenter application
-## code. The framework invokes it under an active interface guard.
-pub interface Widget:
-    func layout() -> interop.Reference[Layout]
-
-    func measure(available: Constraints) -> interop.Outcome[Size]
-
-    mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]
-
-    mutating func event(event: Event) -> interop.Outcome[unit]
-
-var serial: u64 = 0
-var revision: u64 = 0
-
-pub func epoch() -> u64:
-    return revision
-
-## Layout owns child interfaces and geometry, never control-specific state.
-## Parent/application membership is weak identity, so trees have no parent cycle.
-pub struct Layout:
-    let identifier: u64
-    var parent: u64
-    var application: u64
-    var items: interop.Interface[Widget][]
-    let axis: Axis
-    let spacing: f64
-    let padding: f64
-    let alignment: Alignment
-    var minimum: Size
-    var maximum: Size
-    var growth: Size
-    var shrink: Size
-    var split: f64?
-    var arrangement: interop.Interface[Arrangement]?
-    var cursor_source: interop.Interface[CursorSource]?
-    var pointer_cursor: input.Cursor
-    var focus_requested: bool
-    var measured: Size
-    var local_theme: Theme?
-    var appearance: Theme
-    var rectangle: Rect
-    var clipping: Rect
-    var visible: bool
-    var popup: bool
-    var popup_placement: PopupPlacement
-    var popup_point: Point
-    var animate_open: bool
-    var opening: bool
-    var context_menu: bool
-    var menu_trigger: bool
-    var accepts_focus: bool
-    var accepts_pointer: bool
-    var accepts_text: bool
-    var accepts_tab: bool
-    var active: bool
-    var focused: bool
-    var focus_within: bool
-    var hovered: bool
-    var pointer_within: bool
-    var pointer: Point
-    var editing: bool
-    var hover_transparent: bool
-    var drop_target: bool
-    var drop_overlay: bool
-    var drop_accepted: bool
-    var drop_hovered: bool
-
-    pub func init(axis: Axis = Axis.overlay, spacing: f64 = 0.0, padding: f64 = 0.0,
-                  alignment: Alignment = Alignment.stretch) -> !:
-        try require_main_thread()
-        try extent(spacing)
-        try extent(padding)
-        serial = serial +? 1 else error(result.limit, "UI identities exhausted")
-        self.identifier = serial
-        self.parent = 0
-        self.application = 0
-        var empty: interop.Interface[Widget][]
-        self.items = empty
-        self.arrangement = none
-        self.cursor_source = none
-        self.pointer_cursor = input.Cursor.arrow
-        self.focus_requested = false
-        self.axis = axis
-        self.spacing = spacing
-        self.padding = padding
-        self.alignment = alignment
-        self.minimum = Size()
-        self.maximum = Size(16384.0, 16384.0)
-        self.growth = Size()
-        self.shrink = Size(1.0, 1.0)
-        self.split = none
-        self.measured = Size()
-        self.local_theme = none
-        self.appearance = Theme()
-        self.rectangle = Rect()
-        self.clipping = Rect()
-        self.visible = true
-        self.popup = false
-        self.popup_placement = PopupPlacement.below
-        self.popup_point = Point()
-        self.animate_open = false
-        self.opening = false
-        self.context_menu = false
-        self.menu_trigger = false
-        self.accepts_focus = false
-        self.accepts_pointer = false
-        self.accepts_text = false
-        self.accepts_tab = false
-        self.active = true
-        self.focused = false
-        self.focus_within = false
-        self.hovered = false
-        self.pointer_within = false
-        self.pointer = Point()
-        self.editing = false
-        self.hover_transparent = false
-        self.drop_target = false
-        self.drop_overlay = true
-        self.drop_accepted = true
-        self.drop_hovered = false
-
-    pub func is_visible() -> bool:
-        return self.visible
-
-    pub mutating func set_visible(visible: bool):
-        self.visible = visible
-        self.invalidate()
-
-    ## A popup is measured normally, placed beside its parent and clipped to
-    ## the window. Its subtree is drawn last and receives modal input.
-    pub mutating func set_popup(popup: bool):
-        self.popup = popup
-        self.invalidate()
-
-    ## A point is local to the popup's parent. Window placement clamps every
-    ## edge; centered command surfaces stay independent of surrounding flow.
-    pub mutating func set_popup_point(x: f64, y: f64) -> !:
-        if not math.is_finite(x) or not math.is_finite(y):
-            error(result.invalid, "popup coordinates must be finite")
-        self.popup_placement = PopupPlacement.point
-        self.popup_point = Point(x, y)
-        self.invalidate()
-
-    pub mutating func set_popup_placement(placement: PopupPlacement):
-        self.popup_placement = placement
-
-    ## Let this popup ease to its placement instead of snapping. begin_open restarts
-    ## the entrance each time it is shown; a size or position change while open eases too.
-    pub mutating func set_animate_open(value: bool):
-        self.animate_open = value
-
-    pub mutating func begin_open():
-        self.opening = true
-        self.invalidate()
-
-    ## Context providers receive a secondary-click request after its target has
-    ## selected the clicked content. The nearest enabled ancestor handles it.
-    pub mutating func set_context_menu(enabled: bool):
-        self.context_menu = enabled
-        self.accepts_pointer = enabled or self.accepts_pointer
-        self.invalidate()
-
-    ## Sibling triggers form one menu group. Only an already-open menu enables
-    ## pointer switching; context menus and other modal popups remain isolated.
-    pub mutating func set_menu_trigger(enabled: bool):
-        self.menu_trigger = enabled
-        self.invalidate()
-
-    pub func theme() -> Theme:
-        return self.appearance
-
-    pub mutating func set_theme(theme: Theme) -> !:
-        try theme.validate()
-        self.local_theme = theme
-        self.appearance = theme
-        self.invalidate()
-
-    pub mutating func inherit_theme():
-        self.local_theme = none
-        self.invalidate()
-
-    pub func id() -> i64:
-        return (i64)self.identifier
-
-    pub func bounds() -> Rect:
-        return self.rectangle
-
-    pub func is_focused() -> bool:
-        return self.focused
-
-    pub func contains_focus() -> bool:
-        return self.focus_within
-
-    ## Resolve to the first eligible descendant after the next arrangement.
-    ## Containers can reveal a tab and focus its content in the same operation.
-    pub mutating func request_focus():
-        self.focus_requested = true
-        self.invalidate()
-
-    ## Hover follows the topmost visible, enabled branch, independently of
-    ## keyboard focus and pointer capture. Ancestors can style their whole pane.
-    pub func is_hovered() -> bool:
-        return self.hovered
-
-    pub func contains_pointer() -> bool:
-        return self.pointer_within
-
-    ## Coordinates are local to this layout, valid while contains_pointer is true.
-    pub func pointer_position() -> Point:
-        return self.pointer
-
-    # mark: Drop areas =========================================================================
-
-    ## Make this box an area files dragged from other applications can be dropped
-    ## on. While a drag is over it, its widget gets `drag_entered`, `drag_moved`,
-    ## `drag_left` and finally `drop` (local coordinates), reads the files with
-    ## `drop_count`/`drop_path`, and may refuse them with `set_drop_accepted`.
-    ## The innermost drop area under the pointer takes the drag. With `overlay`
-    ## the area is lit in the accent while a drop would be taken there.
-    pub mutating func set_drop_target(enabled: bool, overlay: bool = true):
-        self.drop_target = enabled
-        self.drop_overlay = overlay
-        self.invalidate()
-
-    pub func is_drop_target() -> bool:
-        return self.drop_target
-
-    ## Whether a drag is over this drop area now.
-    pub func is_drop_hovered() -> bool:
-        return self.drop_hovered
-
-    ## Take or refuse the drag over this area, answered from its drag events;
-    ## an area takes a drag unless it says otherwise. A refused drag is not lit
-    ## and the OS shows that dropping does nothing.
-    pub mutating func set_drop_accepted(accepted: bool):
-        if self.drop_accepted != accepted:
-            self.drop_accepted = accepted
-            self.invalidate()
-
-    pub func is_drop_accepted() -> bool:
-        return self.drop_accepted
-
-    ## How many files the drag in progress (or the drop just made) carries.
-    pub func drop_count() -> i64:
-        return (i64)drop_payload_count
-
-    ## The path of dragged file `index`, as UTF-8.
-    pub func drop_path(index: i64) -> interop.Owned[str]!:
-        if index < 0 or index >= (i64)drop_payload_count:
-            error(result.invalid, "no dragged file has that index")
-        return try interop.copy_text(drop_payload[(usize)index])
-
-    ## Cursor changes do not invalidate geometry. The application resolves the
-    ## current hit or capture after dispatch and after each layout refresh.
-    pub mutating func set_cursor(cursor: input.Cursor):
-        self.pointer_cursor = cursor
-
-    pub mutating func set_cursor_source(source: interop.Interface[CursorSource]) -> !:
-        try source.enter()
-        defer source.leave()
-        let retained = source.clone()
-        if let previous = self.cursor_source: previous.release()
-        self.cursor_source = retained
-
-    pub func is_enabled() -> bool:
-        return self.active
-
-    pub mutating func set_enabled(enabled: bool):
-        self.active = enabled
-        self.invalidate()
-
-    pub mutating func set_focusable(focusable: bool):
-        self.accepts_focus = focusable
-        if focusable:
-            self.accepts_pointer = true
-        self.invalidate()
-
-    pub mutating func set_interactive(interactive: bool):
-        self.accepts_pointer = interactive
-        self.invalidate()
-
-    ## A decorative layer that lies over content, such as a drag preview, opts out
-    ## of hover so the interactive widgets beneath it still light up under the pointer.
-    pub mutating func set_hover_transparent(value: bool):
-        self.hover_transparent = value
-        self.invalidate()
-
-    ## Text controls receive committed Unicode and may reserve Tab for indentation.
-    ## Control-Tab always remains available for moving focus out of an editor.
-    pub mutating func set_text_input(enabled: bool, tabs: bool = false):
-        self.accepts_text = enabled
-        self.accepts_tab = enabled and tabs
-        if enabled:
-            self.set_focusable(true)
-        self.invalidate()
-
-    pub func invalidate():
-        revision = revision +? 1 else trap("UI revision exhausted")
-
-    pub mutating func set_limits(minimum: Size, maximum: Size) -> !:
-        try extent(minimum.width)
-        try extent(minimum.height)
-        try extent(maximum.width)
-        try extent(maximum.height)
-        if minimum.width > maximum.width or minimum.height > maximum.height:
-            error(result.invalid, "layout minimum exceeds maximum")
-        self.minimum = minimum
-        self.maximum = maximum
-        self.invalidate()
-
-    pub mutating func set_size(width: f64, height: f64) -> !:
-        try self.set_limits(Size(width, height), Size(width, height))
-
-    ## Shrink weights are independent of growth. Fixed-height chrome can keep
-    ## its line while flexible content absorbs a smaller window.
-    pub mutating func set_shrink(horizontal: f64 = 1.0, vertical: f64 = 1.0) -> !:
-        try extent(horizontal)
-        try extent(vertical)
-        self.shrink = Size(horizontal, vertical)
-        self.invalidate()
-
-    pub mutating func set_flex(horizontal: f64 = 1.0, vertical: f64 = 1.0) -> !:
-        try extent(horizontal)
-        try extent(vertical)
-        self.growth = Size(horizontal, vertical)
-        self.invalidate()
-
-    pub func minimum_size() -> Size:
-        return self.minimum
-
-    pub func maximum_size() -> Size:
-        return self.maximum
-
-    ## Decorators can preserve a content widget's sizing policy while owning a
-    ## separate layout for popup children or framing.
-    pub mutating func copy_sizing_from(source: interop.Reference[Layout]) -> !:
-        let value = try source.get()
-        self.minimum = value.minimum
-        self.maximum = value.maximum
-        self.growth = value.growth
-        self.shrink = value.shrink
-        self.invalidate()
-
-    ## Split layouts contain first pane, divider and second pane, in that order.
-    ## The fraction is a preference; placement enforces the children's limits.
-    pub mutating func set_split(fraction: f64) -> !:
-        if self.axis == Axis.overlay or not math.is_finite(fraction) or fraction < 0.0 or fraction > 1.0:
-            error(result.invalid, "a split needs a horizontal/vertical axis and a fraction in 0..1")
-        if self.items.length != 3:
-            error(result.invalid, "a split needs two panes and one divider")
-        self.split = fraction
-        self.invalidate()
-
-    pub func split_fraction() -> f64:
-        return self.split else 0.5
-
-    pub mutating func set_arrangement(arrangement: interop.Interface[Arrangement]) -> !:
-        if self.axis != Axis.overlay or self.split != none:
-            error(result.invalid, "custom arrangement needs an overlay layout")
-        try arrangement.enter()
-        defer arrangement.leave()
-        let replacement = arrangement.clone()
-        if let previous = self.arrangement:
-            previous.release()
-        self.arrangement = replacement
-        self.invalidate()
-
-    pub func child_count() -> i64:
-        return (i64)self.items.length
-
-    pub func child(index: i64) -> interop.Interface[Widget]!:
-        if index < 0 or (usize)index >= self.items.length:
-            error(result.invalid, "child index is outside this layout")
-        return self.items[(usize)index].clone()
-
-    ## Replacement is transactional: validate and allocate before changing edges.
-    pub mutating func set_children(children: const interop.Interface[Widget][]) -> !:
-        if self.editing:
-            error(result.busy, "child replacement cannot reenter the same layout")
-        if self.split != none and children.length != 3:
-            error(result.invalid, "a split needs two panes and one divider")
-        self.editing = true
-        defer self.finish_edit()
-        if children.length > 1024:
-            error(result.limit, "a layout supports at most 1024 children")
-        var index: usize = 0
-        for child in children:
-            try child.enter()
-            defer child.leave()
-            let layout = child.value().layout()
-            defer layout.release()
-            let state = try layout.get()
-            if state.parent != 0 and state.parent != self.identifier:
-                error(result.busy, "a widget already has a parent")
-            # Traversal membership may outlive a just-removed parent edge until
-            # the next arrangement. Reattaching within that same application is
-            # safe; its retained snapshot still protects any active dispatch.
-            if state.application != 0 and state.parent != self.identifier and state.application != self.application:
-                error(result.busy, "a widget is mounted in an application")
-            if try contains(child, self.identifier, 0):
-                error(result.invalid, "a widget tree cannot contain a cycle")
-            for previous in children[..<index]:
-                let other = try widget_layout(previous)
-                defer other.release()
-                if other.value().identifier == state.identifier:
-                    error(result.invalid, "a layout cannot contain the same widget twice")
-            index += 1
-        var replacement: interop.Interface[Widget][]
-        if children.length > 0:
-            replacement = try alloc interop.Interface[Widget][children.length] in memory.heap
-        index = 0
-        for child in children:
-            replacement[index] = child.clone()
-            index += 1
-        self.detach()
-        self.items = replacement
-        for child in self.items:
-            let layout = try widget_layout(child)
-            defer layout.release()
-            layout.value().parent = self.identifier
-        self.invalidate()
-
-    pub func content_size(available: Constraints) -> Size!:
-        var size = Size()
-        var count: usize = 0
-        for child in self.items:
-            let layout = try widget_layout(child)
-            defer layout.release()
-            if not layout.value().visible or layout.value().popup:
-                continue
-            count += 1
-            let measured = layout.value().measured
-            if self.axis == Axis.horizontal:
-                size.width += measured.width
-                size.height = math.max(size.height, measured.height)
-            elif self.axis == Axis.vertical:
-                size.width = math.max(size.width, measured.width)
-                size.height += measured.height
-            else:
-                size.width = math.max(size.width, measured.width)
-                size.height = math.max(size.height, measured.height)
-        let gaps = (f64)(count - 1) * self.spacing if count > 0 else 0.0
-        size.width += self.padding * 2.0 + (gaps if self.axis == Axis.horizontal else 0.0)
-        size.height += self.padding * 2.0 + (gaps if self.axis == Axis.vertical else 0.0)
-        return Size(math.min(size.width, available.width), math.min(size.height, available.height))
-
-    mutating func finish_edit():
-        self.editing = false
-
-    mutating func detach():
-        let previous = self.items
-        var empty: interop.Interface[Widget][]
-        self.items = empty
-        for child in previous:
-            # Parents retain interfaces; a child's explicit close may precede
-            # removal. Closed children need no further membership mutation.
-            let layout = widget_layout(child) catch failure:
-                child.release()
-                continue
-            # Collection finalizes every owner before releasing graph edges.
-            # A still-open widget can therefore return an already-closed layout.
-            let state: Layout*? = layout.get() catch failure: recover none
-            if let open = state: open.parent = 0
-            layout.release()
-            child.release()
-        if previous.length > 0:
-            free(previous) in memory.heap
-
-    mutating func dispose():
-        self.detach()
-        if let source = self.cursor_source: source.release()
-        if let arrangement = self.arrangement:
-            arrangement.release()
-        self.invalidate()
-
-    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
-        if let source = self.cursor_source: source.trace(visit, context)
-        if let arrangement = self.arrangement:
-            arrangement.trace(visit, context)
-        for child in self.items:
-            child.trace(visit, context)
-
-pub let layout_type: interop.Type[Layout] = interop.Type[Layout]("UI layout", Layout.dispose, Layout.trace, main_thread = true)
-
-pub func make_layout(axis: Axis = Axis.overlay, spacing: f64 = 0.0, padding: f64 = 0.0,
-                     alignment: Alignment = Alignment.stretch) -> interop.Reference[Layout]!:
-    return try interop.Reference[Layout].adopt(new Layout(axis, spacing, padding, alignment) in memory.heap, layout_type, memory.heap)
-
-pub func widget_layout(widget: interop.Interface[Widget]) -> interop.Reference[Layout]!:
-    try widget.enter()
-    defer widget.leave()
-    return widget.value().layout()
-
-func contains(widget: interop.Interface[Widget], identifier: u64, depth: usize) -> bool!:
-    if depth >= 64:
-        error(result.limit, "a widget tree supports at most 64 levels")
-    let layout = try widget_layout(widget)
-    defer layout.release()
-    let state = try layout.get()
-    if state.identifier == identifier:
-        return true
-    for child in state.items:
-        if try contains(child, identifier, depth + 1):
-            return true
-    return false
-
-pub func extent(value: f64) -> !:
-    if not (value >= 0.0 and value <= 16384.0):
-        error(result.invalid, "layout dimensions must be finite and in 0..16384")
+#==============================================================================================
+#
+#   layout/tree - The Tree: gathering, focus, capture, dispatch and drawing
+#
+#==============================================================================================
 
 struct Entry:
     let widget: interop.Interface[Widget]
@@ -601,6 +32,8 @@ pub struct Tree:
     ## The drop area a drag is over, or 0.
     var drop_hover: u64
 
+    ## A tree rooted at `content`, which must be visible and parentless; nothing is
+    ## gathered until the first arrangement.
     pub func init(content: interop.Interface[Widget], theme: Theme = Theme()) -> !:
         try require_main_thread()
         try theme.validate()
@@ -629,17 +62,25 @@ pub struct Tree:
     pub func is_animating() -> bool:
         return self.animating
 
+    ## The application theme, inherited by every box that sets none of its own.
     pub func theme() -> Theme:
         return self.appearance
 
     pub mutating func set_theme(theme: Theme) -> !:
         try theme.validate()
         self.appearance = theme
-        revision = revision +? 1 else trap("UI revision exhausted")
+        bump_revision()
 
+    ## Arrange again at the last size; see `arrange`.
     pub mutating func refresh() -> interop.Outcome[unit]:
         return self.arrange(self.width, self.height)
 
+    ## Rebuild the arrangement for a `width` by `height` window, unless neither the
+    ## size nor the layout epoch changed since the last one. Gathers the visible
+    ## widgets, resolves themes top-down, measures bottom-up, places boxes and then
+    ## popups, and settles focus, capture and hover. A popup that opens takes
+    ## focus and hands it back when it closes. On failure the previous arrangement
+    ## stays in effect; a widget that invalidates while measuring fails it.
     pub mutating func arrange(width: f64, height: f64) -> interop.Outcome[unit]:
         extent(width) catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -716,11 +157,12 @@ pub struct Tree:
                     if not settled(eased, placed):
                         placed = eased
                         self.animating = true
-                        revision = revision +? 1 else trap("UI revision exhausted")
+                        bump_revision()
                 let position = find_entry(replacement, count, box.identifier) else trap("popup missing from tree")
                 place(replacement, position, placed, bounds) catch failure:
                     return result.failure[unit](failure.code, failure.message)
-                popup = box.identifier
+                if box.modal and box.visible:
+                    popup = box.identifier
         if popup != 0 and popup != self.focus:
             if self.return_focus == 0:
                 self.return_focus = self.focus
@@ -871,6 +313,9 @@ pub struct Tree:
         try painter.rectangle(gpu.Rect(0.0, 0.0, edge, area.height), theme.accent)
         try painter.rectangle(gpu.Rect(area.width - edge, 0.0, edge, area.height), theme.accent)
 
+    ## Draw every visible box in tree order, each clipped to its box, then every
+    ## popup subtree over the rest with its shadow. The lit drop area goes over
+    ## the pass it belongs to.
     pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         for pass in 0..<2:
             for index in 0..<self.count:
@@ -931,6 +376,15 @@ pub struct Tree:
             try painter.rectangle(Rect(bounds.x - grow, bounds.y - grow + bias,
                                        bounds.width + grow * 2.0, bounds.height + grow * 2.0), theme.shadow, per)
 
+    ## Route one window event, arranging before and after. Pointer events go to
+    ## the capturing box or the one hit, which a primary press focuses (when
+    ## focusable) and captures until release; keys and text go to the focused box,
+    ## and Tab moves focus unless the focused box keeps Tab. Secondary clicks and
+    ## Shift-F10 open the nearest context menu. Focus loss cancels capture and
+    ## focus. While a modal popup is open input is modal: only its subtree is hit,
+    ## key and text input go to the popup's root widget, and a press outside it
+    ## is swallowed after sending the popup a cancellation. A non-modal popup is
+    ## only hit first.
     pub mutating func dispatch(event: input.Event) -> interop.Outcome[unit]:
         let arranged = self.arrange(self.width, self.height)
         if not arranged.is_success():
@@ -1098,12 +552,13 @@ pub struct Tree:
         refreshed.release()
         return result.success[unit](())
 
+    ## The open modal popup, if any; a non-modal one does not hold input.
     func popup_index() -> usize?:
         var index = self.count
         while index > 0:
             index -= 1
             let box = self.entries[index].box.value()
-            if box.popup and box.visible:
+            if box.popup and box.modal and box.visible:
                 return index
         return none
 
@@ -1180,13 +635,18 @@ pub struct Tree:
             self.entries[(usize)ancestor].box.value().pointer_within = true
             ancestor = self.entries[(usize)ancestor].parent
 
+    ## Whether a visible popup is open, which makes input modal.
     pub func has_popup() -> bool:
         return self.popup_index() != none
 
+    ## Whether the focused box takes text input, so the window should deliver it.
     pub func wants_text_input() -> bool:
         let index = self.find(self.focus) else return false
         return self.entries[index].box.value().accepts_text
 
+    ## The cursor for the capturing box, or else the box under the pointer: its
+    ## cursor source's choice or its fixed cursor. The arrow when the pointer is
+    ## away, over nothing, or over a disabled box.
     pub func cursor() -> input.Cursor!:
         if not self.pointer_present and self.capture == 0: return input.Cursor.arrow
         var target = self.capture
@@ -1217,14 +677,19 @@ pub struct Tree:
             index += 1
         return none
 
+    ## The box a press at a point reaches: popups first, as they draw on top;
+    ## while a modal one is open, nothing else.
     func hit(x: f64, y: f64) -> u64:
         let modal = self.has_popup()
-        var index = self.count
-        while index > 0:
-            index -= 1
-            let box = self.entries[index].box.value()
-            if (not modal or in_popup(self.entries, index)) and path_enabled(self.entries, index) and box.accepts_pointer and inside(box.clipping, x, y):
-                return box.identifier
+        for pass in 0..<2:
+            if pass == 1 and modal:
+                break
+            var index = self.count
+            while index > 0:
+                index -= 1
+                let box = self.entries[index].box.value()
+                if in_popup(self.entries, index) == (pass == 0) and path_enabled(self.entries, index) and box.accepts_pointer and inside(box.clipping, x, y):
+                    return box.identifier
         return 0
 
     func send(index: usize, event: Event) -> interop.Outcome[unit]:
@@ -1255,7 +720,7 @@ pub struct Tree:
         for entry in self.entries[..<self.count]:
             entry.box.value().focused = entry.box.value().identifier == identifier
         mark_focus(self.entries, self.count, identifier, self.return_focus)
-        revision = revision +? 1 else trap("UI revision exhausted")
+        bump_revision()
 
     mutating func advance_focus(backwards: bool):
         if self.count == 0:
@@ -1310,29 +775,6 @@ func release_entries(entries: Entry[], count: usize):
         entry.box.release()
     if entries.length > 0:
         free(entries) in memory.heap
-
-## The files of the drag in progress, or of the last drop, copied from the window
-## (or given by a test); read through a drop area's `drop_path`. UI thread only.
-var drop_payload: str[16]
-var drop_payload_count: usize = 0
-
-## Replace the dragged files the drop areas see. The application does this from
-## the window when a drag enters; tests and embedders call it themselves.
-pub func set_drop_payload(paths: const str[]) -> !:
-    for index in 0..<drop_payload_count:
-        let old = drop_payload[index]
-        free(u8[]((u8*)old.bytes.data, old.length + 1)) in memory.heap
-        drop_payload[index] = ""
-    drop_payload_count = 0
-    for path in paths:
-        if drop_payload_count >= drop_payload.length:
-            break
-        let copy = try alloc u8[path.length + 1] in memory.heap
-        for index in 0..<path.length:
-            copy[index] = path.bytes[index]
-        copy[path.length] = 0
-        drop_payload[drop_payload_count] = (str)copy[..<path.length]
-        drop_payload_count += 1
 
 func path_enabled(entries: const Entry[], index: usize) -> bool:
     var cursor = (i64)index
@@ -1389,137 +831,10 @@ func gather(widget: interop.Interface[Widget], entries: Entry[], count: usize*, 
     entries[index].end = *count
     box.release()
 
-func inside(rectangle: Rect, x: f64, y: f64) -> bool:
-    return x >= rectangle.x and y >= rectangle.y and x < rectangle.x + rectangle.width and y < rectangle.y + rectangle.height
-
-func intersection(a: Rect, b: Rect) -> Rect:
-    let x = math.max(a.x, b.x)
-    let y = math.max(a.y, b.y)
-    return Rect(x, y, math.max(0.0, math.min(a.x + a.width, b.x + b.width) - x),
-                math.max(0.0, math.min(a.y + a.height, b.y + b.height) - y))
-
-func along(size: Size, horizontal: bool) -> f64:
-    return size.width if horizontal else size.height
-
-## One exponential step of `current` toward `target`; called each frame while a popup
-## animates, so the motion is fast at first and eases in as it approaches its place.
-func ease_rect(current: Rect, target: Rect, factor: f64) -> Rect:
-    return Rect(current.x + (target.x - current.x) * factor,
-                current.y + (target.y - current.y) * factor,
-                current.width + (target.width - current.width) * factor,
-                current.height + (target.height - current.height) * factor)
-
-## Within half a pixel on every side, so the ease can snap to the target and stop.
-func settled(a: Rect, b: Rect) -> bool:
-    return math.abs(a.x - b.x) < 0.5 and math.abs(a.y - b.y) < 0.5 and math.abs(a.width - b.width) < 0.5 and math.abs(a.height - b.height) < 0.5
-
-func place(entries: Entry[], index: usize, bounds: Rect, clip: Rect) -> !:
-    let box = entries[index].box.value()
-    box.rectangle = bounds
-    box.clipping = intersection(bounds, clip)
-    let horizontal = box.axis == Axis.horizontal
-    let inner = Rect(bounds.x + box.padding, bounds.y + box.padding,
-                     math.max(0.0, bounds.width - box.padding * 2.0), math.max(0.0, bounds.height - box.padding * 2.0))
-    # A child may retain its minimum size in a smaller window. Clip it to the
-    # content area so it cannot paint or hit-test over its parent's frame.
-    let content_clip = intersection(box.clipping, inner)
-    if let fraction = box.split:
-        try place_split(entries, index, inner, content_clip, fraction)
-        return
-    if let arrangement = box.arrangement:
-        try place_custom(entries, index, inner, content_clip, arrangement)
-        return
-    var child = index + 1
-    var total: f64 = 0.0
-    var length: usize = 0
-    while child < entries[index].end:
-        let item = entries[child].box.value()
-        if item.popup:
-            child = entries[child].end
-            continue
-        item.rectangle = Rect(width = item.measured.width, height = item.measured.height)
-        total += along(item.measured, horizontal)
-        length += 1
-        child = entries[child].end
-    let gaps = (f64)(length - 1) * box.spacing if length > 0 else 0.0
-    let available = math.max(0.0, (inner.width if horizontal else inner.height) - gaps)
-    var remaining = available - total
-    # Weighted water filling respects per-child maxima. Shrinking distributes
-    # according to available capacity rather than driving any child below minimum.
-    var pass: usize = 0
-    while box.axis != Axis.overlay and math.abs(remaining) > 0.000001 and pass <= length:
-        var weight: f64 = 0.0
-        child = index + 1
-        while child < entries[index].end:
-            let item = entries[child].box.value()
-            if item.popup:
-                child = entries[child].end
-                continue
-            let current = item.rectangle.width if horizontal else item.rectangle.height
-            if remaining > 0.0 and current < along(item.maximum, horizontal):
-                weight += along(item.growth, horizontal)
-            elif remaining < 0.0:
-                weight += math.max(0.0, current - along(item.minimum, horizontal)) * along(item.shrink, horizontal)
-            child = entries[child].end
-        if weight <= 0.0:
-            break
-        var changed: f64 = 0.0
-        child = index + 1
-        while child < entries[index].end:
-            let item = entries[child].box.value()
-            if item.popup:
-                child = entries[child].end
-                continue
-            let current = item.rectangle.width if horizontal else item.rectangle.height
-            let capacity = along(item.maximum, horizontal) - current if remaining > 0.0 else current - along(item.minimum, horizontal)
-            let share = along(item.growth, horizontal) if remaining > 0.0 else math.max(0.0, capacity) * along(item.shrink, horizontal)
-            let delta = math.min(math.max(0.0, capacity), math.abs(remaining) * share / weight) * (1.0 if remaining > 0.0 else -1.0)
-            if horizontal:
-                item.rectangle.width += delta
-            else:
-                item.rectangle.height += delta
-            changed += delta
-            child = entries[child].end
-        remaining -= changed
-        pass += 1
-    var cursor = inner.x if horizontal else inner.y
-    child = index + 1
-    while child < entries[index].end:
-        let item = entries[child].box.value()
-        if item.popup:
-            child = entries[child].end
-            continue
-        var rectangle = item.rectangle
-        if box.axis == Axis.overlay:
-            rectangle = Rect(inner.x, inner.y, math.clamp(inner.width, item.minimum.width, item.maximum.width),
-                             math.clamp(inner.height, item.minimum.height, item.maximum.height))
-        else:
-            let cross = inner.height if horizontal else inner.width
-            let desired = rectangle.height if horizontal else rectangle.width
-            let minimum = item.minimum.height if horizontal else item.minimum.width
-            let maximum = item.maximum.height if horizontal else item.maximum.width
-            let placed = math.clamp(cross if box.alignment == Alignment.stretch else math.min(cross, desired), minimum, maximum)
-            let spare = math.max(0.0, cross - placed)
-            let offset = spare * 0.5 if box.alignment == Alignment.center else (spare if box.alignment == Alignment.end else 0.0)
-            if horizontal:
-                rectangle.x = cursor
-                rectangle.y = inner.y + offset
-                rectangle.height = placed
-                cursor += rectangle.width + box.spacing
-            else:
-                rectangle.x = inner.x + offset
-                rectangle.y = cursor
-                rectangle.width = placed
-                cursor += rectangle.height + box.spacing
-        try place(entries, child, rectangle, content_clip)
-        child = entries[child].end
-
 func discard_replacement(entries: Entry[], count: usize*, committed: bool*):
     if not *committed:
         release_entries(entries, *count)
 
-## Base callers can construct storage before adopting it into an interop owner.
-## Check before touching the shared identity/revision state in either path.
 func require_main_thread() -> !:
     if not thread.is_main():
         error(interop.wrong_thread, "UI layout requires the main thread")
@@ -1537,63 +852,3 @@ func in_popup(entries: const Entry[], index: usize) -> bool:
             return true
         cursor = entries[(usize)cursor].parent
     return false
-
-func place_split(entries: Entry[], index: usize, bounds: Rect, clip: Rect, fraction: f64) -> !:
-    let first = index + 1
-    if first >= entries[index].end:
-        return
-    let divider = entries[first].end
-    if divider >= entries[index].end:
-        return
-    let second = entries[divider].end
-    if second >= entries[index].end:
-        return
-    let horizontal = entries[index].box.value().axis == Axis.horizontal
-    let leading = entries[first].box.value()
-    let trailing = entries[second].box.value()
-    let handle = entries[divider].box.value()
-    let gap = along(handle.measured, horizontal)
-    let available = math.max(0.0, (bounds.width if horizontal else bounds.height) - gap)
-    let sizes = splitting.distribute(available, fraction, along(leading.minimum, horizontal),
-                                     along(leading.maximum, horizontal), along(trailing.minimum, horizontal), along(trailing.maximum, horizontal))
-    if horizontal:
-        try place(entries, first, Rect(bounds.x, bounds.y, sizes.first, math.clamp(bounds.height, leading.minimum.height, leading.maximum.height)), clip)
-        try place(entries, divider, Rect(bounds.x + sizes.first, bounds.y, gap, bounds.height), clip)
-        try place(entries, second, Rect(bounds.x + sizes.first + gap, bounds.y, sizes.second, math.clamp(bounds.height, trailing.minimum.height, trailing.maximum.height)), clip)
-    else:
-        try place(entries, first, Rect(bounds.x, bounds.y, math.clamp(bounds.width, leading.minimum.width, leading.maximum.width), sizes.first), clip)
-        try place(entries, divider, Rect(bounds.x, bounds.y + sizes.first, bounds.width, gap), clip)
-        try place(entries, second, Rect(bounds.x, bounds.y + sizes.first + gap, math.clamp(bounds.width, trailing.minimum.width, trailing.maximum.width), sizes.second), clip)
-
-func place_custom(entries: Entry[], index: usize, bounds: Rect, clip: Rect, arrangement: interop.Interface[Arrangement]) -> !:
-    # Validate the complete direct-child plan before applying any rectangle.
-    # Stable child identities let policies retain geometry across tab visibility.
-    var rectangles: Rect[1024]
-    var count: usize = 0
-    var child = index + 1
-    let started = epoch()
-    try arrangement.enter()
-    defer arrangement.leave()
-    while child < entries[index].end:
-        let item = entries[child].box.value()
-        if not item.popup:
-            let placed = arrangement.value().place((i64)item.identifier, Size(bounds.width, bounds.height))
-            defer placed.release()
-            let rectangle = try placed.get()
-            if not math.is_finite(rectangle.x) or not math.is_finite(rectangle.y):
-                error(result.invalid, "custom placement coordinates must be finite")
-            try extent(rectangle.width)
-            try extent(rectangle.height)
-            rectangles[count] = rectangle
-            count += 1
-        child = entries[child].end
-    if epoch() != started:
-        error(result.busy, "a custom arrangement changed the widget tree")
-    count = 0
-    child = index + 1
-    while child < entries[index].end:
-        if not entries[child].box.value().popup:
-            let rectangle = rectangles[count]
-            try place(entries, child, Rect(bounds.x + rectangle.x, bounds.y + rectangle.y, rectangle.width, rectangle.height), clip)
-            count += 1
-        child = entries[child].end

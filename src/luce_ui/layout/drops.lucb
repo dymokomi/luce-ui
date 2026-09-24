@@ -1,0 +1,29 @@
+#==============================================================================================
+#
+#   layout/drops - The files of the drag in progress
+#
+#==============================================================================================
+
+## The files of the drag in progress, or of the last drop, copied from the window
+## (or given by a test); read through a drop area's `drop_path`. UI thread only.
+var drop_payload: str[16]
+var drop_payload_count: usize = 0
+
+## Replace the dragged files the drop areas see; only the first 16 are kept. The
+## application does this from the window when a drag enters; tests and
+## embedders call it themselves.
+pub func set_drop_payload(paths: const str[]) -> !:
+    for index in 0..<drop_payload_count:
+        let old = drop_payload[index]
+        free(u8[]((u8*)old.bytes.data, old.length + 1)) in memory.heap
+        drop_payload[index] = ""
+    drop_payload_count = 0
+    for path in paths:
+        if drop_payload_count >= drop_payload.length:
+            break
+        let copy = try alloc u8[path.length + 1] in memory.heap
+        for index in 0..<path.length:
+            copy[index] = path.bytes[index]
+        copy[path.length] = 0
+        drop_payload[drop_payload_count] = (str)copy[..<path.length]
+        drop_payload_count += 1

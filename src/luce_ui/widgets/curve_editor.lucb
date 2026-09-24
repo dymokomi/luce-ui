@@ -1,3 +1,4 @@
+## The CurveEditor widget: a tone curve edited through draggable control points.
 import gpu
 import interop
 import math
@@ -16,7 +17,7 @@ pub let curve_editor_points: usize = 16
 ## through up to sixteen control points. Click on empty space to add a point,
 ## drag a point to move it (the end points slide only vertically), drag a
 ## point well outside the square or press Delete on the selected one to
-## remove it. `on_change` fires after every edit; the points are read back
+## remove it (the end points cannot be removed). `on_change` fires after every edit; the points are read back
 ## with `point_count`, `point_x` and `point_y`, and the curve is a monotone
 ## cubic (Fritsch–Carlson) that never overshoots between points.
 pub struct CurveEditor: Widget:
@@ -102,6 +103,7 @@ pub struct CurveEditor: Widget:
         let value = (2.0 * t3 - 3.0 * t2 + 1.0) * y0 + (t3 - 2.0 * t2 + t) * h * m0 + (-2.0 * t3 + 3.0 * t2) * y1 + (t3 - t2) * h * m1
         return math.clamp(value, 0.0, 1.0)
 
+    ## Called after every user edit; `reset` and `add_point` do not call it.
     pub func on_change(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
 
@@ -210,7 +212,7 @@ pub struct CurveEditor: Widget:
             let handle = 7.0 if (i64)index == self.selected else 5.0
             try painter.rectangle(gpu.Rect(at.x - handle * 0.5, at.y - handle * 0.5, handle, handle), theme.foreground if (i64)index != self.selected else ink)
 
-    ## Move the dragged point to (`x`, `y`) in plot coordinates: ends stay at their x, the others stay between their neighbours.
+    ## Move the dragged point to (`x`, `y`) in widget coordinates: ends stay at their x, the others stay between their neighbors.
     mutating func drag_to(plot: gpu.Rect, x: f64, y: f64) -> interop.Outcome[unit]:
         let index = (usize)self.selected
         var fx = math.clamp((x - plot.x) / plot.width, 0.0, 1.0)

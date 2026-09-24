@@ -38,7 +38,7 @@ pub struct TableColumn:
     pub let align: CellAlign = CellAlign.left
 
 ## One cell's presentation — the model's display text plus its delegate roles. A
-## missing tint draws in the row's foreground; muted uses the theme's comment color;
+## missing tint draws in the row's foreground; muted draws in the theme's muted color;
 ## emphasis renders bold; an icon draws before the text, typically in column 0.
 ## Borrowed for the call; the table retains its own copy.
 pub struct TableCell:

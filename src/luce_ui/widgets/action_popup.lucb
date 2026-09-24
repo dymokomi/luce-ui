@@ -1,6 +1,7 @@
-## A menu composes a compact trigger and a popup action list. Layout owns popup
-## placement, clipping, modal dispatch and focus restoration; this module owns
-## only menu selection and command presentation.
+## The popup action list shared by menus, context menus and the command
+## palette. Layout owns popup placement, clipping, modal dispatch and focus
+## restoration; this module owns row selection, keyboard and pointer choice,
+## the palette's search filter, and presenting each command with its shortcut.
 import gpu
 import input
 import interop
@@ -15,6 +16,13 @@ from luce_ui.command import Command, Commands
 from luce_ui.painter import Painter
 from luce_ui.text.line_input import LineInput
 
+## A hidden popup listing commands, with dividers as slim rules. Opening it
+## selects the first enabled row; arrows, Tab, the wheel and the pointer move the
+## selection, Enter (or Space, or a click released on the pressed row) triggers
+## it and closes the list, and Escape or a press outside closes it. A
+## `searchable` popup is the palette: a query line at the window's top that
+## lists nothing until something is typed, then the commands whose text contains
+## every typed word.
 pub struct ActionPopup: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]
@@ -79,6 +87,7 @@ pub struct ActionPopup: Widget:
     pub func is_open() -> bool:
         return self.box.value().is_visible()
 
+    ## Show the list with an empty query and the first enabled row selected.
     pub mutating func open() -> !:
         try self.query.set_text("")
         try self.filter()
@@ -95,6 +104,7 @@ pub struct ActionPopup: Widget:
     pub func query_text() -> interop.Owned[str]!:
         return try self.query.text()
 
+    ## How many rows the current query lists.
     pub func result_count() -> i64:
         return (i64)self.count
 

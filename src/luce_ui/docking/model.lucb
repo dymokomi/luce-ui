@@ -6,6 +6,8 @@ import luce_ui.splitting as splitting
 from luce_ui.geometry import Size
 from gpu import Rect
 
+## Where a panel docks relative to another: into its tab group, or in a new
+## group split off to one side of that group.
 pub enum DockPosition as u8:
     tab = 0
     left = 1
@@ -13,6 +15,10 @@ pub enum DockPosition as u8:
     top = 3
     bottom = 4
 
+## One slot of the split tree. A tab group when `first` is 0, showing its
+## `selected` tab; otherwise a split whose `first` and `second` children share
+## it side by side (`horizontal`) or stacked, `fraction` of the room going to
+## `first`. Index 0 means none; `used` marks live slots.
 pub struct Node:
     pub var used: bool
     pub var parent: usize
@@ -22,27 +28,36 @@ pub struct Node:
     pub var fraction: f64
     pub var selected: usize
 
+## A panel slot's place: its group node (0 when the slot is free) and its order
+## among that group's tabs.
 pub struct Tab:
     pub var group: usize
     pub var order: usize
 
+## Layout results by node index: each node's pane, each split's divider and
+## each node's minimum size.
 pub struct Geometry:
     pub var panes: Rect[65]
     pub var dividers: Rect[65]
     pub var minimum: Size[65]
 
+## The dock layout of up to 128 panels in up to 32 tab groups. Panels are the
+## caller's tab slots 1..128; nodes and tabs are indexed from 1, so 0 means
+## none. `active` is the focused panel.
 pub struct Model:
     pub var nodes: Node[65]
     pub var tabs: Tab[129]
     pub var root: usize
     pub var active: usize
 
+    ## How many panels are docked.
     pub func count() -> usize:
         var count: usize = 0
         for tab in self.tabs:
             if tab.group != 0: count += 1
         return count
 
+    ## How many tab groups there are.
     pub func group_count() -> usize:
         var count: usize = 0
         for node in self.nodes:
@@ -55,17 +70,20 @@ pub struct Model:
             if tab.group == group and group != 0: count += 1
         return count
 
+    ## The panel at position `order` in `group`, or 0.
     pub func at(group: usize, order: usize) -> usize:
         for index in 1..<self.tabs.length:
             if self.tabs[index].group == group and self.tabs[index].order == order:
                 return index
         return 0
 
+    ## The group of docked panel `tab`; fails when the slot is not docked.
     pub func require(tab: usize) -> usize!:
         if tab == 0 or tab >= self.tabs.length or self.tabs[tab].group == 0:
             error(result.invalid, "panel does not belong to this dynamic stack")
         return self.tabs[tab].group
 
+    ## Show `tab` in its group and make it the active panel.
     pub mutating func select(tab: usize) -> !:
         let group = try self.require(tab)
         self.nodes[group].selected = tab
@@ -78,6 +96,9 @@ pub struct Model:
                 return index
         error(result.limit, "a dynamic stack supports at most 32 tab groups")
 
+    ## Dock free slot `tab`: alone in an empty model (`relative` 0), as the last tab
+    ## of `relative`'s group, or in a new group split off beside that group, the
+    ## two sharing it equally. The panel becomes selected and active.
     pub mutating func add(tab: usize, relative: usize, position: DockPosition = DockPosition.tab) -> !:
         if tab == 0 or tab >= self.tabs.length or self.tabs[tab].group != 0:
             error(result.invalid, "panel slot is already occupied or outside this dynamic stack")
@@ -109,6 +130,10 @@ pub struct Model:
         self.tabs[tab] = Tab(group, self.tab_count(group))
         try self.select(tab)
 
+    ## Undock `tab`. Its group shows the tab that takes its position (or the new
+    ## last one); an emptied group is removed and its sibling takes the parent
+    ## split's place. When `tab` was active, its group's new selection, or else
+    ## another group's, becomes active.
     pub mutating func remove(tab: usize) -> !:
         let group = try self.require(tab)
         let order = self.tabs[tab].order
@@ -144,6 +169,10 @@ pub struct Model:
                         self.active = self.nodes[self.tabs[index].group].selected
                         break
 
+    ## Redock `tab` relative to `relative`. Tabbing into its own group only
+    ## reorders it; splitting it off beside itself splits its own group and does
+    ## nothing when it is the group's only tab. A failure can leave `tab` removed,
+    ## so callers move on a copy.
     pub mutating func move(tab: usize, relative: usize, position: DockPosition) -> !:
         let source = try self.require(tab)
         discard(try self.require(relative))
@@ -158,6 +187,8 @@ pub struct Model:
         try self.remove(tab)
         try self.add(tab, target, position)
 
+    ## Move `tab` to position `order` in its group, shifting the tabs between, and
+    ## select it.
     pub mutating func reorder(tab: usize, order: usize) -> !:
         let group = try self.require(tab)
         if order >= self.tab_count(group):
@@ -174,6 +205,9 @@ pub struct Model:
         self.tabs[tab].order = order
         try self.select(tab)
 
+    ## Lay the tree out in `size`. `minimums` holds each panel's minimum by tab
+    ## slot; a group adds a `header` row and a one-point frame, a split a
+    ## `handle`-thick divider. Split fractions are honored within those minimums.
     pub func geometry(size: Size, minimums: const Size[], header: f64, handle: f64) -> Geometry:
         var geometry = Geometry()
         if self.root != 0:

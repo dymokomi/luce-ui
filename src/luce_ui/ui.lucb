@@ -1,3 +1,15 @@
+#==============================================================================================
+#
+#   ui - The luce-ui export
+#
+#   DESCRIPTION:
+#       The one module the package exports (package.prisma: export "ui"). It re-exports
+#       the public widget, layout, drawing, docking and application types together with
+#       their interop type descriptors, so Base and Luce consumers import a single name.
+#       The few functions here are thin wrappers over the icon set and HSB conversion.
+#
+#==============================================================================================
+
 import gpu
 import interop
 import luce_ui.layout as layout
@@ -180,7 +192,7 @@ pub func draw_icon(target: interop.View[gpu.RenderTarget], name: str, bounds: gp
 pub func hsb_to_rgb(hue: f64, saturation: f64, brightness: f64) -> gpu.Color:
     return hsb_field.hsb_to_rgb(hue, saturation, brightness)
 
-## The hue of an sRGB color, 0..360 (0 for greys).
+## The hue of an sRGB color, 0..360 (0 for grays).
 pub func hue_of(color: gpu.Color) -> f64:
     var h = 0.0
     var s = 0.0

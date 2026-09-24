@@ -1,3 +1,4 @@
+## The Rule widget: a one-point divider line.
 import gpu
 import interop
 import ownership

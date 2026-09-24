@@ -1,3 +1,5 @@
+## Buttons: the Button widget, its resting styles, and the cursor policy that
+## follows an action's enabled state.
 import gpu
 import interop
 import math
@@ -42,6 +44,9 @@ pub enum ButtonStyle as u8:
     plain = 2
     selected = 3
 
+## A push button with a text label, an icon, or both, clicked by the pointer or
+## by Space or Enter while focused. Built on a Command, it takes the command's
+## label, enabled state and trigger instead of its own.
 pub struct Button: Widget:
     let box: interop.Reference[Layout]
     var caption: interop.Owned[str]
@@ -54,6 +59,7 @@ pub struct Button: Widget:
     var glyph: interop.Owned[str]
     var style: ButtonStyle
 
+    ## `text` and `action` are exclusive; `icon` names a luciaos-assets icon.
     pub func init(text: str = "", font: interop.Reference[Font]? = none, action: interop.Reference[Command]? = none, icon: str = "") -> !:
         if action != none and text != "":
             error(result.invalid, "a button takes either text or an action")
@@ -91,6 +97,7 @@ pub struct Button: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
+    ## The label: the action's text for an action button, else the caption.
     pub func text() -> interop.Owned[str]:
         if let action = self.action:
             return action.value().text()
@@ -115,11 +122,15 @@ pub struct Button: Widget:
     pub func style_of() -> ButtonStyle:
         return self.style
 
+    ## For an action button this connects to the action's trigger, so the callback
+    ## also runs when the action fires from a shortcut or menu.
     pub func on_click(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         if let action = self.action:
             return try action.value().on_trigger(callback)
         return try self.clicked.connect(callback)
 
+    ## Activate the button as a click would: trigger its action or emit its click
+    ## signal. Does nothing while the button or its action is disabled.
     pub func click() -> interop.Outcome[unit]:
         if not self.is_enabled():
             return result.success[unit](())

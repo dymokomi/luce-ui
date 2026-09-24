@@ -1,3 +1,4 @@
+## The Icon widget.
 import gpu
 import interop
 import ownership
@@ -9,6 +10,8 @@ from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 from luce_ui.font import Font, selected_font
 
+## One built-in icon (an IconKind), drawn in the theme's foreground as a square
+## of the font's height, centered in a box one line tall.
 pub struct Icon: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]

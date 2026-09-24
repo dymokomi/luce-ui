@@ -1,3 +1,5 @@
+## The text editor's styling inputs: syntax highlight spans, color swatches
+## and the editor theme's colors.
 import gpu
 
 ## Half-open scalar ranges. Ordered, non-overlapping spans can come from any
