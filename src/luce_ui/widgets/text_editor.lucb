@@ -67,6 +67,8 @@ pub struct TextEditor: Widget:
         try box.value().set_limits(Size(120.0, 60.0), Size(16384.0, 16384.0))
         try box.value().set_flex()
         box.value().set_focusable(true)
+        # It scrolls itself: the wheel over it is its own, inside a scroll view too.
+        box.value().set_takes_scroll(true)
         box.value().set_cursor(input.Cursor.text)
         box.value().set_text_input(not read_only, tabs = not read_only)
         let normalized = try editing.normalize_lines(text)

@@ -42,6 +42,8 @@ pub struct ListView: Widget:
         let box = try layout.make_layout()
         errdefer box.release()
         box.value().set_focusable(true)
+        # It scrolls itself: the wheel over it is its own, inside a scroll view too.
+        box.value().set_takes_scroll(true)
         box.value().set_cursor(input.Cursor.pointer)
         try box.value().set_flex()
         try box.value().set_limits(Size(120.0, 60.0), Size(16384.0, 16384.0))

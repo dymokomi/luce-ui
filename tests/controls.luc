@@ -4,7 +4,7 @@ import window
 import math
 import ui
 from interop import Connection
-from input import EventKind, Key
+from input import EventKind, Key, ScrollUnit
 from ui import Command, Shortcut, Toolbar, Menu, Theme
 from text_views import text_views
 from panes import panes
@@ -12,7 +12,7 @@ from contextual import contextual
 from hover import hover
 from buttons import buttons
 from drops import drops
-from ui import ListItem
+from ui import ListItem, ScrollView
 from headers import headers
 from docking import docking
 from cursors import cursors
@@ -72,6 +72,7 @@ pub func main(arguments: list[str]) -> int!:
     cursors()
     clicks()
     dialogs()
+    scrolling()
     let font = Font(size = 14.0)
     assert(font.size() == 14.0 and font.measure("ii") == font.measure("WW"))
     let button = Button("pause", font = font)
@@ -342,3 +343,30 @@ func commands_and_themes() -> unit!:
     app.render(frame.target())
     frame.close()
     invoked.disconnect()
+
+## A column taller than its view scrolls under the wheel, over anything in it;
+## a list inside keeps the wheel for itself.
+func scrolling() -> unit!:
+    var rows: list[Widget] = []
+    var index = 0
+    while index < 12:
+        rows.append(Button(f"Row {index}"))
+        index += 1
+    let column = VStack(rows, spacing = 10.0)
+    let view = ScrollView(column)
+    let app = Application(view)
+    app.layout(200.0, 120.0)
+    let first = rows[0].layout().bounds().y
+    assert(view.offset() == 0.0)
+    # The wheel over the second row scrolls the view, not the button.
+    let over = rows[1].layout().bounds()
+    app.dispatch(Event(kind = EventKind.scroll, x = over.x + 4.0, y = over.y + 4.0, scroll_y = -2.0, scroll_unit = ScrollUnit.lines))
+    app.layout(200.0, 120.0)
+    assert(view.offset() == 48.0 and rows[0].layout().bounds().y == first - 48.0)
+    # Never past either end.
+    view.scroll_to(100000.0)
+    app.layout(200.0, 120.0)
+    let bottom = rows[11].layout().bounds()
+    assert(bottom.y + bottom.height <= 120.0 + 0.001 and bottom.y + bottom.height >= 110.0)
+    view.scroll_to(-50.0)
+    assert(view.offset() == 0.0)

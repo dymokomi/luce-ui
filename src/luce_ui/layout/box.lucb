@@ -21,6 +21,8 @@ pub struct Layout:
     var shrink: Size
     var split: f64?
     var arrangement: interop.Interface[Arrangement]?
+    ## Whether scroll events over boxes inside come here (`set_takes_scroll`).
+    var scrolls: bool
     var cursor_source: interop.Interface[CursorSource]?
     var pointer_cursor: input.Cursor
     var focus_requested: bool
@@ -69,6 +71,7 @@ pub struct Layout:
         var empty: interop.Interface[Widget][]
         self.items = empty
         self.arrangement = none
+        self.scrolls = false
         self.cursor_source = none
         self.pointer_cursor = input.Cursor.arrow
         self.focus_requested = false
@@ -363,6 +366,20 @@ pub struct Layout:
         self.growth = Size(horizontal, vertical)
         self.invalidate()
 
+    ## The size this box measured at the last arrangement: its content's own
+    ## size, what a scroll view scrolls over.
+    pub func measured_size() -> Size:
+        return self.measured
+
+    ## Take the wheel for what is inside: a scroll event over any box inside
+    ## goes to the nearest box that takes it (a scroll view, a list), or to the
+    ## box under the pointer when none does.
+    pub mutating func set_takes_scroll(takes: bool):
+        self.scrolls = takes
+
+    pub func takes_scroll() -> bool:
+        return self.scrolls
+
     pub func minimum_size() -> Size:
         return self.minimum
 
@@ -400,9 +417,11 @@ pub struct Layout:
         try arrangement.enter()
         defer arrangement.leave()
         let replacement = arrangement.clone()
-        if let previous = self.arrangement:
-            previous.release()
+        # Replace, then release: a release can run the collector, which traces this.
+        let previous = self.arrangement
         self.arrangement = replacement
+        if let old = previous:
+            old.release()
         self.invalidate()
 
     pub func child_count() -> i64:

@@ -23,6 +23,7 @@ import luce_ui.widgets.text as text
 import luce_ui.widgets.button as button
 import luce_ui.widgets.slider as slider
 import luce_ui.widgets.shelf as shelf
+import luce_ui.widgets.scroll_view as scroll_view
 import luce_ui.widgets.rule as rule
 import luce_ui.widgets.checkbox as checkbox
 import luce_ui.widgets.dialog as dialog
@@ -61,6 +62,7 @@ pub type Text = text.Text
 pub type Button = button.Button
 pub type Slider = slider.Slider
 pub type Shelf = shelf.Shelf
+pub type ScrollView = scroll_view.ScrollView
 pub type Rule = rule.Rule
 pub type Checkbox = checkbox.Checkbox
 pub type Dialog = dialog.Dialog
@@ -91,6 +93,7 @@ pub let busy: ErrorCode = result.busy
 pub let button_type = button.button_type
 pub let slider_type = slider.slider_type
 pub let shelf_type = shelf.shelf_type
+pub let scroll_view_type = scroll_view.scroll_view_type
 pub let rule_type = rule.rule_type
 pub let checkbox_type = checkbox.checkbox_type
 pub let dialog_type = dialog.dialog_type

@@ -1,0 +1,124 @@
+## The ScrollView widget: one child taller than the room given, scrolled.
+import gpu
+import interop
+import math
+import memory
+import ownership
+import luce_ui.layout as layout
+import luce_ui.result as result
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event
+from luce_ui.arrangement import Arrangement
+from luce_ui.painter import Painter
+import input
+
+## Where the child goes, and how far it is scrolled: the arrangement the
+## view's box asks for its one child's rectangle.
+struct Scroll: Arrangement:
+    var offset: f64
+    ## The child's box, for its measured height.
+    let content: interop.Reference[Layout]
+
+    ## The child full width but the bar's, as tall as it measured (at least the
+    ## room), moved up by the offset (never past its end).
+    pub func place(child: i64, available: Size) -> interop.Outcome[gpu.Rect]:
+        discard(child)
+        let tall = math.max(available.height, self.content.value().measured_size().height)
+        let offset = math.clamp(self.offset, 0.0, math.max(0.0, tall - available.height))
+        return result.success[gpu.Rect](gpu.Rect(0.0, -offset, math.max(0.0, available.width - bar_room), tall))
+
+    ## How much taller the child is than `room`: the most it scrolls.
+    func overflow(room: f64) -> f64:
+        return math.max(0.0, self.content.value().measured_size().height - room)
+
+    pub mutating func close():
+        self.content.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.content.trace(visit, context)
+
+let scroll_type: interop.Type[Scroll] = interop.Type[Scroll]("Scroll", Scroll.close, Scroll.trace, closeable = true, main_thread = true)
+
+## The width kept at the right for the scroll bar.
+let bar_room: f64 = 8.0
+
+## A view of one child that may be taller than the room it is given: the child
+## keeps its natural height and scrolls under the wheel (or touchpad), clipped
+## to the view, with a thin bar at the right showing where it is. The wheel
+## over anything inside scrolls it, unless something nearer takes the wheel
+## itself (a list, a text editor).
+pub struct ScrollView: Widget:
+    let box: interop.Reference[Layout]
+    let scroll: interop.Reference[Scroll]
+
+    pub func init(content: interop.Interface[Widget]) -> !:
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_flex()
+        box.value().set_interactive(true)
+        box.value().set_takes_scroll(true)
+        let content_box = try layout.widget_layout(content)
+        errdefer content_box.release()
+        let scroll = try interop.Reference[Scroll].adopt(new Scroll(offset = 0.0, content = content_box) in memory.heap, scroll_type, memory.heap)
+        errdefer scroll.release()
+        let arrangement = scroll.as_interface[Arrangement](scroll.value())
+        defer arrangement.release()
+        try box.value().set_arrangement(arrangement)
+        try box.value().set_children([content])
+        self.box = box
+        self.scroll = scroll
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    ## Small: the view takes the room it is given and scrolls what does not fit.
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        return result.success[Size](Size(math.min(available.width, 120.0), math.min(available.height, 60.0)))
+
+    ## How far the content is scrolled, in points from its top.
+    pub func offset() -> f64:
+        return math.min(self.scroll.value().offset, self.overflow())
+
+    ## Scroll to `offset` points from the content's top, kept within it.
+    pub mutating func scroll_to(offset: f64):
+        self.scroll.value().offset = math.clamp(offset, 0.0, self.overflow())
+        self.box.value().invalidate()
+
+    func overflow() -> f64:
+        return self.scroll.value().overflow(self.box.value().bounds().height)
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    ## The bar: a thumb as tall as the part showing, where it shows, only when
+    ## something does not fit.
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        let overflow = self.overflow()
+        if overflow <= 0.0:
+            return
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        let whole = size.height + overflow
+        let thumb = math.max(16.0, size.height * size.height / whole)
+        let top = (size.height - thumb) * self.offset() / overflow
+        try painter.rectangle(gpu.Rect(size.width - bar_room + 2.0, top, bar_room - 4.0, thumb), theme.border)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if event.kind == input.EventKind.scroll:
+            # A notched wheel moves in lines of 24 points, a touchpad by its points.
+            let step = 24.0 if event.scroll_unit == input.ScrollUnit.lines else 1.0
+            self.scroll_to(self.offset() - event.scroll_y * step)
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.scroll.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+        self.scroll.trace(visit, context)
+
+pub let scroll_view_type: interop.Type[ScrollView] = interop.Type[ScrollView]("ScrollView", ScrollView.close, ScrollView.trace, closeable = true, main_thread = true)

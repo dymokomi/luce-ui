@@ -103,6 +103,14 @@ pub struct Tree:
             let entry = &replacement[position]
             let inherited = replacement[(usize)entry.parent].box.value().appearance if entry.parent >= 0 else self.appearance
             entry.box.value().appearance = entry.box.value().local_theme else inherited
+        # Inside a box that takes scroll (a scroll view) a box measures its
+        # natural height, unbounded; parents come before their children.
+        let unbounded = alloc bool[count + 1] in memory.heap catch _:
+            return result.failure[unit](result.limit, "out of memory measuring the tree")
+        defer free(unbounded) in memory.heap
+        for position in 0..<count:
+            let parent = replacement[position].parent
+            unbounded[position] = parent >= 0 and (replacement[(usize)parent].box.value().scrolls or unbounded[(usize)parent])
         var index = count
         while index > 0:
             index -= 1
@@ -110,7 +118,7 @@ pub struct Tree:
             entry.widget.enter() catch failure:
                 return result.failure[unit](failure.code, failure.message)
             defer entry.widget.leave()
-            let measured = entry.widget.value().measure(Constraints(width, height))
+            let measured = entry.widget.value().measure(Constraints(width, 16384.0 if unbounded[index] else height))
             defer measured.release()
             let size = measured.get() catch failure:
                 return result.failure[unit](failure.code, failure.message)
@@ -536,7 +544,7 @@ pub struct Tree:
         elif event.kind == input.EventKind.pointer_moved:
             destination = self.capture if self.capture != 0 else self.hit(event.x, event.y)
         elif event.kind == input.EventKind.scroll or event.kind == input.EventKind.magnify:
-            destination = self.hit(event.x, event.y)
+            destination = self.scroll_target(self.hit(event.x, event.y))
         elif event.kind == input.EventKind.key_down or event.kind == input.EventKind.key_up or event.kind == input.EventKind.text_input or event.kind == input.EventKind.modifiers_changed:
             destination = self.focus
         if let index = self.find(destination):
@@ -760,6 +768,18 @@ pub struct Tree:
         self.entries = empty
         release_entries(previous, previous_count)
         self.root.release()
+
+    ## Where a scroll over box `hit` goes: the nearest box at or above it that
+    ## takes scroll, or `hit` itself when none does.
+    func scroll_target(hit: u64) -> u64:
+        let found = self.find(hit) else return hit
+        var at = (i64)found
+        while at >= 0:
+            let box = self.entries[(usize)at].box.value()
+            if box.takes_scroll():
+                return (u64)box.id()
+            at = self.entries[(usize)at].parent
+        return hit
 
     pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
         self.root.trace(visit, context)
