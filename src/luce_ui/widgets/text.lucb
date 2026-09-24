@@ -63,7 +63,33 @@ pub struct Text: Widget:
         var painter = try Painter(target)
         defer painter.close()
         let size = try target.get().size()
-        try painter.text(self.caption.value, 0.0, math.max(0.0, (size.height - self.font.value().height()) * 0.5), color = self.box.value().theme().muted if self.muted else self.box.value().theme().foreground, font = self.font)
+        let y = math.max(0.0, (size.height - self.font.value().height()) * 0.5)
+        let color = self.box.value().theme().muted if self.muted else self.box.value().theme().foreground
+        let caption = self.caption.value
+        if (try self.font.value().measure(caption)) <= size.width + 0.5:
+            try painter.text(caption, 0.0, y, color = color, font = self.font)
+            return
+        # Laid out narrower than it is: as much as fits, then an ellipsis, so
+        # it never runs into what is beside it.
+        let ellipsis = "…"
+        let room = size.width - (try self.font.value().measure(ellipsis))
+        if room <= 0.0:
+            return
+        let bytes = caption.bytes
+        var fits: usize = 0
+        var low: usize = 0
+        var high = bytes.length
+        while low < high:
+            let middle = boundary(bytes, (low + high + 1) // 2)
+            if middle <= low:
+                break
+            if (try self.font.value().measure((str)bytes[..<middle])) <= room:
+                fits = middle
+                low = middle
+            else:
+                high = middle - 1
+        try painter.text((str)bytes[..<fits], 0.0, y, color = color, font = self.font)
+        try painter.text(ellipsis, try self.font.value().measure((str)bytes[..<fits]), y, color = color, font = self.font)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
@@ -79,3 +105,10 @@ pub struct Text: Widget:
         self.caption.trace(visit, context)
 
 pub let text_type: interop.Type[Text] = interop.Type[Text]("Text", Text.close, Text.trace, closeable = true, main_thread = true)
+
+## `at`, moved back to the start of the UTF-8 sequence it falls in.
+func boundary(bytes: const u8[], at: usize) -> usize:
+    var index = at
+    while index > 0 and index < bytes.length and (bytes[index] & 0xc0) == 0x80:
+        index -= 1
+    return index
