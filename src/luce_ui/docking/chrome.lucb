@@ -116,11 +116,20 @@ func button(state: State*, painter: Painter*, bounds: gpu.Rect, label: str, poin
         bounds.y + (bounds.height - state.font.value().height()) * 0.5, theme.foreground, state.font)
 
 pub func preview(state: State*, target: interop.View[gpu.RenderTarget]) -> !:
-    if not state.dragging: return
     let drop = state.current_drop()
     if drop.accepted: try destination(state, target, drop.preview)
+    if not state.dragging: return
     var painter = try Painter(target)
     defer painter.close()
+    # Let go where no pane takes it, the tab becomes a window here.
+    let floating = state.float_preview()
+    if floating.width > 0.0:
+        let color = state.theme().accent
+        try painter.rectangle(floating, color, 0.10)
+        try painter.rectangle(gpu.Rect(floating.x, floating.y, floating.width, 1.0), color)
+        try painter.rectangle(gpu.Rect(floating.x, floating.y + math.max(0.0, floating.height - 1.0), floating.width, 1.0), color)
+        try painter.rectangle(gpu.Rect(floating.x, floating.y, 1.0, floating.height), color)
+        try painter.rectangle(gpu.Rect(floating.x + math.max(0.0, floating.width - 1.0), floating.y, 1.0, floating.height), color)
     let bounds = state.drag_bounds()
     let theme = state.theme()
     try painter.rectangle(gpu.Rect(bounds.x + 4.0, bounds.y + 4.0, bounds.width, bounds.height), theme.shadow, theme.shadow_opacity)

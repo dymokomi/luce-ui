@@ -1,5 +1,5 @@
 ## Pure drop geometry. The header accepts tabs; outer content quarters split.
-## Invalid/outside drops have no target and leave the topology untouched.
+## A pane's middle, like the outside, is no target: a panel let go there floats.
 import math
 from gpu import Rect
 from luce_ui.docking.model import Model, Geometry, DockPosition
@@ -27,7 +27,7 @@ pub func target(model: Model*, geometry: Geometry*, x: f64, y: f64, header: f64)
         let top = (y - content.y) / content.height
         let bottom = 1.0 - top
         let edge = math.min(math.min(left, right), math.min(top, bottom))
-        if edge >= 0.25: return drop
+        if edge >= 0.25: return Drop()
         if edge == left:
             drop.position = DockPosition.left
             drop.preview.width *= 0.5

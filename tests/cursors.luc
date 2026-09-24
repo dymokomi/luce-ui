@@ -60,16 +60,17 @@ func detached_drag() -> unit!:
     assert(stack.panel_bounds(second).width == 1005.0 and stack.drop_preview().width == 500.0)
     app.layout(805.0, 505.0)
     app.dispatch(Event(kind = EventKind.pointer_moved, x = -20.0, y = 100.0))
-    assert(app.cursor() == Cursor.not_allowed and stack.drop_preview().width == 0.0)
+    # Let go outside, the tab would float: still a grab, with no dock target.
+    assert(app.cursor() == Cursor.grabbing and stack.drop_preview().width == 0.0)
     app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
     assert(first.layout().is_visible() and stack.drag_bounds().width == 0.0)
     assert(stack.panel_bounds(second).x == 405.0 and text.selected_text() == "p th")
     app.dispatch(Event(kind = EventKind.pointer_up, x = -20.0, y = 100.0))
-    # The release lies in the expanded panel, where the dragged source used to
-    # be. The detached layout makes this a center merge, not a self-drop.
+    # The release lies on the expanded panel's header, where the dragged source
+    # used to be. The detached layout makes this a merge, not a self-drop.
     app.dispatch(Event(kind = EventKind.pointer_down, x = 12.0, y = 5.0))
-    app.dispatch(Event(kind = EventKind.pointer_moved, x = 300.0, y = 200.0))
-    app.dispatch(Event(kind = EventKind.pointer_up, x = 300.0, y = 200.0))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = 300.0, y = 10.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = 300.0, y = 10.0))
     assert(stack.same_group(first, second) and stack.group_count() == 1)
     assert(text.selected_text() == "p th" and text.layout().is_focused())
     stack.remove(second)

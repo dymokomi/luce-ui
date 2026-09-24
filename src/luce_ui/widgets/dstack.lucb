@@ -67,6 +67,7 @@ pub struct DStack: Widget:
         let state = try interop.Reference[State].adopt(new State(box, selected) in memory.heap, state_type, memory.heap)
         errdefer state.release()
         errdefer state.close()
+        state.value().set_owner(state)
         let arrangement = state.as_interface[Arrangement](state.value())
         defer arrangement.release()
         try box.value().set_arrangement(arrangement)
@@ -111,6 +112,30 @@ pub struct DStack: Widget:
 
     pub mutating func remove(panel: interop.Reference[Panel]) -> !:
         try self.state.value().remove(panel)
+
+    ## Float a panel in its own window over the panes: a docked one leaves its
+    ## group, one not in the stack yet is added. `window` is in the stack's
+    ## coordinates; without one a new window is centred and a floating one stays.
+    pub mutating func float(panel: interop.Reference[Panel], window: gpu.Rect? = none) -> !:
+        let state = self.state.value()
+        let index = state.index(panel) catch failure:
+            try state.add_floating(panel, window)
+            return
+        try state.float(index, window else (state.float_bounds(index) if state.floating(index) else state.default_window(index)))
+
+    ## Whether the panel is in this stack, docked or floating.
+    pub func contains(panel: interop.Reference[Panel]) -> bool:
+        discard(self.state.value().index(panel) catch failure: return false)
+        return true
+
+    pub func is_floating(panel: interop.Reference[Panel]) -> bool!:
+        return self.state.value().floating(try self.state.value().index(panel))
+
+    ## A floating panel's window, title bar included, in the stack's coordinates.
+    pub func float_bounds(panel: interop.Reference[Panel]) -> gpu.Rect!:
+        let index = try self.state.value().index(panel)
+        if not self.state.value().floating(index): error(result.invalid, "the panel is docked")
+        return self.state.value().float_bounds(index)
 
     pub mutating func select(panel: interop.Reference[Panel]) -> !:
         self.state.value().cancel()
@@ -171,7 +196,7 @@ pub struct DStack: Widget:
         return none if index == 0 else try self.state.value().panel(index)
 
     pub func panel_count() -> i64:
-        return (i64)self.state.value().model.count()
+        return (i64)(self.state.value().model.count() + self.state.value().floating_count())
 
     pub func group_count() -> i64:
         return (i64)self.state.value().model.group_count()
@@ -187,6 +212,7 @@ pub struct DStack: Widget:
 
     pub func panel_bounds(panel: interop.Reference[Panel]) -> gpu.Rect!:
         let index = try self.state.value().index(panel)
+        if self.state.value().floating(index): return self.state.value().float_bounds(index)
         let geometry = self.state.value().geometry(self.state.value().size())
         let model = self.state.value().visible_model()
         return geometry.panes[model.tabs[index].group]

@@ -136,7 +136,11 @@ workspace.move(source, files, DockPosition.right)
 
 Every group has a trailing `+` menu. Applications create content in response to
 `on_add`; `set_close_handler` can refuse closing an unsaved document. Header
-dragging moves tabs, center drops stack them and edge drops split the destination.
+dragging moves tabs: dropped on a tab strip they stack, on a pane's edge they
+split it, and anywhere else they float in their own window over the panes. A
+floating window moves by its title, resizes by its border, closes by its `×`, and
+docks again when its title is let go over a tab strip or pane edge or pressed
+twice. `float(panel)` floats a docked panel or adds a new one floating.
 The source detaches visually while dragging: neighbors expand and a floating
 caption follows the pointer. Drop previews use that expanded layout and respect
 minimum sizes. Escape restores the original layout. Nested dividers resize live,

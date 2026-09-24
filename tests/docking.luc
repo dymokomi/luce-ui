@@ -91,6 +91,7 @@ pub func docking() -> unit!:
     app.close()
     overflow()
     directional()
+    floating()
 
 ## Ctrl/Cmd+Alt+arrows move to the nearest pane along an axis: with a left column
 ## and a stacked right column, each arrow lands on the neighbor a user would expect.
@@ -144,4 +145,73 @@ func overflow() -> unit!:
     assert(stack.tab_bounds(panels[0]).width > 0.0)
     assert(stack.tab_bounds(panels[9]).width == 0.0)
     assert(stack.add_bounds(panels[0]).x == plus.x)
+    app.close()
+
+func drag(app: Application, x0: float, y0: float, x1: float, y1: float) -> unit!:
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x0, y = y0))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = (x0 + x1) * 0.5, y = (y0 + y1) * 0.5))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x1, y = y1))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x1, y = y1))
+
+## A tab let go over a pane's middle floats in its own window; the window moves
+## by its title, resizes by its corner, and docks again when let go over a pane's
+## edge or pressed twice on its title. A panel not yet in the stack can float
+## from the start, and a floating window's close button closes it.
+func floating() -> unit!:
+    let editor = TextEditor("left")
+    let left = Panel("Left", editor, minimum = Size(100.0, 60.0))
+    let right = Panel("Right", TextEditor("right"), minimum = Size(100.0, 60.0))
+    let stack = DStack([left, right])
+    let app = Application(stack)
+    stack.move(right, left, DockPosition.right)
+    app.layout(805.0, 505.0)
+    let tab = stack.tab_bounds(right)
+    # Mid-drag the left pane fills the stack, so its middle is the stack's.
+    app.dispatch(Event(kind = EventKind.pointer_down, x = tab.x + 8.0, y = tab.y + 5.0))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = 300.0, y = 200.0))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = 402.0, y = 260.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = 402.0, y = 260.0))
+    app.layout(805.0, 505.0)
+    assert(stack.is_floating(right) and stack.group_count() == 1 and stack.panel_count() == 2)
+    var window = stack.float_bounds(right)
+    assert(window.width > 100.0 and window.height > 60.0)
+    assert(right.layout().bounds().y > window.y and right.layout().bounds().x > window.x)
+    # Move by the title: let go over the middle, it stays afloat.
+    drag(app, window.x + 30.0, window.y + 5.0, window.x + 80.0, window.y - 35.0)
+    app.layout(805.0, 505.0)
+    let moved = stack.float_bounds(right)
+    assert(stack.is_floating(right) and moved.x == window.x + 50.0 and moved.y == window.y - 40.0)
+    # Resize by the bottom-right corner; the move left room below.
+    drag(app, moved.x + moved.width - 3.0, moved.y + moved.height - 3.0, moved.x + moved.width + 27.0, moved.y + moved.height + 17.0)
+    app.layout(805.0, 505.0)
+    window = stack.float_bounds(right)
+    assert(window.width == moved.width + 30.0 and window.height == moved.height + 20.0)
+    # Clicking the docked editor under nothing floating leaves the window alone.
+    assert(stack.is_floating(right))
+    # Let go over the docked pane's right edge: it docks beside it.
+    let target = stack.panel_bounds(left)
+    drag(app, window.x + 30.0, window.y + 5.0, target.x + target.width - 10.0, target.y + target.height * 0.5)
+    app.layout(805.0, 505.0)
+    assert(not stack.is_floating(right) and stack.group_count() == 2 and not stack.same_group(left, right))
+    assert(stack.panel_bounds(right).x > stack.panel_bounds(left).x)
+    # Float by code, then a double press on the title docks it as a tab.
+    stack.float(right)
+    app.layout(805.0, 505.0)
+    assert(stack.is_floating(right) and stack.group_count() == 1)
+    window = stack.float_bounds(right)
+    click(app, window.x + 30.0, window.y + 5.0)
+    click(app, window.x + 30.0, window.y + 5.0)
+    app.layout(805.0, 505.0)
+    assert(not stack.is_floating(right) and stack.same_group(left, right))
+    assert(editor.text() == "left")
+    # A new panel floats from the start; its close button removes it.
+    let extra = Panel("Extra", Text("extra"), minimum = Size(80.0, 40.0))
+    stack.float(extra)
+    app.layout(805.0, 505.0)
+    assert(stack.contains(extra) and stack.is_floating(extra) and stack.panel_count() == 3)
+    window = stack.float_bounds(extra)
+    assert(window.x > 0.0 and window.y >= 0.0 and window.x + window.width <= 805.0)
+    click(app, window.x + window.width - 8.0, window.y + 8.0)
+    app.layout(805.0, 505.0)
+    assert(not stack.contains(extra) and stack.panel_count() == 2)
     app.close()

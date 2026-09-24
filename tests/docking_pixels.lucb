@@ -45,9 +45,9 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
             defer hidden.release()
             assert(not hidden.value().is_visible())
         elif phase == 2:
-            # Release at a different point: the committed drop uses final input,
-            # not a stale preview rectangle from the previous pointer event.
-            try dispatch(app, Event(kind = input.EventKind.pointer_up, x = 260.0, y = 120.0))
+            # Release at a different point, on the header: the committed drop uses
+            # final input, not a stale preview rectangle from the previous event.
+            try dispatch(app, Event(kind = input.EventKind.pointer_up, x = 260.0, y = 5.0))
             assert(stack.value().group_count() == 1)
         native.begin("UI pixel contracts")
         defer native.end()
