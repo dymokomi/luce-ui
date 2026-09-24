@@ -281,6 +281,18 @@ func commands_and_themes() -> unit!:
     save.set_enabled(true)
     button.click()
     assert(counter.count == 2)
+    # A large application registers hundreds of commands; the save shortcut still finds its own.
+    var many: list[Command] = []
+    var index = 0
+    while index < 300:
+        many.append(Command(f"Command {index}", id = f"command_{index}"))
+        index += 1
+    many.append(save)
+    app.set_commands(many)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.s, control = true))
+    assert(counter.count == 3)
+    app.set_commands([save])
+    counter.count = 2
     menu.open()
     app.layout(400.0, 300.0)
     let popup = menu.layout().child(0).layout()

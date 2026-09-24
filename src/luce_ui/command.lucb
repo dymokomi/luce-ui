@@ -168,10 +168,10 @@ pub struct Commands:
                 return item.clone()
         return none
 
-    ## Replace the registry with `items`, at most 128, retaining each.
+    ## Replace the registry with `items`, at most 4096, retaining each.
     pub mutating func set(items: const interop.Reference[Command][]) -> !:
-        if items.length > 128:
-            error(result.invalid, "a command registry supports at most 128 entries")
+        if items.length > 4096:
+            error(result.invalid, "a command registry supports at most 4096 entries")
         for item in items:
             discard(try item.get())
         var copied: interop.Reference[Command][]
@@ -179,8 +179,11 @@ pub struct Commands:
             copied = try alloc interop.Reference[Command][items.length] in memory.heap
             for index in 0..<items.length:
                 copied[index] = items[index].clone()
-        self.close()
+        # The new list in place before the old one is released: a release can
+        # run the cycle collector, which traces `items`.
+        let previous = self.items
         self.items = copied
+        release_commands(previous)
 
     ## Match a key press against the shortcuts in registry order. The first match
     ## consumes the event and triggers its command, unless the press is a key
@@ -199,16 +202,20 @@ pub struct Commands:
         return result.success[bool](false)
 
     pub mutating func close():
-        for item in self.items:
-            item.release()
-        if self.items.length > 0:
-            free(self.items) in memory.heap
+        let previous = self.items
         var empty: interop.Reference[Command][]
         self.items = empty
+        release_commands(previous)
 
     pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
         for item in self.items:
             item.trace(visit, context)
+
+func release_commands(items: interop.Reference[Command][]):
+    for item in items:
+        item.release()
+    if items.length > 0:
+        free(items) in memory.heap
 
 ## macOS modifier glyphs (⌥⇧⌘) then the key. Key names stay ASCII so the label reads
 ## correctly even when the UI font lacks the fancier dedicated key glyphs.
