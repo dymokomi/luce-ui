@@ -253,8 +253,11 @@ pub struct Application:
         if event.kind == input.EventKind.drag_entered or event.kind == input.EventKind.drag_moved or event.kind == input.EventKind.drag_left or event.kind == input.EventKind.drop:
             return self.route_drag(event, native)
         # Shortcuts wait while a modal popup is open, and a field taking text
-        # keeps its plain keys: typing "b" in a name must not pick the brush.
-        let typing = self.tree.wants_text_input() and not event.modifiers.control and not event.modifiers.super
+        # keeps its plain keys (typing "b" in a name must not pick the brush) and
+        # the editing chords: select all, copy, cut, paste, undo and redo.
+        let primary = event.modifiers.control or event.modifiers.super
+        let editing = event.key == input.Key.a or event.key == input.Key.c or event.key == input.Key.x or event.key == input.Key.v or event.key == input.Key.z
+        let typing = self.tree.wants_text_input() and (not primary or editing)
         if not self.tree.has_popup() and not typing:
             let dispatched = self.commands.dispatch(event)
             defer dispatched.release()

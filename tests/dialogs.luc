@@ -6,10 +6,13 @@ import window
 class Count:
     pub var clicks: int = 0
     pub var triggers: int = 0
+    pub var copies: int = 0
     pub func click(self):
         self.clicks += 1
     pub func trigger(self):
         self.triggers += 1
+    pub func copy(self):
+        self.copies += 1
 
 func click(app: Application, x: float, y: float) -> unit!:
     app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y))
@@ -35,7 +38,9 @@ pub func dialogs() -> unit!:
     let app = Application(VStack([behind, dialog, prompt], spacing = 0.0))
     let brush = Command("Brush", Shortcut(Key.b), id = "brush")
     let triggered = brush.on_trigger(count.trigger)
-    app.set_commands([brush])
+    let copy = Command("Copy", Shortcut(Key.c, primary = true), id = "copy")
+    let copied = copy.on_trigger(count.copy)
+    app.set_commands([brush, copy])
     dialog.open()
     render(app)
     let button = behind.layout().bounds()
@@ -53,6 +58,9 @@ pub func dialogs() -> unit!:
     app.dispatch(Event(kind = EventKind.text_input, codepoint = 98))
     render(app)
     assert(inside.text() == "b" and count.triggers == 1)
+    # Cmd-C in the field is the field's copy, not the application's.
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.c, meta = true))
+    assert(count.copies == 0)
     # A prompt holds input: the click behind it is swallowed.
     prompt.open("Name", "")
     render(app)
@@ -61,4 +69,5 @@ pub func dialogs() -> unit!:
     assert(count.clicks == 1)
     clicked.disconnect()
     triggered.disconnect()
+    copied.disconnect()
     app.close()
