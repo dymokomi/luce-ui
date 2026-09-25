@@ -343,12 +343,18 @@ pub struct Tree:
         try painter.rectangle(gpu.Rect(area.width - edge, 0.0, edge, area.height), theme.accent)
 
     ## Draw every visible box in tree order, each clipped to its box, then every
-    ## popup subtree over the rest with its shadow. The lit drop area goes over
-    ## the pass it belongs to.
+    ## popup subtree over the rest with its shadow — a popup opened inside another
+    ## (a menu in a dialog) over that one. The lit drop area goes over the pass it
+    ## belongs to.
     pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
-        for pass in 0..<2:
+        var deepest: usize = 0
+        for index in 0..<self.count:
+            let depth = popup_depth(self.entries, index)
+            if depth > deepest:
+                deepest = depth
+        for pass in 0..<(deepest + 1):
             for index in 0..<self.count:
-                if in_popup(self.entries, index) != (pass == 1):
+                if popup_depth(self.entries, index) != pass:
                     continue
                 let entry = self.entries[index]
                 let box = entry.box.value()
@@ -379,7 +385,7 @@ pub struct Tree:
                 drawn.release()
             # Over everything in its pass, the lit drop area.
             if let hovered = self.find(self.drop_hover):
-                if in_popup(self.entries, hovered) == (pass == 1):
+                if popup_depth(self.entries, hovered) == pass:
                     self.draw_drop_overlay(target) catch failure:
                         return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -943,6 +949,16 @@ func find_entry(entries: const Entry[], count: usize, identifier: u64) -> usize?
         if entries[index].box.value().identifier == identifier:
             return index
     return none
+
+## How many popups hold the box at `index`, itself included: 0 for the window's own.
+func popup_depth(entries: const Entry[], index: usize) -> usize:
+    var depth: usize = 0
+    var cursor = (i64)index
+    while cursor >= 0:
+        if entries[(usize)cursor].box.value().popup:
+            depth += 1
+        cursor = entries[(usize)cursor].parent
+    return depth
 
 func in_popup(entries: const Entry[], index: usize) -> bool:
     var cursor = (i64)index
