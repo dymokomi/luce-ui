@@ -45,6 +45,8 @@ pub struct Layout:
     var accepts_pointer: bool
     var accepts_text: bool
     var accepts_tab: bool
+    ## A press to take over at the next arrangement (`claim_press`).
+    var claims_press: bool
     var active: bool
     var focused: bool
     var focus_within: bool
@@ -105,6 +107,7 @@ pub struct Layout:
         self.accepts_pointer = false
         self.accepts_text = false
         self.accepts_tab = false
+        self.claims_press = false
         self.active = true
         self.focused = false
         self.focus_within = false
@@ -334,6 +337,12 @@ pub struct Layout:
     ## of hover so the interactive widgets beneath it still light up under the pointer.
     pub mutating func set_hover_transparent(value: bool):
         self.hover_transparent = value
+        self.invalidate()
+
+    ## Take over the press under way (a button held open a flyout): until the
+    ## button is let go, the pointer's moves and its release come here.
+    pub mutating func claim_press():
+        self.claims_press = true
         self.invalidate()
 
     ## Keep Tab for this box while it has focus, rather than moving focus on:

@@ -40,6 +40,9 @@ pub struct ActionPopup: Widget:
     ## even when the pointer hovers another row before it is drawn.
     var reveal: i64
     var pressed: i64
+    ## Opened by a press still held (a tool group's flyout): letting go over
+    ## an item chooses it.
+    var held: bool
     let searchable: bool
     var query: LineInput
     var matches: usize[4096]
@@ -78,6 +81,7 @@ pub struct ActionPopup: Widget:
         self.reveal = -1
         self.first = 0
         self.pressed = -1
+        self.held = false
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -100,7 +104,10 @@ pub struct ActionPopup: Widget:
         return self.box.value().is_visible()
 
     ## Show the list with an empty query and the first enabled row selected.
-    pub mutating func open() -> !:
+    pub mutating func open(held: bool = false) -> !:
+        self.held = held
+        if held:
+            self.box.value().claim_press()
         try self.query.set_text("")
         try self.filter()
         self.selected = -1
@@ -380,8 +387,11 @@ pub struct ActionPopup: Widget:
             self.box.value().invalidate()
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
             let index = self.index_at(event.y)
-            let activate = event.inside and index >= 0 and self.pressed >= 0 and index == self.pressed
+            let over = event.inside and index >= 0 and not self.commands.values()[self.matches[(usize)index]].value().is_divider()
+            let activate = over and ((self.pressed >= 0 and index == self.pressed) or self.held)
             self.pressed = -1
+            # Let go elsewhere, it stays open for a click, as a menu does.
+            self.held = false
             if activate:
                 return self.activate()
         return result.success[unit](())

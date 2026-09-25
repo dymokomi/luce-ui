@@ -48,14 +48,16 @@ pub struct ContextMenu: Widget:
     pub mutating func set_commands(commands: const interop.Reference[Command][]) -> !:
         try self.popup.value().set_commands(commands)
 
-    pub mutating func open_at(x: f64, y: f64) -> !:
+    ## Open at (`x`, `y`) in the menu's own space; `held` when a press still
+    ## under way opens it, so letting go over an item chooses that item.
+    pub mutating func open_at(x: f64, y: f64, held: bool = false) -> !:
         let notified = self.opening.emit(())
         defer notified.release()
         try notified.get()
         let box = self.popup.value().layout()
         defer box.release()
         try box.value().set_popup_point(x, y)
-        try self.popup.value().open()
+        try self.popup.value().open(held)
 
     pub func is_open() -> bool:
         return self.popup.value().is_open()

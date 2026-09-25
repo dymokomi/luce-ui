@@ -1,6 +1,7 @@
-from ui import Application, Command, CommandPalette, ContextMenu, TextPrompt, TextEditor, ListView, VStack, Pane, Event, Font, Theme
+from ui import Application, Button, Command, CommandPalette, ContextMenu, TextPrompt, TextEditor, ListView, VStack, Pane, Event, Font, Theme
 from input import EventKind, Key
 from ui import ListItem
+import time
 
 pub func contextual() -> unit!:
     let font = Font()
@@ -76,6 +77,33 @@ pub func contextual() -> unit!:
     lists.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
     lists.dispatch(Event(kind = EventKind.pointer_down, button = 1, x = 20.0, y = 190.0))
     assert(listing.selected_index() == -1 and activated == -1)
+    # A button held a moment opens its flyout while still held; sliding onto
+    # an item and letting go chooses it, as a tool group's flyout.
+    let chosen = Command("Pencil")
+    var picked = 0
+    let picking = chosen.on_trigger(func (): picked += 1)
+    let face = Button(icon = "brush-tool", font = font)
+    face.layout().set_size(32.0, 32.0)
+    var clicked = 0
+    let clicking = face.on_click(func (): clicked += 1)
+    let flyout = ContextMenu(face, [chosen], font = font)
+    let holding = face.on_hold(func () -> unit!: flyout.open_at(34.0, 0.0, held = true))
+    let rail = Application(flyout)
+    rail.layout(320.0, 200.0)
+    rail.dispatch(Event(kind = EventKind.pointer_down, button = 0, x = 16.0, y = 16.0, inside = true))
+    let started = time.now()
+    while time.now() - started < 450000000:
+        discard(0)
+    face.poll_hold()
+    rail.layout(320.0, 200.0)
+    assert(flyout.is_open())
+    let menu = flyout.layout().child(1).layout().bounds()
+    rail.dispatch(Event(kind = EventKind.pointer_moved, x = menu.x + menu.width * 0.5, y = menu.y + menu.height * 0.5))
+    rail.dispatch(Event(kind = EventKind.pointer_up, button = 0, x = menu.x + menu.width * 0.5, y = menu.y + menu.height * 0.5))
+    assert(picked == 1 and clicked == 0 and not flyout.is_open())
+    picking.disconnect()
+    clicking.disconnect()
+    holding.disconnect()
     let theme = Theme()
     assert(theme.gutter != theme.background and theme.active_border != theme.border)
     # Replacing content twice in one callback must not confuse retained traversal

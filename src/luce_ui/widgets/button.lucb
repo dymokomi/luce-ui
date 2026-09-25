@@ -64,6 +64,7 @@ pub struct Button: Widget:
     let holding: interop.Signal[unit]
     var holds: bool
     var pressed_at: u64
+    var hold_fired: bool
     ## A small corner mark: more choices behind this button (a tool group).
     var grouped: bool
 
@@ -99,6 +100,7 @@ pub struct Button: Widget:
         self.holding = holding
         self.holds = false
         self.pressed_at = 0
+        self.hold_fired = false
         self.grouped = false
         self.pressed = false
         self.pressed_key = input.Key.unknown
@@ -152,10 +154,21 @@ pub struct Button: Widget:
         self.grouped = grouped
         self.box.value().invalidate()
 
-    ## A press held a moment (400 ms) and let go: instead of a click, this.
+    ## A press held a moment (400 ms): instead of a click, this, while still
+    ## held — `poll_hold` each frame fires it (or letting go after the moment).
     pub mutating func on_hold(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         self.holds = true
         return try self.holding.connect(callback)
+
+    ## Called each frame: a press held long enough fires the hold now, while
+    ## the button is still down (a flyout opens under the pointer).
+    pub mutating func poll_hold() -> interop.Outcome[unit]:
+        if not self.pressed or not self.holds or self.hold_fired or self.pressed_key != input.Key.unknown:
+            return result.success[unit](())
+        if time.since(self.pressed_at) < 400000000:
+            return result.success[unit](())
+        self.hold_fired = true
+        return self.holding.emit(())
 
     ## For an action button this connects to the action's trigger, so the callback
     ## also runs when the action fires from a shortcut or menu.
@@ -201,6 +214,9 @@ pub struct Button: Widget:
         let size = try target.get().size()
         let theme = self.box.value().theme()
         let pressing = self.pressed and (self.pressed_key != input.Key.unknown or self.box.value().contains_pointer())
+        # Held for a hold: keep frames coming so `poll_hold` sees the moment pass.
+        if self.pressed and self.holds and not self.hold_fired:
+            self.box.value().invalidate()
         let hovering = self.is_enabled() and self.box.value().contains_pointer()
         let resting = theme.accent if self.style == ButtonStyle.selected else (theme.raised if self.style == ButtonStyle.raised else theme.button)
         var color = resting
@@ -244,10 +260,13 @@ pub struct Button: Widget:
             self.pressed = true
             self.pressed_key = input.Key.unknown
             self.pressed_at = time.now()
+            self.hold_fired = false
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
             let activate = self.pressed and self.pressed_key == input.Key.unknown and event.inside
             self.pressed = false
             self.box.value().invalidate()
+            if activate and self.hold_fired:
+                return result.success[unit](())
             if activate and self.holds and time.since(self.pressed_at) >= 400000000:
                 return self.holding.emit(())
             if activate:

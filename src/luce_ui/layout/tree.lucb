@@ -179,6 +179,18 @@ pub struct Tree:
             if self.return_focus == 0:
                 self.return_focus = self.focus
             self.focus = popup
+        # A box that claims the press under way (a flyout a held button opened)
+        # takes the capture: the drag and its release are its now.
+        for entry in replacement[..<count]:
+            let claimant = entry.box.value()
+            if claimant.claims_press and claimant.visible:
+                claimant.claims_press = false
+                if self.capture != 0 and self.capture != claimant.identifier:
+                    let claimed = self.cancel(self.capture)
+                    if not claimed.is_success():
+                        return claimed
+                    claimed.release()
+                    self.capture = claimant.identifier
         # Cancel against the old retained snapshot before its edges are released.
         if self.capture != 0 and not eligible(replacement, count, self.capture, false):
             let capture_cancelled = self.cancel(self.capture)

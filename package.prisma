@@ -1,7 +1,7 @@
 #prisma 4.0
 def package "luce-ui" {
     str owner = "dymokomi"
-    str version = "0.7.16"
+    str version = "0.7.17"
     str kind = "package"
     str language = "luce-base"
     str description = "A UI framework written in Luce Base, consumed through ordinary Base structs or Luce objects. Controls implement Widget; an Application owns the native event loop, layout, input routing and presentation."
@@ -19,7 +19,7 @@ def package "luce-ui" {
 
     def dependency "luce-svg" {
         str owner = "dymokomi"
-        str version = "^0.3.1"
+        str version = "^0.4.0"
         str path = "../luce-svg"
     }
 
