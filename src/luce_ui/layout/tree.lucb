@@ -565,6 +565,52 @@ pub struct Tree:
         refreshed.release()
         return result.success[unit](())
 
+    ## Escape or Enter while a dialog is open goes to the dialog holding focus,
+    ## else the topmost open one, to cancel or accept; true when one took it.
+    ## A focused field in it first drops (Escape) or keeps (Enter) what was
+    ## typed. Enter stays with a multi-line editor, where it breaks the line.
+    pub mutating func dialog_key(event: input.Event) -> interop.Outcome[bool]:
+        if event.kind != input.EventKind.key_down or event.repeated or (event.key != input.Key.escape and event.key != input.Key.enter):
+            return result.success[bool](false)
+        if event.modifiers.control or event.modifiers.alt or event.modifiers.super or event.modifiers.shift or self.has_popup():
+            return result.success[bool](false)
+        let focused = self.find(self.focus)
+        var target: usize? = none
+        if let index = focused:
+            var cursor = (i64)index
+            while cursor >= 0 and target == none:
+                let box = self.entries[(usize)cursor].box.value()
+                if box.dialog and box.visible:
+                    target = (usize)cursor
+                cursor = self.entries[(usize)cursor].parent
+        if target == none:
+            var index = self.count
+            while index > 0 and target == none:
+                index -= 1
+                let box = self.entries[index].box.value()
+                if box.dialog and box.visible and path_enabled(self.entries, index):
+                    target = index
+        let dialog = target else return result.success[bool](false)
+        if let index = focused:
+            let box = self.entries[index].box.value()
+            if box.accepts_text:
+                if event.key == input.Key.enter and box.accepts_tab:
+                    return result.success[bool](false)
+                # A field left by Enter keeps its text, as focus moving away would.
+                let resolved = self.send(index, Event(kind = input.EventKind.focus_lost) if event.key == input.Key.enter else Event(kind = input.EventKind.key_down, key = input.Key.escape))
+                defer resolved.release()
+                discard(resolved.get() catch failure:
+                    return result.failure[bool](failure.code, failure.message))
+        let delivered = self.send(dialog, Event(kind = input.EventKind.key_down, key = event.key))
+        defer delivered.release()
+        discard(delivered.get() catch failure:
+            return result.failure[bool](failure.code, failure.message))
+        let arranged = self.arrange(self.width, self.height)
+        defer arranged.release()
+        discard(arranged.get() catch failure:
+            return result.failure[bool](failure.code, failure.message))
+        return result.success[bool](true)
+
     ## The open modal popup, if any; a non-modal one does not hold input.
     func popup_index() -> usize?:
         var index = self.count

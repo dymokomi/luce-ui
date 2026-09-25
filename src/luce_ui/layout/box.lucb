@@ -34,6 +34,7 @@ pub struct Layout:
     var visible: bool
     var popup: bool
     var modal: bool
+    var dialog: bool
     var popup_placement: PopupPlacement
     var popup_point: Point
     var animate_open: bool
@@ -93,6 +94,7 @@ pub struct Layout:
         self.visible = true
         self.popup = false
         self.modal = true
+        self.dialog = false
         self.popup_placement = PopupPlacement.below
         self.popup_point = Point()
         self.animate_open = false
@@ -139,6 +141,11 @@ pub struct Layout:
     pub mutating func set_modal(modal: bool):
         self.modal = modal
         self.invalidate()
+
+    ## A dialog card: while it is open, Escape and Enter go to its widget (to
+    ## cancel or accept) before any shortcut sees them.
+    pub mutating func set_dialog(dialog: bool):
+        self.dialog = dialog
 
     ## A point is local to the popup's parent. Window placement clamps every
     ## edge; centered command surfaces stay independent of surrounding flow.

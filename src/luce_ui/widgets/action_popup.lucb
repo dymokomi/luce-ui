@@ -35,6 +35,9 @@ pub struct ActionPopup: Widget:
     var first: i64
     ## Wheel travel not yet enough for a whole row.
     var wheel: f64
+    ## Scroll the selected row into the middle at the next draw, once the
+    ## popup's height is known (it opens on its checked command).
+    var reveal: bool
     var pressed: i64
     let searchable: bool
     var query: LineInput
@@ -71,6 +74,7 @@ pub struct ActionPopup: Widget:
         self.commands = copied
         self.selected = -1
         self.wheel = 0.0
+        self.reveal = false
         self.first = 0
         self.pressed = -1
 
@@ -106,6 +110,12 @@ pub struct ActionPopup: Widget:
         # The initial popup has not been placed yet. Its previous (or zero)
         # height must not scroll leading disabled entries out of the new menu.
         self.first = 0
+        for index in 0..<(i64)self.count:
+            let command = self.commands.values()[self.matches[(usize)index]].value()
+            if command.is_checked() and command.is_enabled() and not command.is_divider():
+                self.selected = index
+                self.reveal = true
+                break
         self.box.value().begin_open()
         self.box.value().set_visible(true)
 
@@ -209,6 +219,10 @@ pub struct ActionPopup: Widget:
         return result.success[Size](Size(600.0 if self.searchable else width + self.pad_x() * 2.0, self.header_height() + self.stack_height()))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        if self.reveal and self.selected >= 0:
+            self.reveal = false
+            let rows = (i64)math.max(1.0, (self.box.value().bounds().height - self.top() - self.pad_y()) / self.row_height())
+            self.first = (i64)math.clamp((f64)(self.selected - rows // 2), 0.0, (f64)self.last_first())
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())

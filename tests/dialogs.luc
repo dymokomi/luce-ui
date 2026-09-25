@@ -1,4 +1,4 @@
-from ui import Application, Font, Button, TextField, TextPrompt, VStack, Dialog, Command, Shortcut, Event
+from ui import Application, Font, Button, TextField, TextPrompt, VStack, Dialog, Command, Shortcut, Event, NumberField, TextEditor
 from gpu import Frame
 from input import EventKind, Key
 import window
@@ -7,12 +7,18 @@ class Count:
     pub var clicks: int = 0
     pub var triggers: int = 0
     pub var copies: int = 0
+    pub var cancels: int = 0
+    pub var accepts: int = 0
     pub func click(self):
         self.clicks += 1
     pub func trigger(self):
         self.triggers += 1
     pub func copy(self):
         self.copies += 1
+    pub func cancel(self):
+        self.cancels += 1
+    pub func accept(self):
+        self.accepts += 1
 
 func click(app: Application, x: float, y: float) -> unit!:
     app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y))
@@ -70,4 +76,61 @@ pub func dialogs() -> unit!:
     clicked.disconnect()
     triggered.disconnect()
     copied.disconnect()
+    app.close()
+
+## Escape and Enter go to an open dialog before any shortcut: Escape cancels,
+## Enter accepts. A field being typed in first drops (Escape) or keeps (Enter)
+## its text; a multi-line editor keeps Enter for its lines.
+pub func dialog_keys() -> unit!:
+    let font = Font()
+    let count = Count()
+    let behind = Button("Behind", font = font)
+    let number = NumberField(10.0, 0.0, 100.0, 1.0, font = font, cells = 8.0)
+    let name = TextField("", font = font, cells = 12.0)
+    let notes = TextEditor("", font = font)
+    let dialog = Dialog([number, name, notes], width = 300.0)
+    let cancelled = dialog.on_cancel(count.cancel)
+    let accepted = dialog.on_accept(count.accept)
+    let app = Application(VStack([behind, dialog], spacing = 0.0))
+    let escape = Command("Deselect", Shortcut(Key.escape), id = "deselect")
+    let triggered = escape.on_trigger(count.trigger)
+    app.set_commands([escape])
+    render(app)
+    # Closed: Escape is the shortcut's.
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
+    assert(count.triggers == 1 and count.cancels == 0)
+    dialog.open()
+    render(app)
+    # Open, with focus elsewhere: the dialog cancels, the shortcut waits.
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
+    assert(count.triggers == 1 and count.cancels == 1)
+    # A typed number stands when Enter accepts.
+    let field = number.layout().bounds()
+    click(app, field.x + 6.0, field.y + field.height * 0.5)
+    render(app)
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 55))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    assert(count.accepts == 1 and number.value() == 7.0)
+    # Typed text is dropped when Escape cancels.
+    let line = name.layout().bounds()
+    click(app, line.x + 6.0, line.y + line.height * 0.5)
+    render(app)
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 120))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
+    assert(count.cancels == 2 and name.text() == "")
+    # Enter in a multi-line editor breaks the line; the dialog stays.
+    app.focus(notes.layout())
+    render(app)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    assert(count.accepts == 1)
+    # Held keys and chords are not the dialog's.
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.escape, repeated = true))
+    assert(count.cancels == 2)
+    dialog.hide()
+    render(app)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
+    assert(count.cancels == 2 and count.triggers == 2)
+    cancelled.disconnect()
+    accepted.disconnect()
+    triggered.disconnect()
     app.close()

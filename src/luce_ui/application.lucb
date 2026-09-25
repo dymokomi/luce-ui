@@ -258,6 +258,13 @@ pub struct Application:
         # Shortcuts wait while a modal popup is open, and a field taking text
         # keeps its plain keys (typing "b" in a name must not pick the brush) and
         # the editing chords: select all, copy, cut, paste, undo and redo.
+        # An open dialog takes Escape and Enter before any shortcut does.
+        let dialog_keyed = self.tree.dialog_key(event)
+        defer dialog_keyed.release()
+        let dialog_took = dialog_keyed.get() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        if dialog_took:
+            return result.success[unit](())
         let primary = event.modifiers.control or event.modifiers.super
         let editing = event.key == input.Key.a or event.key == input.Key.c or event.key == input.Key.x or event.key == input.Key.v or event.key == input.Key.z
         let typing = self.tree.wants_text_input() and (not primary or editing)
