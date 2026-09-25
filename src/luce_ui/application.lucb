@@ -249,10 +249,11 @@ pub struct Application:
     ## `native` events come from the window; the others from `dispatch`, whose
     ## drags carry the files given to `set_drop_paths`.
     mutating func route(event: input.Event, native: bool) -> interop.Outcome[unit]:
-        let arranged = self.tree.refresh()
-        if not arranged.is_success():
-            return arranged
-        arranged.release()
+        if not self.tree.captured_move(event):
+            let arranged = self.tree.refresh()
+            if not arranged.is_success():
+                return arranged
+            arranged.release()
         if event.kind == input.EventKind.drag_entered or event.kind == input.EventKind.drag_moved or event.kind == input.EventKind.drag_left or event.kind == input.EventKind.drop:
             return self.route_drag(event, native)
         # Shortcuts wait while a modal popup is open, and a field taking text
@@ -396,19 +397,25 @@ pub struct Application:
                 return arranged
             arranged.release()
             var events: usize = 0
+            # Whether focus may have moved, so whether the window must learn again
+            # if typing goes to a text field; a pointer move never moves it.
+            var focus_may_move = true
             while events < 512 and self.running:
-                self.update_cursor(self.session_host) catch failure:
-                    return result.failure[unit](failure.code, failure.message)
-                self.session_host.set_text_input(self.tree.wants_text_input()) catch failure:
-                    return result.failure[unit](failure.code, failure.message)
+                if focus_may_move:
+                    self.session_host.set_text_input(self.tree.wants_text_input()) catch failure:
+                        return result.failure[unit](failure.code, failure.message)
                 let polled = self.session_host.poll() catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 let event = polled else break
+                focus_may_move = event.kind != input.EventKind.pointer_moved
                 let handled = self.handle_event(self.session_host, event)
                 if not handled.is_success():
                     return handled
                 handled.release()
                 events += 1
+            # The cursor follows what is under the pointer once the batch is done.
+            self.update_cursor(self.session_host) catch failure:
+                return result.failure[unit](failure.code, failure.message)
             if not self.running:
                 break
             let serviced = self.timers.service(time.now())

@@ -399,10 +399,14 @@ pub struct Tree:
     ## is swallowed after sending the popup a cancellation. A non-modal popup is
     ## only hit first.
     pub mutating func dispatch(event: input.Event) -> interop.Outcome[unit]:
-        let arranged = self.arrange(self.width, self.height)
-        if not arranged.is_success():
-            return arranged
-        arranged.release()
+        # A move while a widget holds the pointer (a stroke, a drag) goes to it on
+        # the arrangement already made: a fast pointer sends hundreds a frame, and
+        # arranging the whole tree for each is what would slow the frame down.
+        if not self.captured_move(event):
+            let arranged = self.arrange(self.width, self.height)
+            if not arranged.is_success():
+                return arranged
+            arranged.release()
         if event.kind == input.EventKind.pointer_left:
             self.pointer_present = false
             self.update_hover()
@@ -687,6 +691,10 @@ pub struct Tree:
             ancestor = self.entries[(usize)ancestor].parent
 
     ## Whether a visible popup is open, which makes input modal.
+    ## Whether `event` is a pointer move while a widget holds the pointer.
+    pub func captured_move(event: input.Event) -> bool:
+        return event.kind == input.EventKind.pointer_moved and self.capture != 0 and self.count > 0
+
     pub func has_popup() -> bool:
         return self.popup_index() != none
 
