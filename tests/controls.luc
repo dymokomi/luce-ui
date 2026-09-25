@@ -115,6 +115,7 @@ pub func main(arguments: list[str]) -> int!:
     text_views()
     panes()
     commands_and_themes()
+    menu_wheel()
     cyclic_editor()
     editor_controls()
     early_selection()
@@ -346,6 +347,46 @@ func commands_and_themes() -> unit!:
 
 ## A column taller than its view scrolls under the wheel, over anything in it;
 ## a list inside keeps the wheel for itself.
+## A menu taller than the window scrolls with the wheel, and the row under the
+## pointer is the one Enter triggers.
+func menu_wheel() -> unit!:
+    let font = Font()
+    let counter = Counter()
+    var commands: list[Command] = []
+    var index = 0
+    while index < 60:
+        commands.append(Command(f"Family {index}", id = f"family_{index}"))
+        index += 1
+    let seventh = commands[6].on_trigger(counter.add)
+    let menu = Menu("Family", commands, font = font)
+    let app = Application(VStack([menu, Spacer()], spacing = 0.0))
+    app.layout(300.0, 200.0)
+    menu.open()
+    app.layout(300.0, 200.0)
+    let popup = menu.layout().child(0).layout().bounds()
+    let row_y = popup.y + math.ceil(font.advance() * 0.6) + font.line_height() * 0.5
+    # Two notches down: six rows past the top, the pointer on the first row shown.
+    app.dispatch(Event(kind = EventKind.scroll, x = popup.x + 4.0, y = row_y, scroll_y = -1.0, scroll_unit = ScrollUnit.lines))
+    app.dispatch(Event(kind = EventKind.scroll, x = popup.x + 4.0, y = row_y, scroll_y = -1.0, scroll_unit = ScrollUnit.lines))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    assert(counter.count == 1 and not menu.is_open())
+    # Never past the last row, however far the wheel turns: it sits at the bottom.
+    let last = Counter()
+    let final = commands[59].on_trigger(last.add)
+    menu.open()
+    app.layout(300.0, 200.0)
+    let pad = math.ceil(font.advance() * 0.6)
+    let shown = math.floor((popup.height - pad * 2.0) / font.line_height())
+    let bottom_y = popup.y + pad + font.line_height() * (shown - 0.5)
+    index = 0
+    while index < 40:
+        app.dispatch(Event(kind = EventKind.scroll, x = popup.x + 4.0, y = bottom_y, scroll_y = -1.0, scroll_unit = ScrollUnit.lines))
+        index += 1
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    assert(last.count == 1 and counter.count == 1)
+    seventh.disconnect()
+    final.disconnect()
+
 func scrolling() -> unit!:
     var rows: list[Widget] = []
     var index = 0

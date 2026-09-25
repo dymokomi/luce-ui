@@ -33,6 +33,8 @@ pub struct ActionPopup: Widget:
     var commands: Commands
     var selected: i64
     var first: i64
+    ## Wheel travel not yet enough for a whole row.
+    var wheel: f64
     var pressed: i64
     let searchable: bool
     var query: LineInput
@@ -68,6 +70,7 @@ pub struct ActionPopup: Widget:
         self.font = font.clone()
         self.commands = copied
         self.selected = -1
+        self.wheel = 0.0
         self.first = 0
         self.pressed = -1
 
@@ -97,6 +100,7 @@ pub struct ActionPopup: Widget:
         try self.filter()
         self.selected = -1
         self.first = 0
+        self.wheel = 0.0
         self.pressed = -1
         self.move(1)
         # The initial popup has not been placed yet. Its previous (or zero)
@@ -276,6 +280,32 @@ pub struct ActionPopup: Widget:
                 self.box.value().invalidate()
                 return
 
+    ## The wheel scrolls the rows, three to a notch (a trackpad's points by the
+    ## row), and the row now under the pointer is the one selected.
+    mutating func scroll(event: Event):
+        self.wheel += event.scroll_y if event.scroll_unit == input.ScrollUnit.points else event.scroll_y * 3.0 * self.row_height()
+        let rows = (i64)(self.wheel / self.row_height())
+        if rows == 0:
+            return
+        self.wheel -= (f64)rows * self.row_height()
+        self.first = (i64)math.clamp((f64)(self.first - rows), 0.0, (f64)self.last_first())
+        let index = self.index_at(event.y)
+        let over = event.inside and index >= 0 and not self.commands.values()[self.matches[(usize)index]].value().is_divider() and self.commands.values()[self.matches[(usize)index]].value().is_enabled()
+        self.selected = index if over else -1
+        self.box.value().invalidate()
+
+    ## The furthest the list scrolls: the first row that still fills the popup to its last.
+    func last_first() -> i64:
+        let room = self.box.value().bounds().height - self.top() - self.pad_y()
+        var used: f64 = 0.0
+        var index = (i64)self.count
+        while index > 0:
+            used += self.extent(index - 1)
+            if used > room:
+                return index
+            index -= 1
+        return 0
+
     mutating func activate() -> interop.Outcome[unit]:
         if self.selected < 0:
             return result.success[unit](())
@@ -313,7 +343,7 @@ pub struct ActionPopup: Widget:
             elif (event.key == input.Key.enter or (event.key == input.Key.space and not self.searchable)) and not event.repeated:
                 return self.activate()
         elif event.kind == input.EventKind.scroll:
-            self.move(1 if event.scroll_y < 0.0 else -1)
+            self.scroll(event)
         elif event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_down:
             let index = self.index_at(event.y)
             let over = event.inside and index >= 0 and not self.commands.values()[self.matches[(usize)index]].value().is_divider() and self.commands.values()[self.matches[(usize)index]].value().is_enabled()
