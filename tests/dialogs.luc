@@ -164,4 +164,10 @@ pub func number_submit() -> unit!:
     other.dispatch(Event(kind = EventKind.text_input, codepoint = 52))
     other.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
     assert(width.value() == 4.0)
+    # Typed and set values keep the shown decimals; the step is for drags and arrows.
+    let fine = NumberField(1.0, 0.5, 500.0, 1.0, decimals = 1, font = font)
+    fine.set_value(3.5)
+    assert(fine.value() == 3.5)
+    width.set_value(3.5)
+    assert(width.value() == 4.0)
     other.close()

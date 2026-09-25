@@ -98,11 +98,11 @@ pub struct NumberField: Widget:
     pub func value() -> f64:
         return self.current
 
-    ## Set the value from code, clamped and snapped; no signal.
+    ## Set the value from code, clamped and kept to the shown decimals; no signal.
     pub mutating func set_value(value: f64) -> !:
         if not math.is_finite(value):
             error(result.invalid, "number field values must be finite")
-        self.current = self.snap(value)
+        self.current = self.precise(value)
         self.editing = false
         self.box.value().invalidate()
 
@@ -162,16 +162,25 @@ pub struct NumberField: Widget:
         self.submits = true
         return try self.submitted.connect(callback)
 
+    ## `value` in whole steps, as a drag or an arrow moves it; whole steps from zero,
+    ## not from the minimum, so a field from 0.5 in steps of 1 lands on 4, not 4.5.
     func snap(value: f64) -> f64:
+        return self.snap_to(value, self.step)
+
+    ## `value` as shown: to the field's decimals where they are finer than the step.
+    ## What is typed or set from code stays what it is, as far as the field shows it;
+    ## a field without a step takes any value.
+    func precise(value: f64) -> f64:
+        return self.snap_to(value, math.min(self.step, math.pow(10.0, -(f64)self.decimals)))
+
+    func snap_to(value: f64, grid: f64) -> f64:
         var snapped = value
-        if self.step > 0.0:
-            # Whole steps from zero, not from the minimum: a field from 0.5 in steps
-            # of 1 keeps a typed 4 as 4, not 4.5 (shown as 5).
-            snapped = math.floor(value / self.step + 0.5) * self.step
+        if grid > 0.0:
+            snapped = math.floor(value / grid + 0.5) * grid
         return math.clamp(snapped, self.minimum, self.maximum)
 
-    mutating func change(value: f64) -> interop.Outcome[unit]:
-        let snapped = self.snap(value)
+    mutating func change(value: f64, exact: bool = false) -> interop.Outcome[unit]:
+        let snapped = self.precise(value) if exact else self.snap(value)
         if snapped == self.current:
             return result.success[unit](())
         self.current = snapped
@@ -203,7 +212,7 @@ pub struct NumberField: Widget:
             recover self.current
         if not math.is_finite(parsed):
             return result.success[unit](())
-        return self.change(parsed)
+        return self.change(parsed, exact = true)
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(self.font.value().advance() * self.cells, self.box.value().theme().row_height(self.font)))
