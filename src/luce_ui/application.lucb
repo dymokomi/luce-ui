@@ -461,11 +461,17 @@ pub struct Application:
                 defer target.release()
                 let rendered = self.render(target)
                 if not rendered.is_success():
-                    if rendered.code != gpu.frame_resized:
-                        return rendered
-                    rendered.release()
-                    self.dirty = true
-                    continue
+                    if rendered.code == gpu.frame_resized:
+                        rendered.release()
+                        self.dirty = true
+                        continue
+                    # A widget that could not draw (a document too big for some pass)
+                    # is reported, not fatal: the app and its unsaved work go on.
+                    let handler = self.error_handler else return rendered
+                    let reported = self.report_input_failure(rendered, handler)
+                    if not reported.is_success():
+                        return reported
+                    reported.release()
                 rendered.release()
                 self.update_cursor(self.session_host) catch failure:
                     return result.failure[unit](failure.code, failure.message)
