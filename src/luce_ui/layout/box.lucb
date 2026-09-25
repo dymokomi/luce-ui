@@ -156,6 +156,17 @@ pub struct Layout:
         self.popup_point = Point(x, y)
         self.invalidate()
 
+    ## Move a window-centred popup by (`x`, `y`) from the centre: a dialog
+    ## dragged aside stays there while it opens and closes.
+    pub mutating func set_popup_offset(x: f64, y: f64) -> !:
+        if not math.is_finite(x) or not math.is_finite(y):
+            error(result.invalid, "popup offsets must be finite")
+        self.popup_point = Point(x, y)
+        self.invalidate()
+
+    pub func popup_offset() -> Point:
+        return self.popup_point
+
     ## Choose how the tree places this popup. Unlike the other setters it does not
     ## invalidate; the placement applies at the next arrangement.
     pub mutating func set_popup_placement(placement: PopupPlacement):

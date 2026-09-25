@@ -7,6 +7,7 @@ import luce_ui.layout as layout
 import luce_ui.result as result
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
+from luce_ui.geometry import Point
 import input
 
 ## A floating card after Compositor's live-previewing panels: a raised face with
@@ -18,12 +19,18 @@ import input
 ## keys while one of its fields is taking text. The host shows and hides it
 ## (`open`, `hide`) around an edit and gives it Cancel/OK buttons in its last row;
 ## while it is open Escape reports `on_cancel` and Enter `on_accept`, which the
-## host connects to what those buttons do.
+## host connects to what those buttons do. Dragged by its face (anywhere a
+## row does not take the press) it floats elsewhere and stays there.
 pub struct Dialog: Widget:
     let box: interop.Reference[Layout]
     var width: f64
     let cancelled: interop.Signal[unit]
     let accepted: interop.Signal[unit]
+    ## A drag of the face: where it began in the window, and the offset then.
+    var dragging: bool
+    var grab_x: f64
+    var grab_y: f64
+    var grab_offset: Point
 
     ## `width` is the card's fixed width in points (Compositor uses 340–460).
     pub func init(children: const interop.Interface[Widget][], width: f64 = 380.0, spacing: f64 = 12.0, padding: f64 = 20.0) -> !:
@@ -36,6 +43,7 @@ pub struct Dialog: Widget:
         box.value().set_dialog(true)
         box.value().set_popup_placement(layout.PopupPlacement.window_center)
         box.value().set_visible(false)
+        box.value().set_interactive(true)
         try box.value().set_children(children)
         let cancelled = try interop.Signal[unit]()
         errdefer cancelled.release()
@@ -44,6 +52,10 @@ pub struct Dialog: Widget:
         self.width = width
         self.cancelled = cancelled
         self.accepted = accepted
+        self.dragging = false
+        self.grab_x = 0.0
+        self.grab_y = 0.0
+        self.grab_offset = Point(0.0, 0.0)
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -91,6 +103,23 @@ pub struct Dialog: Widget:
 
     ## The tree hands an open dialog Escape and Enter (see `set_dialog`).
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        # Positions in the window: the face moves under the pointer as it drags.
+        let bounds = self.box.value().bounds()
+        let x = bounds.x + event.x
+        let y = bounds.y + event.y
+        if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside and self.is_open():
+            self.dragging = true
+            self.grab_x = x
+            self.grab_y = y
+            let offset = self.box.value().popup_offset()
+            self.grab_offset = Point(offset.x, offset.y)
+            return result.success[unit](())
+        if event.kind == input.EventKind.pointer_moved and self.dragging:
+            self.box.value().set_popup_offset(self.grab_offset.x + x - self.grab_x, self.grab_offset.y + y - self.grab_y) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            return result.success[unit](())
+        if (event.kind == input.EventKind.pointer_up and event.button == 0) or event.cancelled:
+            self.dragging = false
         if event.kind == input.EventKind.key_down and self.is_open():
             if event.key == input.Key.escape:
                 return self.cancelled.emit(())
@@ -127,3 +156,17 @@ test "a dialog starts hidden, opens and hides":
         rejected = true
         recover try Dialog(empty))
     assert(rejected)
+
+test "a dialog dragged by its face keeps its offset from the centre":
+    var empty: interop.Interface[Widget][]
+    var card = try Dialog(empty, 340.0)
+    defer card.close()
+    card.open()
+    discard(card.event(Event(kind = input.EventKind.pointer_down, x = 10.0, y = 10.0, button = 0, inside = true)))
+    discard(card.event(Event(kind = input.EventKind.pointer_moved, x = 30.0, y = 25.0, inside = true)))
+    discard(card.event(Event(kind = input.EventKind.pointer_up, x = 30.0, y = 25.0, button = 0, inside = true)))
+    let offset = card.layout().value().popup_offset()
+    assert(offset.x == 20.0 and offset.y == 15.0)
+    # Moves after letting go leave it where it is.
+    discard(card.event(Event(kind = input.EventKind.pointer_moved, x = 90.0, y = 90.0, inside = true)))
+    assert(card.layout().value().popup_offset().x == 20.0)

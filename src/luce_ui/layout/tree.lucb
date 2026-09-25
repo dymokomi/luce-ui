@@ -154,8 +154,9 @@ pub struct Tree:
                     x = (bounds.width - popup_width) * 0.5
                     y = math.min(math.min(40.0, bounds.height * 0.1), bounds.height - popup_height)
                 elif box.popup_placement == PopupPlacement.window_center:
-                    x = (bounds.width - popup_width) * 0.5
-                    y = math.max(0.0, (bounds.height - popup_height) * 0.5)
+                    # Centred, moved by its offset (a dragged dialog), kept inside.
+                    x = math.clamp((bounds.width - popup_width) * 0.5 + box.popup_point.x, 0.0, math.max(0.0, bounds.width - popup_width))
+                    y = math.clamp((bounds.height - popup_height) * 0.5 + box.popup_point.y, 0.0, math.max(0.0, bounds.height - popup_height))
                 var placed = Rect(x, y, popup_width, popup_height)
                 if box.animate_open and box.visible:
                     if box.opening:
