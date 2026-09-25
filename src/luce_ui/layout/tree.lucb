@@ -23,6 +23,8 @@ pub struct Tree:
     var focus: u64
     var requested_focus: u64
     var capture: u64
+    ## The widget a secondary (right) press went to, which its release goes to as well.
+    var secondary_holder: u64
     var return_focus: u64
     var appearance: Theme
     var pointer_present: bool
@@ -49,6 +51,7 @@ pub struct Tree:
         self.focus = 0
         self.requested_focus = 0
         self.capture = 0
+        self.secondary_holder = 0
         self.return_focus = 0
         self.appearance = theme
         self.pointer_present = false
@@ -481,6 +484,7 @@ pub struct Tree:
                             cancelled_focus.release()
                         self.set_focus(destination)
                     if not box.context_menu:
+                        self.secondary_holder = destination
                         let selected = self.send(target, Event(kind = event.kind, button = 1,
                                                                x = event.x - box.rectangle.x, y = event.y - box.rectangle.y, inside = true))
                         if not selected.is_success():
@@ -545,6 +549,10 @@ pub struct Tree:
         elif event.kind == input.EventKind.pointer_up and (event.button == 0 or event.button >= 2):
             destination = self.capture if self.capture != 0 else self.hit(event.x, event.y)
             self.capture = 0
+        elif event.kind == input.EventKind.pointer_up and event.button == 1 and self.secondary_holder != 0:
+            # A right-button drag (a brush sized by it) ends where it began.
+            destination = self.secondary_holder
+            self.secondary_holder = 0
         elif event.kind == input.EventKind.pointer_moved:
             destination = self.capture if self.capture != 0 else self.hit(event.x, event.y)
         elif event.kind == input.EventKind.scroll or event.kind == input.EventKind.magnify:
