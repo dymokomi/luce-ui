@@ -75,6 +75,7 @@ pub struct Command:
     var binding: Shortcut
     var enabled: bool
     var divider: bool
+    var checked: bool
 
     ## `divider` makes a non-selectable separator that groups the items around it in a
     ## menu: it carries no caption or action, draws as a line, and is skipped for
@@ -91,6 +92,7 @@ pub struct Command:
         self.binding = shortcut
         self.enabled = not divider
         self.divider = divider
+        self.checked = false
 
     pub func is_divider() -> bool:
         return self.divider
@@ -123,6 +125,13 @@ pub struct Command:
 
     pub func is_enabled() -> bool:
         return self.enabled
+
+    ## A command that is a setting on or off: a menu draws a tick after it when on.
+    pub func is_checked() -> bool:
+        return self.checked
+
+    pub mutating func set_checked(checked: bool):
+        self.checked = checked
 
     ## A disabled command ignores `trigger`; its shortcut still consumes the key.
     pub mutating func set_enabled(enabled: bool):

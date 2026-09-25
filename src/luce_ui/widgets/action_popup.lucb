@@ -14,7 +14,11 @@ from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.font import Font, selected_font
 from luce_ui.command import Command, Commands
 from luce_ui.painter import Painter
+from luce_ui.geometry import Point
 from luce_ui.text.line_input import LineInput
+
+## Room after a checked command's caption for its tick.
+let tick_room: f64 = 18.0
 
 ## A hidden popup listing commands, with dividers as slim rules. Opening it
 ## selects the first enabled row; arrows, Tab, the wheel and the pointer move the
@@ -195,6 +199,8 @@ pub struct ActionPopup: Widget:
                 let chord_width = self.font.value().measure((str)chord[..<chord_len]) catch failure:
                     return result.failure[Size](failure.code, failure.message)
                 measured += self.font.value().advance() * 2.0 + chord_width
+            if action.value().is_checked():
+                measured += tick_room
             width = math.max(width, measured)
         return result.success[Size](Size(600.0 if self.searchable else width + self.pad_x() * 2.0, self.header_height() + self.stack_height()))
 
@@ -232,8 +238,14 @@ pub struct ActionPopup: Widget:
             let caption = action.value().text()
             defer caption.release()
             let text_y = y + (height - self.font.value().height()) * 0.5
-            try painter.text(caption.value, self.pad_x(), text_y,
-                theme.foreground if action.value().is_enabled() else theme.muted, self.font)
+            let ink = theme.foreground if action.value().is_enabled() else theme.muted
+            try painter.text(caption.value, self.pad_x(), text_y, ink, self.font)
+            if action.value().is_checked():
+                # A tick drawn, not a glyph: every UI font has the lines.
+                let x = self.pad_x() + (try self.font.value().measure(caption.value)) + 8.0
+                let middle = y + height * 0.5
+                try painter.line(Point(x, middle), Point(x + 3.5, middle + 3.5), 1.6, ink)
+                try painter.line(Point(x + 3.5, middle + 3.5), Point(x + 10.0, middle - 4.0), 1.6, ink)
             var chord: u8[32]
             let chord_len = action.value().write_shortcut(chord)
             if chord_len > 0:

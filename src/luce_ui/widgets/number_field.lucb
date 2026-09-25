@@ -233,8 +233,10 @@ pub struct NumberField: Widget:
             if self.scrubbing:
                 self.scrubbing = false
                 return self.ended.emit(())
+            # Focus taken elsewhere (a click on OK, another field): what was typed
+            # stands, as a field left does everywhere; only Escape throws it away.
             if self.editing:
-                return self.finish_editing(false)
+                return self.finish_editing(true)
             return result.success[unit](())
         if not self.box.value().is_enabled():
             return result.success[unit](())
