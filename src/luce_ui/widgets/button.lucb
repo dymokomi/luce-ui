@@ -261,6 +261,9 @@ pub struct Button: Widget:
             self.pressed_key = input.Key.unknown
             self.pressed_at = time.now()
             self.hold_fired = false
+            # The loop may rest while the pointer stays still: wake it when the hold is due.
+            if self.holds:
+                layout.wake_at(self.pressed_at + 400000000)
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
             let activate = self.pressed and self.pressed_key == input.Key.unknown and event.inside
             self.pressed = false

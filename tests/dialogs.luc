@@ -134,3 +134,23 @@ pub func dialog_keys() -> unit!:
     accepted.disconnect()
     triggered.disconnect()
     app.close()
+
+## With a submit listener, the first Enter keeps what was typed and the
+## second submits (Photoshop's option bar applying a transform).
+pub func number_submit() -> unit!:
+    let font = Font()
+    let count = Count()
+    let number = NumberField(10.0, 0.0, 100.0, 1.0, font = font, cells = 8.0)
+    let submitted = number.on_submit(count.accept)
+    let app = Application(VStack([number], spacing = 0.0))
+    render(app)
+    let field = number.layout().bounds()
+    click(app, field.x + 6.0, field.y + field.height * 0.5)
+    render(app)
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 55))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    assert(number.value() == 7.0 and count.accepts == 0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    assert(count.accepts == 1)
+    submitted.disconnect()
+    app.close()

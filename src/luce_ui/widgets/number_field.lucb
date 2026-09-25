@@ -18,7 +18,10 @@ from luce_ui.font import Font, selected_font
 ## cmd/ctrl-click puts the default back. The value is clamped to
 ## `minimum..maximum`, snapped to `step` and shown with `decimals` places and an
 ## optional `suffix`. `on_change` fires on every change; `on_begin`/`on_end`
-## bracket one drag so a caller can make it a single undo step.
+## bracket one drag so a caller can make it a single undo step. With an
+## `on_submit` listener, Enter on a field not being typed in submits instead of
+## starting to type: the first Enter commits a typed value, the second submits,
+## as Photoshop's option bar applies a transform.
 pub struct NumberField: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]
@@ -39,6 +42,8 @@ pub struct NumberField: Widget:
     let changed: interop.Signal[f64]
     let began: interop.Signal[unit]
     let ended: interop.Signal[unit]
+    let submitted: interop.Signal[unit]
+    var submits: bool
 
     pub func init(value: f64 = 0.0, minimum: f64 = -1.0e9, maximum: f64 = 1.0e9, step: f64 = 1.0, decimals: i64 = 0,
                   suffix: str = "", font: interop.Reference[Font]? = none, cells: f64 = 7.0) -> !:
@@ -62,6 +67,8 @@ pub struct NumberField: Widget:
         errdefer began.release()
         let ended = try interop.Signal[unit]()
         errdefer ended.release()
+        let submitted = try interop.Signal[unit]()
+        errdefer submitted.release()
         self.suffix = try interop.copy_text(suffix)
         self.box = box
         self.font = selected
@@ -82,6 +89,8 @@ pub struct NumberField: Widget:
         self.changed = changed
         self.began = began
         self.ended = ended
+        self.submitted = submitted
+        self.submits = false
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -147,6 +156,11 @@ pub struct NumberField: Widget:
     ## Called when a scrub ends, on release or cancellation.
     pub func on_end(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         return try self.ended.connect(callback)
+
+    ## Enter pressed while the field is focused but not being typed in.
+    pub mutating func on_submit(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        self.submits = true
+        return try self.submitted.connect(callback)
 
     func snap(value: f64) -> f64:
         var snapped = value
@@ -301,6 +315,8 @@ pub struct NumberField: Widget:
                 return self.change(self.current + amount)
             if event.key == input.Key.down or event.key == input.Key.left:
                 return self.change(self.current - amount)
+            if event.key == input.Key.enter and not event.repeated and self.submits:
+                return self.submitted.emit(())
             if event.key == input.Key.enter and not event.repeated:
                 self.begin_editing() catch failure:
                     return result.failure[unit](failure.code, failure.message)
@@ -314,7 +330,9 @@ pub struct NumberField: Widget:
         self.began.close()
         self.began.release()
         self.ended.close()
+        self.submitted.close()
         self.ended.release()
+        self.submitted.release()
         self.suffix.release()
         self.box.release()
 
@@ -324,6 +342,7 @@ pub struct NumberField: Widget:
         self.changed.trace(visit, context)
         self.began.trace(visit, context)
         self.ended.trace(visit, context)
+        self.submitted.trace(visit, context)
         self.suffix.trace(visit, context)
 
 ## `text` without leading and trailing spaces.

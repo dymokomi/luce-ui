@@ -102,6 +102,7 @@ pub interface Widget:
 
 var serial: u64 = 0
 var revision: u64 = 0
+var wake: u64 = 0
 
 ## The layout epoch: it moves whenever any box or the tree changes, so a
 ## frame loop can tell a redraw is due without asking every widget.
@@ -111,6 +112,19 @@ pub func epoch() -> u64:
 ## Move the epoch on: something changed that the next frame must show.
 func bump_revision():
     revision = revision +? 1 else trap("UI revision exhausted")
+
+## Ask for a frame at `deadline` (a `time.now()` moment) even if nothing
+## changes before then: a press waiting to become a hold.
+pub func wake_at(deadline: u64):
+    if wake == 0 or deadline < wake:
+        wake = deadline
+
+## The pending wake-up moment, cleared once it is taken; 0 when none.
+pub func take_wake(now: u64) -> u64:
+    let deadline = wake
+    if deadline != 0 and deadline <= now:
+        wake = 0
+    return deadline
 
 ## Layout owns child interfaces and geometry, never control-specific state.
 ## Parent/application membership is weak identity, so trees have no parent cycle.

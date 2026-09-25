@@ -556,6 +556,12 @@ pub struct Application:
             let delta = deadline - now
             if delta < budget:
                 budget = delta
+        let wake = layout.take_wake(now)
+        if wake != 0:
+            if wake <= now:
+                return 0
+            if wake - now < budget:
+                budget = wake - now
         if self.tree.wants_text_input() and 30000000 < budget:
             budget = 30000000
         return budget

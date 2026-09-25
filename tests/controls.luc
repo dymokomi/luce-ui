@@ -17,7 +17,7 @@ from headers import headers
 from docking import docking
 from cursors import cursors
 from clicks import clicks
-from dialogs import dialogs, dialog_keys
+from dialogs import dialogs, dialog_keys, number_submit
 
 class Custom: Widget:
     let box: Layout
@@ -73,6 +73,7 @@ pub func main(arguments: list[str]) -> int!:
     clicks()
     dialogs()
     dialog_keys()
+    number_submit()
     scrolling()
     let font = Font(size = 14.0)
     assert(font.size() == 14.0 and font.measure("ii") == font.measure("WW"))
