@@ -336,6 +336,11 @@ pub struct Layout:
         self.hover_transparent = value
         self.invalidate()
 
+    ## Keep Tab for this box while it has focus, rather than moving focus on:
+    ## a canvas that steps its tool's modes with it. Control-Tab still moves on.
+    pub mutating func set_accepts_tab(accepts: bool):
+        self.accepts_tab = accepts
+
     ## Text controls receive committed Unicode and may reserve Tab for indentation.
     ## Control-Tab always remains available for moving focus out of an editor.
     pub mutating func set_text_input(enabled: bool, tabs: bool = false):
