@@ -182,6 +182,12 @@ pub struct Application:
         let chosen = try dialogs.open_file(message) else return try interop.copy_text("")
         return chosen
 
+    ## Show the desktop's open-file dialog letting several files be chosen and
+    ## return their paths one to a line, or an empty string when it was canceled.
+    pub func open_files(message: str) -> interop.Owned[str]!:
+        let chosen = try dialogs.open_files(message) else return try interop.copy_text("")
+        return chosen
+
     ## Show the desktop's save-file dialog suggesting `name` and return the chosen
     ## path, or an empty string when it was canceled.
     pub func save_file(message: str, name: str) -> interop.Owned[str]!:
