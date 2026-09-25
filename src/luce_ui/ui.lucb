@@ -14,6 +14,7 @@ import gpu
 import interop
 import luce_ui.layout as layout
 import input
+import platform
 import luce_ui.cursor as cursor
 pub type Cursor = input.Cursor
 pub type CursorSource = cursor.CursorSource
@@ -41,6 +42,18 @@ import luce_ui.widgets.vstack as vstack
 import luce_ui.widgets.hstack as hstack
 
 pub let invalid: ErrorCode = result.invalid
+
+## Whether the program runs on macOS, whose keys and words differ.
+pub func on_macos() -> bool:
+    return platform.macos
+
+## The primary modifier's name as the platform says it: "Cmd" on macOS, "Ctrl" elsewhere.
+pub func primary_key_name() -> str:
+    return "Cmd" if platform.macos else "Ctrl"
+
+## The key that clears a selection: macOS's delete (Backspace), Delete elsewhere.
+pub func clear_key() -> input.Key:
+    return input.Key.backspace if platform.macos else input.Key.delete
 pub type Widget = layout.Widget
 pub type Layout = layout.Layout
 pub type Size = layout.Size

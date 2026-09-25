@@ -563,6 +563,10 @@ pub struct Tree:
             if not delivered.is_success():
                 return delivered
             delivered.release()
+        # A captured move changes no arrangement: the run loop arranges once
+        # before it draws, so a fast pointer does not arrange hundreds of times.
+        if self.captured_move(event):
+            return result.success[unit](())
         let refreshed = self.arrange(self.width, self.height)
         if not refreshed.is_success():
             return refreshed
