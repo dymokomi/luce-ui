@@ -15,6 +15,7 @@ from luce_ui.command import Command
 from luce_ui.cursor import CursorSource
 from luce_ui.geometry import Point
 import luce_ui.icons as icons
+import time
 
 ## Query shared action state without forcing a layout pass when it is enabled
 ## or disabled. The layout owns this policy; the action owns no widget edges.
@@ -58,6 +59,13 @@ pub struct Button: Widget:
     ## A luciaos-assets icon drawn before the text, or alone when there is no text.
     var glyph: interop.Owned[str]
     var style: ButtonStyle
+    ## A press held this long (nanoseconds) and let go is a hold, not a click,
+    ## once something listens for holds: a tool group's flyout.
+    let holding: interop.Signal[unit]
+    var holds: bool
+    var pressed_at: u64
+    ## A small corner mark: more choices behind this button (a tool group).
+    var grouped: bool
 
     ## `text` and `action` are exclusive; `icon` names a luciaos-assets icon.
     pub func init(text: str = "", font: interop.Reference[Font]? = none, action: interop.Reference[Command]? = none, icon: str = "") -> !:
@@ -81,11 +89,17 @@ pub struct Button: Widget:
             try box.value().set_cursor_source(policy)
         let signal = try interop.Signal[unit]()
         errdefer signal.release()
+        let holding = try interop.Signal[unit]()
+        errdefer holding.release()
         self.caption = try interop.copy_text(text)
         errdefer self.caption.release()
         self.glyph = try interop.copy_text(icon)
         self.style = ButtonStyle.sunken
         self.clicked = signal
+        self.holding = holding
+        self.holds = false
+        self.pressed_at = 0
+        self.grouped = false
         self.pressed = false
         self.pressed_key = input.Key.unknown
         self.box = box
@@ -122,6 +136,26 @@ pub struct Button: Widget:
 
     pub func style_of() -> ButtonStyle:
         return self.style
+
+    ## Show `icon` (a luciaos-assets name) instead: a tool group's current tool.
+    pub mutating func set_icon(icon: str) -> !:
+        if icon != "" and not icons.known(icon):
+            error(result.invalid, "unknown icon name")
+        let replacement = try interop.copy_text(icon)
+        let previous = self.glyph
+        self.glyph = replacement
+        previous.release()
+        self.box.value().invalidate()
+
+    ## Mark the button as the face of a group, with a small corner triangle.
+    pub mutating func set_grouped(grouped: bool):
+        self.grouped = grouped
+        self.box.value().invalidate()
+
+    ## A press held a moment (400 ms) and let go: instead of a click, this.
+    pub mutating func on_hold(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        self.holds = true
+        return try self.holding.connect(callback)
 
     ## For an action button this connects to the action's trigger, so the callback
     ## also runs when the action fires from a shortcut or menu.
@@ -196,6 +230,9 @@ pub struct Button: Widget:
             x += side + (self.font.value().advance() * 0.5 if caption.value.length > 0 else 0.0)
         if caption.value.length > 0:
             try painter.text(caption.value, x, math.max(0.0, (size.height - self.font.value().height()) * 0.5), color = ink, font = self.font)
+        if self.grouped:
+            # The group's mark: a small triangle in the bottom-right corner.
+            try painter.triangle(Point(size.width - 3.0, size.height - 8.0), Point(size.width - 3.0, size.height - 3.0), Point(size.width - 8.0, size.height - 3.0), ink)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         if event.kind == input.EventKind.pointer_moved and not event.cancelled:
@@ -206,10 +243,13 @@ pub struct Button: Widget:
         elif event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
             self.pressed = true
             self.pressed_key = input.Key.unknown
+            self.pressed_at = time.now()
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
             let activate = self.pressed and self.pressed_key == input.Key.unknown and event.inside
             self.pressed = false
             self.box.value().invalidate()
+            if activate and self.holds and time.since(self.pressed_at) >= 400000000:
+                return self.holding.emit(())
             if activate:
                 return self.click()
         elif event.kind == input.EventKind.key_down and not event.repeated and (event.key == input.Key.space or event.key == input.Key.enter):
@@ -233,6 +273,8 @@ pub struct Button: Widget:
         self.font.release()
         self.clicked.close()
         self.clicked.release()
+        self.holding.close()
+        self.holding.release()
         self.caption.release()
         self.glyph.release()
         self.box.release()
@@ -245,5 +287,6 @@ pub struct Button: Widget:
         self.caption.trace(visit, context)
         self.glyph.trace(visit, context)
         self.clicked.trace(visit, context)
+        self.holding.trace(visit, context)
 
 pub let button_type: interop.Type[Button] = interop.Type[Button]("Button", Button.close, Button.trace, closeable = true, main_thread = true)
