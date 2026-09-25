@@ -119,12 +119,17 @@ pub func wake_at(deadline: u64):
     if wake == 0 or deadline < wake:
         wake = deadline
 
-## The pending wake-up moment, cleared once it is taken; 0 when none.
-pub func take_wake(now: u64) -> u64:
-    let deadline = wake
-    if deadline != 0 and deadline <= now:
+## The pending wake-up moment; 0 when none.
+pub func wake_deadline() -> u64:
+    return wake
+
+## Whether the wake-up moment has come, forgetting it if so: the frame that
+## follows draws (a caret's blink, a press becoming a hold).
+pub func take_due_wake(now: u64) -> bool:
+    if wake != 0 and wake <= now:
         wake = 0
-    return deadline
+        return true
+    return false
 
 ## Layout owns child interfaces and geometry, never control-specific state.
 ## Parent/application membership is weak identity, so trees have no parent cycle.

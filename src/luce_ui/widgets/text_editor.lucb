@@ -561,8 +561,12 @@ pub struct TextEditor: Widget:
         let pointer = self.box.value().pointer_position()
         if self.box.value().contains_pointer() and pointer.x < self.gutter_width():
             hovered_row = (usize)((pointer.y + self.scroll_y) / self.font.value().line_height())
+        # The caret shows 600 ms of each second; the frame loop wakes for the next change.
+        let phase = time.since(self.active_since) % 1000000000
+        if self.box.value().is_focused():
+            layout.wake_at(time.now() + (600000000 - phase if phase < 600000000 else 1000000000 - phase))
         try drawing.paint(&self.document, &painter, size.width, size.height, self.scroll_x, self.scroll_y,
-            self.line_numbers, self.box.value().is_focused(), time.since(self.active_since) % 1000000000 < 600000000,
+            self.line_numbers, self.box.value().is_focused(), phase < 600000000,
             self.font, (self.theme else self.box.value().theme().editor()), self.highlights.values(), &self.projection, &self.folds, &self.diff, hovered_row,
             (usize)self.ai_first, (usize)self.ai_last, self.swatches.values(), not self.wrap)
 

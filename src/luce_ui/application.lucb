@@ -446,7 +446,8 @@ pub struct Application:
             # at the requested fps without a layout mutation each frame.
             let epoch_now = layout.epoch()
             let moment = time.now()
-            let caret_due = self.tree.wants_text_input() and moment - self.last_render >= 30000000
+            # A widget's wake-up (a blinking caret's next toggle) draws once, then rests.
+            let caret_due = layout.take_due_wake(moment)
             if self.game or self.dirty or epoch_now != self.last_epoch or caret_due:
                 let frame = surface.frame() catch failure:
                     return result.failure[unit](failure.code, failure.message)
@@ -562,14 +563,12 @@ pub struct Application:
             let delta = deadline - now
             if delta < budget:
                 budget = delta
-        let wake = layout.take_wake(now)
+        let wake = layout.wake_deadline()
         if wake != 0:
             if wake <= now:
                 return 0
             if wake - now < budget:
                 budget = wake - now
-        if self.tree.wants_text_input() and 30000000 < budget:
-            budget = 30000000
         return budget
 
     ## End the run loop after the current iteration; the application stays usable.
