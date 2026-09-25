@@ -431,17 +431,24 @@ pub struct Application:
                 let frame = surface.frame() catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 defer frame.release()
+                # The window may change size while a frame is drawn, not only at its
+                # present: that frame is dropped and the next drawn at the new size.
                 let target = frame.value().target() catch failure:
-                    return result.failure[unit](failure.code, failure.message)
+                    if failure.code != gpu.frame_resized:
+                        return result.failure[unit](failure.code, failure.message)
+                    self.dirty = true
+                    continue
                 defer target.release()
                 let rendered = self.render(target)
                 if not rendered.is_success():
-                    return rendered
+                    if rendered.code != gpu.frame_resized:
+                        return rendered
+                    rendered.release()
+                    self.dirty = true
+                    continue
                 rendered.release()
                 self.update_cursor(self.session_host) catch failure:
                     return result.failure[unit](failure.code, failure.message)
-                # The window may change size between a frame and its present; that
-                # frame is dropped and the next one drawn at the new size.
                 var resized = false
                 discard(frame.value().present(self.tree.theme().background) catch failure:
                     if failure.code != gpu.frame_resized:

@@ -60,6 +60,11 @@ pub struct Menu: Widget:
         previous_caption.release()
         self.box.value().invalidate()
 
+    ## Offer `actions` from now on, as a menu whose choices depend on another
+    ## (a font's styles on its family).
+    pub mutating func set_actions(actions: const interop.Reference[Command][]) -> !:
+        try self.popup.value().set_commands(actions)
+
     pub mutating func open() -> !:
         try self.popup.value().open()
 

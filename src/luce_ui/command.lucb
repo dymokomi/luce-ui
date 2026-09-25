@@ -3,6 +3,7 @@
 ## An optional id lets a registry find and invoke a command by name, so shortcuts,
 ## scripts and other tools can drive the same commands the UI does.
 import input
+import platform
 import interop
 import ownership
 import memory
@@ -51,7 +52,8 @@ pub struct Shortcut:
     pub func is_bound() -> bool:
         return self.key != input.Key.unknown
 
-    ## The chord as a menu shows it ("⌘⇧S"), or "" when unbound.
+    ## The chord as a menu shows it ("⌘⇧S" on macOS, "Ctrl+Shift+S" elsewhere),
+    ## or "" when unbound.
     pub func text() -> interop.Owned[str]!:
         var buffer: u8[32]
         let length = write_chord(self, buffer)
@@ -223,6 +225,15 @@ func write_chord(shortcut: Shortcut, buffer: u8[]) -> usize:
     if shortcut.key == input.Key.unknown:
         return 0
     var pos: usize = 0
+    if not platform.macos:
+        # Windows and Linux spell modifiers out, and their UI fonts lack the Mac glyphs.
+        if shortcut.primary:
+            pos = put_bytes(buffer, pos, b"Ctrl+")
+        if shortcut.shift:
+            pos = put_bytes(buffer, pos, b"Shift+")
+        if shortcut.alt:
+            pos = put_bytes(buffer, pos, b"Alt+")
+        return write_key(shortcut.key, buffer, pos)
     if shortcut.alt:
         pos = put_bytes(buffer, pos, b"\xe2\x8c\xa5")
     if shortcut.shift:

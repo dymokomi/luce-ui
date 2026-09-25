@@ -32,12 +32,12 @@ pub struct ActionPopup: Widget:
     var pressed: i64
     let searchable: bool
     var query: LineInput
-    var matches: usize[128]
+    var matches: usize[4096]
     var count: usize
 
     pub func init(commands: const interop.Reference[Command][], font: interop.Reference[Font], searchable: bool = false) -> !:
-        if commands.length == 0:
-            error(result.invalid, "a menu needs at least one action")
+        if commands.length == 0 or commands.length > 4096:
+            error(result.invalid, "a menu takes 1..4096 actions")
         var copied = Commands()
         errdefer copied.close()
         try copied.set(commands)
@@ -51,7 +51,7 @@ pub struct ActionPopup: Widget:
         var query = try LineInput()
         self.searchable = searchable
         self.query = query
-        var matches: usize[128]
+        var matches: usize[4096]
         self.count = commands.length
         for index in 0..<commands.length:
             matches[index] = index
@@ -73,8 +73,8 @@ pub struct ActionPopup: Widget:
     ## Replace the presented commands, for a context menu whose entries depend on
     ## what was clicked. Any open filtering and selection reset with the new set.
     pub mutating func set_commands(commands: const interop.Reference[Command][]) -> !:
-        if commands.length == 0:
-            error(result.invalid, "a menu needs at least one action")
+        if commands.length == 0 or commands.length > 4096:
+            error(result.invalid, "a menu takes 1..4096 actions")
         try self.commands.set(commands)
         self.count = commands.length
         for index in 0..<commands.length:
