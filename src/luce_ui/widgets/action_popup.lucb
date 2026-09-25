@@ -35,9 +35,10 @@ pub struct ActionPopup: Widget:
     var first: i64
     ## Wheel travel not yet enough for a whole row.
     var wheel: f64
-    ## Scroll the selected row into the middle at the next draw, once the
-    ## popup's height is known (it opens on its checked command).
-    var reveal: bool
+    ## The row to scroll into the middle (-1: none) once the popup's height is
+    ## known, at its first draw or event: it opens on its checked command,
+    ## even when the pointer hovers another row before it is drawn.
+    var reveal: i64
     var pressed: i64
     let searchable: bool
     var query: LineInput
@@ -74,7 +75,7 @@ pub struct ActionPopup: Widget:
         self.commands = copied
         self.selected = -1
         self.wheel = 0.0
-        self.reveal = false
+        self.reveal = -1
         self.first = 0
         self.pressed = -1
 
@@ -114,7 +115,7 @@ pub struct ActionPopup: Widget:
             let command = self.commands.values()[self.matches[(usize)index]].value()
             if command.is_checked() and command.is_enabled() and not command.is_divider():
                 self.selected = index
-                self.reveal = true
+                self.reveal = index
                 break
         self.box.value().begin_open()
         self.box.value().set_visible(true)
@@ -219,10 +220,7 @@ pub struct ActionPopup: Widget:
         return result.success[Size](Size(600.0 if self.searchable else width + self.pad_x() * 2.0, self.header_height() + self.stack_height()))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
-        if self.reveal and self.selected >= 0:
-            self.reveal = false
-            let rows = (i64)math.max(1.0, (self.box.value().bounds().height - self.top() - self.pad_y()) / self.row_height())
-            self.first = (i64)math.clamp((f64)(self.selected - rows // 2), 0.0, (f64)self.last_first())
+        self.show_revealed()
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -308,6 +306,15 @@ pub struct ActionPopup: Widget:
         self.selected = index if over else -1
         self.box.value().invalidate()
 
+    ## Scroll the row to reveal into the middle, now the popup is placed.
+    mutating func show_revealed():
+        if self.reveal < 0 or self.box.value().bounds().height <= 0.0:
+            return
+        let rows = (i64)math.max(1.0, (self.box.value().bounds().height - self.top() - self.pad_y()) / self.row_height())
+        self.first = (i64)math.clamp((f64)(self.reveal - rows // 2), 0.0, (f64)self.last_first())
+        self.selected = self.reveal
+        self.reveal = -1
+
     ## The furthest the list scrolls: the first row that still fills the popup to its last.
     func last_first() -> i64:
         let room = self.box.value().bounds().height - self.top() - self.pad_y()
@@ -334,6 +341,7 @@ pub struct ActionPopup: Widget:
         return action.value().trigger()
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        self.show_revealed()
         if self.searchable:
             let inset = self.pad_x()
             self.query.pointer(event, self.font, inset, 0.0, self.box.value().bounds().width - inset * 2.0, self.header_height()) catch failure:

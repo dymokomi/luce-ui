@@ -396,6 +396,16 @@ func menu_wheel() -> unit!:
     frame.close()
     app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
     assert(current.count == 1)
+    # Even when the pointer rests on a row before the popup is first drawn,
+    # the list is scrolled to the checked row: the top row is not Family 0.
+    let top = Counter()
+    let zeroth = commands[0].on_trigger(top.add)
+    menu.open()
+    app.layout(300.0, 200.0)
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = popup.x + 4.0, y = row_y))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    assert(top.count == 0 and not menu.is_open())
+    zeroth.disconnect()
     fortieth.disconnect()
     seventh.disconnect()
     final.disconnect()
