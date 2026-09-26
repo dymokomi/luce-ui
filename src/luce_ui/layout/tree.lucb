@@ -781,15 +781,28 @@ pub struct Tree:
     ## while a modal one is open, nothing else.
     func hit(x: f64, y: f64) -> u64:
         let modal = self.has_popup()
-        for pass in 0..<2:
-            if pass == 1 and modal:
-                break
-            var index = self.count
-            while index > 0:
-                index -= 1
-                let box = self.entries[index].box.value()
-                if in_popup(self.entries, index) == (pass == 0) and path_enabled(self.entries, index) and box.accepts_pointer and inside(box.clipping, x, y):
-                    return box.identifier
+        # Popups first, the innermost (a dropdown's list inside a dialog) above
+        # the popup it opens from, whatever their order in the tree.
+        var best: u64 = 0
+        var best_depth: usize = 0
+        var index = self.count
+        while index > 0:
+            index -= 1
+            let depth = popup_depth(self.entries, index)
+            if depth <= best_depth:
+                continue
+            let box = self.entries[index].box.value()
+            if path_enabled(self.entries, index) and box.accepts_pointer and inside(box.clipping, x, y):
+                best = box.identifier
+                best_depth = depth
+        if best != 0 or modal:
+            return best
+        index = self.count
+        while index > 0:
+            index -= 1
+            let box = self.entries[index].box.value()
+            if not in_popup(self.entries, index) and path_enabled(self.entries, index) and box.accepts_pointer and inside(box.clipping, x, y):
+                return box.identifier
         return 0
 
     func send(index: usize, event: Event) -> interop.Outcome[unit]:
