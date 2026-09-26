@@ -214,13 +214,15 @@ pub func field_leaves() -> unit!:
     app.dispatch(Event(kind = EventKind.text_input, codepoint = 121))
     app.dispatch(Event(kind = EventKind.key_down, key = Key.tab))
     render(app)
-    assert(path.text().ends_with("y") and committed.ends_with("y"))
+    # A click into the field selects all on macOS and places the caret on
+    # Windows, so "y" either replaced "x" or went in front of it.
+    assert(path.text() == committed and (committed == "y" or committed == "yx"))
     # Escape still drops what was typed since.
     click(app, line.x + 6.0, line.y + line.height * 0.5)
     render(app)
     app.dispatch(Event(kind = EventKind.text_input, codepoint = 122))
     app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
-    assert(not path.text().ends_with("z"))
+    assert(path.text() == committed)
     kept.disconnect()
     clicked.disconnect()
     app.close()
