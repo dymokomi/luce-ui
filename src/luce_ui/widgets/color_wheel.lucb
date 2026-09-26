@@ -24,7 +24,7 @@ let part_ring: i64 = 1
 let part_field: i64 = 2
 
 ## A square color selector after GIMP's and Krita's. Hue is 0..360 and
-## counter-clockwise from the right; saturation and brightness are 0..1 of
+## clockwise from the right, as GIMP's and Krita's; saturation and brightness are 0..1 of
 ## encoded sRGB, as Photoshop's HSB. The widget keeps its own HSB, so a grey
 ## or black keeps the hue and saturation it was reached with: the host sets
 ## them with `set_hsb` and reads them back after `on_change`. A press on the
@@ -124,7 +124,7 @@ pub struct ColorWheel: Widget:
 
     pub func ring_point_y(hue: f64) -> f64:
         let wheel = self.geometry()
-        return wheel.y - math.sin(radians(hue)) * (wheel.outer + wheel.inner) * 0.5
+        return wheel.y + math.sin(radians(hue)) * (wheel.outer + wheel.inner) * 0.5
 
     pub func field_point_x(saturation: f64, brightness: f64) -> f64:
         return self.field_point(saturation, brightness).x
@@ -151,7 +151,7 @@ pub struct ColorWheel: Widget:
         let wheel = self.geometry()
         if self.shape == wheel_disc:
             let a = radians(self.hue)
-            return Point(wheel.x + math.cos(a) * saturation * wheel.outer, wheel.y - math.sin(a) * saturation * wheel.outer)
+            return Point(wheel.x + math.cos(a) * saturation * wheel.outer, wheel.y + math.sin(a) * saturation * wheel.outer)
         if self.shape == wheel_square:
             return Point(wheel.x - wheel.field + saturation * wheel.field * 2.0, wheel.y + wheel.field - brightness * wheel.field * 2.0)
         # The triangle's point is its corners weighted: tip s·v, white v·(1−s), black 1−v.
@@ -181,12 +181,12 @@ pub struct ColorWheel: Widget:
         if self.part == part_ring:
             # At the very centre the angle is no angle: keep the hue.
             if dx * dx + dy * dy > 1e-9:
-                self.hue = wrap_degrees(math.atan2(-dy, dx) * 180.0 / math.pi)
+                self.hue = wrap_degrees(math.atan2(dy, dx) * 180.0 / math.pi)
             return
         if self.shape == wheel_disc:
             let d = math.sqrt(dx * dx + dy * dy)
             if d > 1e-9:
-                self.hue = wrap_degrees(math.atan2(-dy, dx) * 180.0 / math.pi)
+                self.hue = wrap_degrees(math.atan2(dy, dx) * 180.0 / math.pi)
             self.saturation = math.clamp(d / math.max(1.0, wheel.outer), 0.0, 1.0)
             return
         if self.shape == wheel_square:
@@ -233,7 +233,7 @@ pub struct ColorWheel: Widget:
             let a = radians(self.hue)
             let middle = (wheel.outer + wheel.inner) * 0.5
             let side = math.max(7.0, (wheel.outer - wheel.inner) * 0.7)
-            try marker(&painter, wheel.x + math.cos(a) * middle, wheel.y - math.sin(a) * middle, side)
+            try marker(&painter, wheel.x + math.cos(a) * middle, wheel.y + math.sin(a) * middle, side)
         let spot = self.field_point(self.saturation, self.brightness)
         try marker(&painter, spot.x, spot.y, 9.0)
 
@@ -353,13 +353,14 @@ func wheel_in(width: f64, height: f64, shape: i64) -> Wheel:
     return Wheel(width * 0.5, height * 0.5, outer, 0.0 if shape == wheel_disc else inner, field)
 
 ## The triangle's corners for `hue`: the pure hue at the tip, white a third of
-## a turn clockwise, black a third counter-clockwise, as the shader draws them.
+## a turn back, black a third on (with the tip right: white top-left, black
+## bottom-left), as the shader draws them.
 func triangle(wheel: Wheel, hue: f64) -> Point[3]:
     var corners: Point[3]
     let turns: f64[3] = [0.0, -120.0, 120.0]
     for index in 0..<3:
         let a = radians(hue + turns[index])
-        corners[index] = Point(wheel.x + math.cos(a) * wheel.field, wheel.y - math.sin(a) * wheel.field)
+        corners[index] = Point(wheel.x + math.cos(a) * wheel.field, wheel.y + math.sin(a) * wheel.field)
     return corners
 
 ## The weights of `p` against the corners (tip, white, black).
@@ -423,13 +424,13 @@ test "the triangle's corners and weights agree with the shader's HSB":
     let wheel = wheel_in(200.0, 200.0, wheel_triangle)
     assert(wheel.x == 100.0 and wheel.outer == 97.0 and math.abs(wheel.inner - 85.36) < 1e-9)
     let corners = triangle(wheel, 0.0)
-    # Red points right; white is below-left, black above-left.
+    # Red points right; white is above-left, black below-left.
     assert(corners[0].x > 100.0 and math.abs(corners[0].y - 100.0) < 1e-9)
-    assert(corners[1].y > 100.0 and corners[2].y < 100.0)
+    assert(corners[1].y < 100.0 and corners[2].y > 100.0 and corners[1].x < 100.0)
     let weights = barycentric(corners[1], corners)
     assert(math.abs(weights[1] - 1.0) < 1e-9 and math.abs(weights[0]) < 1e-9)
     # Outside past the white corner lands on it.
-    let far = closest_in_triangle(Point(corners[1].x - 50.0, corners[1].y + 50.0), corners)
+    let far = closest_in_triangle(Point(corners[1].x - 50.0, corners[1].y - 50.0), corners)
     assert(math.abs(far.x - corners[1].x) < 1e-9 and math.abs(far.y - corners[1].y) < 1e-9)
     assert(wrap_degrees(-30.0) == 330.0 and wrap_degrees(720.0) == 0.0)
 

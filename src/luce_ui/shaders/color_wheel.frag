@@ -31,10 +31,10 @@ vec3 decode(vec3 c) {
     return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
 }
 
-// Screen y runs down; hue runs counter-clockwise from the right.
+// Screen y runs down; hue runs clockwise from the right, as GIMP's and Krita's.
 vec2 toward(float turns) {
     float a = turns * TAU;
-    return vec2(cos(a), -sin(a));
+    return vec2(cos(a), sin(a));
 }
 
 float cross2(vec2 a, vec2 b) {
@@ -49,7 +49,7 @@ float inside_edge(vec2 p, vec2 a, vec2 b, float winding) {
 void main() {
     vec2 p = gl_FragCoord.xy - vec2(params.cx, params.cy);
     float d = length(p);
-    float turns = fract(atan(-p.y, p.x) / TAU);
+    float turns = fract(atan(p.y, p.x) / TAU);
     vec3 color = vec3(0.0);
     float cover = 0.0;
     if (params.mode > 1.5) {
@@ -68,7 +68,7 @@ void main() {
             float v = clamp((params.shape - p.y) / (2.0 * params.shape), 0.0, 1.0);
             inner_color = hsv(params.hue, s, v);
         } else {
-            // The tip is the pure hue, white a third of a turn clockwise, black a third counter-clockwise.
+            // The tip is the pure hue, white a third of a turn back (above it when it points right), black a third on.
             vec2 tip = toward(params.hue) * params.shape;
             vec2 white = toward(params.hue - 1.0 / 3.0) * params.shape;
             vec2 black = toward(params.hue + 1.0 / 3.0) * params.shape;
