@@ -7,6 +7,7 @@ import interop
 import math
 import memory
 import utf8
+import window
 import luce_ui.text.editing as editing
 import luce_ui.result as result
 from luce_ui.text.document import Document
@@ -52,11 +53,19 @@ pub struct LineInput:
                 if self.document.first() != self.document.last():
                     let text = try self.document.text(self.document.first(), self.document.last())
                     defer text.release()
-                    try clipboard.write_text(text.value)
+                    # Without a desktop clipboard (no X display) a copy does nothing.
+                    clipboard.write_text(text.value) catch failure:
+                        if failure.code != window.unsupported:
+                            error(failure.code, failure.message)
+                        return true
                     if event.key == input.Key.x:
                         try self.document.insert("")
             elif command and event.key == input.Key.v:
-                let text = try clipboard.read_text()
+                # Without a desktop clipboard a paste does nothing.
+                let text = clipboard.read_text() catch failure:
+                    if failure.code != window.unsupported:
+                        error(failure.code, failure.message)
+                    return true
                 defer text.release()
                 # Pasted text is made one line first: a path copied with its line
                 # break (PowerShell's Set-Clipboard adds one) still pastes.

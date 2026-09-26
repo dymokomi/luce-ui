@@ -9,6 +9,7 @@ import memory
 import ownership
 import time
 import utf8
+import window
 import luce_ui.layout as layout
 import luce_ui.result as result
 import luce_ui.text.drawing as drawing
@@ -145,7 +146,10 @@ pub struct TextEditor: Widget:
         if self.has_selection():
             let text = try self.selected_text()
             defer text.release()
-            try clipboard.write_text(text.value)
+            # Without a desktop clipboard (no X display) a copy does nothing.
+            clipboard.write_text(text.value) catch failure:
+                if failure.code != window.unsupported:
+                    error(failure.code, failure.message)
 
     ## Copy the selection and delete it. Does nothing when read-only or when
     ## nothing is selected.
@@ -162,6 +166,9 @@ pub struct TextEditor: Widget:
         if self.read_only:
             return result.success[unit](())
         let text = clipboard.read_text() catch failure:
+            # Without a desktop clipboard (no X display) a paste does nothing.
+            if failure.code == window.unsupported:
+                return result.success[unit](())
             return result.failure[unit](failure.code, failure.message)
         defer text.release()
         return self.insert(text.value)
@@ -675,12 +682,18 @@ pub struct TextEditor: Widget:
                 if self.document.first() != self.document.last():
                     let text = try self.selected_text()
                     defer text.release()
-                    try clipboard.write_text(text.value)
+                    clipboard.write_text(text.value) catch failure:
+                        if failure.code != window.unsupported:
+                            error(failure.code, failure.message)
+                        return
                     if event.key == input.Key.x:
                         try self.document.insert("")
                 return
             if event.key == input.Key.v and not self.read_only:
-                let text = try clipboard.read_text()
+                let text = clipboard.read_text() catch failure:
+                    if failure.code != window.unsupported:
+                        error(failure.code, failure.message)
+                    return
                 defer text.release()
                 let normalized = try editing.normalize_lines(text.value)
                 defer normalized.release()
