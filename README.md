@@ -134,8 +134,9 @@ let workspace = DStack([files, source], font = font)
 workspace.move(source, files, DockPosition.right)
 ```
 
-Every group has a trailing `+` menu. Applications create content in response to
-`on_add`; `set_close_handler` can refuse closing an unsaved document. Header
+Every group has a trailing `+` menu listing the application's panels
+(`set_catalog`) and Split Right/Down. Applications make a picked panel in
+response to `on_add`; `set_close_handler` can refuse closing an unsaved document. Header
 dragging moves tabs: dropped on a tab strip they stack, on a pane's edge they
 split it, and anywhere else they float in their own window over the panes. A
 floating window moves by its title, resizes by its border, closes by its `×`, and

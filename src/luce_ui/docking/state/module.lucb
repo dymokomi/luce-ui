@@ -20,6 +20,7 @@ from luce_ui.font import Font
 from luce_ui.theme import Theme
 from luce_ui.widgets.panel import Panel
 from luce_ui.widgets.action_popup import ActionPopup
+from luce_ui.command import Command, command_type
 from luce_ui.docking.model import Model, Geometry, DockPosition
 from luce_ui.painter import Painter
 
@@ -40,23 +41,33 @@ enum Gesture as u8:
     closing = 2
     resizing = 3
 
-## The application's cue to add a panel, from an add menu: `panel` is the one
-## the menu was opened on (none from the empty stack's button) and `position`
-## is where the new panel should dock relative to it.
+## The application's cue to make a panel, from the add menu: `id` is the
+## catalog entry picked, `panel` the one the menu was opened on (none from the
+## empty stack's button) and `position` where the new panel docks relative to
+## it. A panel of that entry already open is focused instead, with no request.
 pub struct DockRequest:
     pub let panel: interop.Reference[Panel]?
     pub let position: DockPosition
+    var name: interop.Owned[str]
 
-    pub func init(panel: interop.Reference[Panel]?, position: DockPosition):
+    ## Takes `name`, the catalog id.
+    pub func init(panel: interop.Reference[Panel]?, position: DockPosition, name: interop.Owned[str]):
         var retained: interop.Reference[Panel]? = none
         if let value = panel: retained = value.clone()
         self.panel = retained
         self.position = position
+        self.name = name
+
+    ## The catalog entry to make a panel of.
+    pub func id() -> interop.Owned[str]:
+        return self.name.clone()
 
     pub mutating func close():
+        self.name.release()
         release_panel(self.panel)
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.name.trace(visit, context)
         if let panel = self.panel: panel.trace(visit, context)
 
 pub let dock_request_type: interop.Type[DockRequest] = interop.Type[DockRequest]("Dock request", DockRequest.close, DockRequest.trace, closeable = true, main_thread = true)
@@ -77,6 +88,8 @@ pub struct State: Arrangement, CursorSource:
     pub let added: interop.Signal[interop.Reference[DockRequest]]
     pub let closed: interop.Signal[interop.Reference[Panel]]
     var close_handler: interop.Callback[interop.Reference[Panel], bool]?
+    ## The panels the add menu offers (catalog.lucb).
+    var catalog: Catalog
     var menu_target: usize
     var pressed_tab: usize
     var pressed_close: usize
@@ -120,6 +133,9 @@ pub struct State: Arrangement, CursorSource:
         let connections = try alloc ConnectionSlot[3] in memory.heap
         errdefer free(connections) in memory.heap
         let frames = try alloc FrameSlot[129] in memory.heap
+        errdefer free(frames) in memory.heap
+        var catalog = try Catalog.make()
+        errdefer catalog.release()
         for index in 0..<panels.length: panels[index] = none
         for index in 0..<frames.length: frames[index] = none
         for index in 0..<connections.length: connections[index] = none
@@ -135,6 +151,7 @@ pub struct State: Arrangement, CursorSource:
         self.added = added
         self.closed = closed
         self.close_handler = none
+        self.catalog = catalog
         self.menu_target = 0
         self.pressed_tab = 0
         self.pressed_close = 0
@@ -434,7 +451,8 @@ pub struct State: Arrangement, CursorSource:
         try self.remove(panel)
 
     ## Open the add menu below `group`'s add button (the empty stack's button when
-    ## `group` is 0), aimed at that group's selected panel.
+    ## `group` is 0), aimed at that group's selected panel: the catalog's panels,
+    ## then the ways to split (catalog.lucb).
     pub mutating func open_menu(group: usize) -> !:
         let popup = self.popup else error(result.invalid, "dynamic stack has no add menu")
         let geometry = self.geometry(self.size())
@@ -443,31 +461,8 @@ pub struct State: Arrangement, CursorSource:
         let box = popup.value().layout()
         defer box.release()
         try box.value().set_popup_point(bounds.x, bounds.y + bounds.height)
-        try popup.value().open()
-
-    func request(position: DockPosition) -> interop.Outcome[unit]:
-        var target: interop.Reference[Panel]? = none
-        if self.menu_target != 0:
-            let panel = self.panel(self.menu_target) catch failure:
-                return result.failure[unit](failure.code, failure.message)
-            target = panel
-        defer release_panel(target)
-        let request = interop.Reference[DockRequest].adopt(new DockRequest(target, position) in memory.heap, dock_request_type, memory.heap) catch failure:
-            return result.failure[unit](failure.code, failure.message)
-        defer request.release()
-        return self.added.emit(request)
-
-    ## The add menu's actions: emit a DockRequest for a new panel as a tab of the
-    ## menu's target, beside it on the right (a vertical divider), or below it (a
-    ## horizontal divider).
-    pub mutating func add_tab(argument: unit) -> interop.Outcome[unit]:
-        return self.request(DockPosition.tab)
-
-    pub mutating func split_vertical(argument: unit) -> interop.Outcome[unit]:
-        return self.request(DockPosition.right)
-
-    pub mutating func split_horizontal(argument: unit) -> interop.Outcome[unit]:
-        return self.request(DockPosition.bottom)
+        self.catalog.position = DockPosition.tab
+        try show_menu(&self, false)
 
     ## Where the drag in progress would dock if released now, a dragged tab or a
     ## moved floating window; an unaccepted Drop when it would not dock.
@@ -740,6 +735,7 @@ pub struct State: Arrangement, CursorSource:
                 # already have closed an alias, so cleanup only releases it.
                 connection.release()
         if let callback = self.close_handler: callback.release()
+        self.catalog.release()
         self.selected.close()
         self.selected.release()
         self.added.close()
@@ -762,6 +758,7 @@ pub struct State: Arrangement, CursorSource:
         for retained in self.connections:
             if let connection = retained: connection.trace(visit, context)
         if let callback = self.close_handler: callback.trace(visit, context)
+        self.catalog.trace(visit, context)
         self.selected.trace(visit, context)
         self.added.trace(visit, context)
         self.closed.trace(visit, context)

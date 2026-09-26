@@ -1,5 +1,7 @@
 ## A panel is one persistent piece of content in a dynamic workspace. Docking
-## changes its position, never its content owner or document state.
+## changes its position, never its content owner or document state. A panel
+## made from a DStack's catalog carries that entry's `id`, so the stack's add
+## menu knows it is open.
 import gpu
 import interop
 import ownership
@@ -12,15 +14,18 @@ pub struct Panel: Widget:
     let box: interop.Reference[Layout]
     var caption: interop.Owned[str]
     var description: interop.Owned[str]
+    var name: interop.Owned[str]
     var symbol: IconKind
     let closable: bool
     ## A bar under the content, kept when the content changes: the pane's toolbar.
     var footer: interop.Interface[Widget]?
 
     pub func init(text: str, content: interop.Interface[Widget], icon: IconKind = IconKind.blank,
-                  minimum: Size = Size(120.0, 60.0), closable: bool = true, footer: interop.Interface[Widget]? = none) -> !:
+                  minimum: Size = Size(120.0, 60.0), closable: bool = true, footer: interop.Interface[Widget]? = none, id: str = "") -> !:
         let caption = try interop.copy_text(text)
         errdefer caption.release()
+        let name = try interop.copy_text(id)
+        errdefer name.release()
         let description = try interop.copy_text("")
         errdefer description.release()
         let box = try layout.make_layout(layout.Axis.vertical)
@@ -35,6 +40,7 @@ pub struct Panel: Widget:
         self.box = box
         self.caption = caption
         self.description = description
+        self.name = name
         self.symbol = icon
         self.closable = closable
 
@@ -46,6 +52,10 @@ pub struct Panel: Widget:
 
     pub func detail() -> interop.Owned[str]:
         return self.description.clone()
+
+    ## The catalog entry the panel was made from; "" for one outside the catalog.
+    pub func id() -> interop.Owned[str]:
+        return self.name.clone()
 
     pub func icon() -> IconKind:
         return self.symbol
@@ -92,11 +102,13 @@ pub struct Panel: Widget:
         return result.success[unit](())
 
     pub mutating func close():
+        self.name.release()
         self.description.release()
         self.caption.release()
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.name.trace(visit, context)
         self.description.trace(visit, context)
         self.caption.trace(visit, context)
         self.box.trace(visit, context)

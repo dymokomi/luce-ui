@@ -30,8 +30,11 @@ lost capture cancel without changing the committed topology. During the drag a t
 a group that loses its final panel disappears and its sibling expands. Cancellation
 restores the original split fractions and tab order.
 
-The `+` menu requests Add Tab, Split Vertical (side by side) or Split Horizontal
-(above and below). Luced supplies an empty editor panel ready for a file. Opening
+The `+` menu lists the application's catalog of panels (`set_catalog`), with a
+tick beside each one already open, then **Split Right…** and **Split Down…**. A
+pick docks the panel as a tab of the group; a split lists the panels again and
+docks the next pick beside the group. An open panel moves there and is
+selected; one that is not open is asked of the application through `on_add`. Opening
 an already-open file selects its existing panel. Session persistence, floating
 OS windows and shared-document views are separate future features.
 

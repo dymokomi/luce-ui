@@ -52,15 +52,44 @@ pub func docking() -> unit!:
     assert(editor.text() == "alpha edited")
     editor.undo()
     assert(editor.text() == "alpha")
+    # The add menu lists the catalog: a pick docks a new panel as a tab of the
+    # group; picking it again only selects it; a split lists the panels again
+    # and docks the next pick beside the group.
+    stack.set_catalog(["gamma", "delta"], ["Gamma", "Delta"])
     var requests = 0
-    let added = stack.on_add(func(request: DockRequest):
-        let target = request.panel else return
-        assert(target is first and request.position == DockPosition.right)
+    var positions: list[DockPosition] = []
+    let added = stack.on_add(func(request: DockRequest) -> unit!:
+        let made = Panel(request.id(), Text(request.id()), minimum = Size(100.0, 60.0), id = request.id())
+        stack.add(made, request.panel, request.position)
+        positions.append(request.position)
         requests += 1)
     let plus = stack.add_bounds(first)
     click(app, plus.x + plus.width * 0.5, plus.y + 5.0)
     app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
-    assert(requests == 1)
+    app.layout(805.0, 505.0)
+    let gamma = stack.find("gamma") else return
+    assert(requests == 1 and positions[0] == DockPosition.tab and stack.same_group(first, gamma))
+    let groups = stack.group_count()
+    stack.select(first)
+    app.layout(805.0, 505.0)
+    let again = stack.add_bounds(first)
+    click(app, again.x + again.width * 0.5, again.y + 5.0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    app.layout(805.0, 505.0)
+    assert(requests == 1 and gamma.layout().is_visible() and stack.group_count() == groups)
+    let split = stack.add_bounds(first)
+    click(app, split.x + split.width * 0.5, split.y + 5.0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.down))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.down))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.down))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    app.layout(805.0, 505.0)
+    assert(requests == 2 and positions[1] == DockPosition.right and stack.group_count() == groups + 1)
+    let delta = stack.find("delta") else return
+    stack.remove(delta)
+    stack.remove(gamma)
+    assert(stack.find("gamma") == none)
     added.disconnect()
     # A refused close leaves both tab membership and content intact.
     stack.set_close_handler(func(panel: Panel) -> bool: return false)

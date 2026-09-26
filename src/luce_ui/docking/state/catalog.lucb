@@ -1,0 +1,181 @@
+#==============================================================================================
+#
+#   docking/state/catalog - The add menu's panels
+#
+#   DESCRIPTION:
+#       The application names the panels it can make (`DStack.set_catalog`). A group's "+"
+#       lists them, a tick beside each one already open, then Split Right and Split Down.
+#       Picking a panel docks it as a tab of that group; picking a split lists the panels
+#       again, and the next pick docks the chosen one beside the group. A panel already
+#       open moves there and is selected; one that is not is asked of the application
+#       through a DockRequest carrying its id, which answers by making and adding it.
+#
+#==============================================================================================
+
+type CommandSlot = interop.Reference[Command]?
+
+## At most this many panels in a catalog.
+let catalog_limit: usize = 64
+
+## The menu's entries past the catalog, in `Catalog.fixed`.
+let fixed_divider: usize = 0
+let fixed_right: usize = 1
+let fixed_down: usize = 2
+let fixed_heading: usize = 3
+
+## The catalog's commands, the ones every menu shows after them, and where the
+## next pick docks: a tab, or beside the group after a split was picked.
+pub struct Catalog:
+    var entries: CommandSlot[]
+    var links: ConnectionSlot[]
+    var count: usize
+    var fixed: CommandSlot[]
+    var position: DockPosition
+
+    static func make() -> Catalog!:
+        let entries = try alloc CommandSlot[catalog_limit] in memory.heap
+        errdefer free(entries) in memory.heap
+        let links = try alloc ConnectionSlot[catalog_limit] in memory.heap
+        errdefer free(links) in memory.heap
+        let fixed = try alloc CommandSlot[4] in memory.heap
+        for index in 0..<catalog_limit:
+            entries[index] = none
+            links[index] = none
+        for index in 0..<fixed.length: fixed[index] = none
+        return Catalog(entries = entries, links = links, count = 0, fixed = fixed, position = DockPosition.tab)
+
+    ## Drop the catalog's commands and their connections, keeping the fixed ones.
+    mutating func clear():
+        for index in 0..<self.count:
+            if let link = self.links[index]: link.release()
+            if let command = self.entries[index]: command.release()
+            self.links[index] = none
+            self.entries[index] = none
+        self.count = 0
+
+    mutating func release():
+        self.clear()
+        for slot in self.fixed:
+            if let command = slot: command.release()
+        free(self.entries) in memory.heap
+        free(self.links) in memory.heap
+        free(self.fixed) in memory.heap
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        for index in 0..<self.count:
+            if let link = self.links[index]: link.trace(visit, context)
+            if let command = self.entries[index]: command.trace(visit, context)
+        for slot in self.fixed:
+            if let command = slot: command.trace(visit, context)
+
+## Keep `commands` (divider, Split Right, Split Down and the heading shown
+## before a split's list), whose triggers the owner has bound to `pick_from_menu`.
+pub func set_fixed(state: State*, commands: const interop.Reference[Command][]) -> !:
+    if commands.length != 4: error(result.invalid, "the add menu takes four fixed commands")
+    for index in 0..<4:
+        if let previous = state.catalog.fixed[index]: previous.release()
+        state.catalog.fixed[index] = commands[index].clone()
+
+## Offer the panels `ids` (names `titles`) in the add menu, in that order,
+## replacing what it offered; `owner` is the state's own reference, which each
+## entry's command calls back.
+pub func set_catalog(state: State*, owner: interop.Reference[State], ids: const str[], titles: const str[]) -> !:
+    if ids.length != titles.length or ids.length > catalog_limit:
+        error(result.invalid, "a catalog takes up to 64 ids with a title each")
+    state.catalog.clear()
+    for index in 0..<ids.length:
+        if ids[index].length == 0: error(result.invalid, "a catalog id cannot be empty")
+        let command = try interop.Reference[Command].adopt(new Command(titles[index], id = ids[index]) in memory.heap, command_type, memory.heap)
+        errdefer command.release()
+        let picked = try interop.Callback[unit, unit].bind_mutating(owner, pick_from_menu)
+        defer picked.release()
+        let link = try command.value().on_trigger(picked)
+        state.catalog.entries[index] = command
+        state.catalog.links[index] = link
+        state.catalog.count = index + 1
+
+## The slot of the open panel made from catalog entry `id`, docked or
+## floating; 0 when none is open.
+pub func catalog_slot(state: const State*, id: str) -> usize:
+    if id.length == 0: return 0
+    for index in 1..<state.panels.length:
+        if let panel = state.panels[index]:
+            let name = panel.value().id()
+            defer name.release()
+            if name.value == id: return index
+    return 0
+
+## Show the add menu: the catalog with ticks for open panels, then the splits;
+## `beside`, after a split was picked, the heading and the catalog alone.
+func show_menu(state: State*, beside: bool) -> !:
+    let popup = state.popup else error(result.invalid, "dynamic stack has no add menu")
+    var shown: interop.Reference[Command][68] = ---
+    var count: usize = 0
+    if beside:
+        if let heading = state.catalog.fixed[fixed_heading]:
+            shown[count] = heading
+            count += 1
+    for index in 0..<state.catalog.count:
+        let command = state.catalog.entries[index] else continue
+        command.value().set_checked(catalog_slot(state, command.value().id()) != 0)
+        shown[count] = command
+        count += 1
+    if not beside and state.catalog.count > 0:
+        for slot in [fixed_divider, fixed_right, fixed_down]:
+            if let command = state.catalog.fixed[slot]:
+                shown[count] = command
+                count += 1
+    # With nothing to offer there is nothing to split beside either.
+    if count == 0 or (beside and count == 1): return
+    try popup.value().set_commands(shown[..<count])
+    try popup.value().open()
+
+## Every add menu command lands here: read which row was chosen, then dock the
+## picked panel, or list the panels again after a split was picked.
+pub func pick_from_menu(state: State*, argument: unit) -> interop.Outcome[unit]:
+    let popup = state.popup else return result.success[unit](())
+    let chosen = popup.value().chosen()
+    let count = (i64)state.catalog.count
+    var entry = chosen
+    if state.catalog.position != DockPosition.tab:
+        # The heading comes first in a split's list.
+        entry = chosen - 1
+    elif chosen == count + (i64)fixed_right or chosen == count + (i64)fixed_down:
+        state.catalog.position = DockPosition.right if chosen == count + (i64)fixed_right else DockPosition.bottom
+        show_menu(state, true) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+    let position = state.catalog.position
+    state.catalog.position = DockPosition.tab
+    if entry < 0 or entry >= count: return result.success[unit](())
+    dock_entry(state, (usize)entry, position) catch failure:
+        return result.failure[unit](failure.code, failure.message)
+    return result.success[unit](())
+
+## Put catalog entry `entry` at `position` beside the menu's target: moved
+## there and selected when open, else asked of the application.
+func dock_entry(state: State*, entry: usize, position: DockPosition) -> !:
+    let command = state.catalog.entries[entry] else return
+    let id = command.value().id()
+    let open = catalog_slot(state, id)
+    let target = state.menu_target
+    if open != 0:
+        let together = not floating(state, open) and not floating(state, target) and state.model.tabs[open].group == state.model.tabs[target].group
+        if target == 0 or open == target or (position == DockPosition.tab and together):
+            try state.select(open)
+            return
+        let panel = try state.panel(open)
+        defer panel.release()
+        let relative = try state.panel(target)
+        defer relative.release()
+        try state.move(panel, relative, position)
+        return
+    var relative: interop.Reference[Panel]? = none
+    if target != 0: relative = try state.panel(target)
+    defer release_panel(relative)
+    let name = try interop.copy_text(id)
+    let request = try interop.Reference[DockRequest].adopt(new DockRequest(relative, position, name) in memory.heap, dock_request_type, memory.heap)
+    defer request.release()
+    let delivered = state.added.emit(request)
+    defer delivered.release()
+    try delivered.get()

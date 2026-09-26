@@ -15,7 +15,7 @@ from luce_ui.font import Font, selected_font
 from luce_ui.command import Command, command_type
 from luce_ui.widgets.panel import Panel
 from luce_ui.widgets.action_popup import ActionPopup, action_popup_type
-from luce_ui.docking.state import State, DockRequest, state_type, set_owner, add_floating, make_floating, floating, float_bounds, floating_count, default_window
+from luce_ui.docking.state import State, DockRequest, state_type, set_owner, add_floating, make_floating, floating, float_bounds, floating_count, default_window, set_catalog, set_fixed, pick_from_menu, catalog_slot
 from luce_ui.docking.model import DockPosition
 
 ## The top child of the stack: draws the drag previews (drop target, floating
@@ -59,8 +59,10 @@ let overlay_type: interop.Type[Overlay] = interop.Type[Overlay]("Dock preview", 
 ## A docking workspace of Panels: tab groups in a resizable split tree, plus
 ## panels floating in their own windows over it. Users drag tabs to regroup,
 ## split or float them, resize with the dividers, and add or close panels
-## through the header buttons; the application answers through `on_add`,
-## `on_close` and the close handler.
+## through the header buttons. A group's "+" lists the panels of the catalog
+## (`set_catalog`) and the ways to split; the application makes a picked panel
+## that is not open yet through `on_add`, and answers `on_close` and the close
+## handler.
 pub struct DStack: Widget:
     let box: interop.Reference[Layout]
     let state: interop.Reference[State]
@@ -87,22 +89,23 @@ pub struct DStack: Widget:
         defer overlay.release()
         let overlay_widget = overlay.as_interface[Widget](overlay.value())
         defer overlay_widget.release()
-        let tab = try interop.Reference[Command].adopt(new Command("Add Tab") in memory.heap, command_type, memory.heap)
-        defer tab.release()
-        let vertical = try interop.Reference[Command].adopt(new Command("Split Vertical") in memory.heap, command_type, memory.heap)
-        defer vertical.release()
-        let horizontal = try interop.Reference[Command].adopt(new Command("Split Horizontal") in memory.heap, command_type, memory.heap)
-        defer horizontal.release()
-        let add_tab = try interop.Callback[unit, unit].bind_mutating(state, State.add_tab)
-        defer add_tab.release()
-        state.value().connections[0] = try tab.value().on_trigger(add_tab)
-        let split_vertical = try interop.Callback[unit, unit].bind_mutating(state, State.split_vertical)
-        defer split_vertical.release()
-        state.value().connections[1] = try vertical.value().on_trigger(split_vertical)
-        let split_horizontal = try interop.Callback[unit, unit].bind_mutating(state, State.split_horizontal)
-        defer split_horizontal.release()
-        state.value().connections[2] = try horizontal.value().on_trigger(split_horizontal)
-        let popup = try interop.Reference[ActionPopup].adopt(new ActionPopup([vertical, horizontal, tab], selected) in memory.heap, action_popup_type, memory.heap)
+        # The add menu's rows after the catalog: a rule, the two splits, and the
+        # heading a split's list of panels opens with.
+        let divider = try interop.Reference[Command].adopt(new Command("", divider = true) in memory.heap, command_type, memory.heap)
+        defer divider.release()
+        let right = try interop.Reference[Command].adopt(new Command("Split Right…") in memory.heap, command_type, memory.heap)
+        defer right.release()
+        let down = try interop.Reference[Command].adopt(new Command("Split Down…") in memory.heap, command_type, memory.heap)
+        defer down.release()
+        let heading = try interop.Reference[Command].adopt(new Command("Dock beside:") in memory.heap, command_type, memory.heap)
+        defer heading.release()
+        heading.value().set_enabled(false)
+        let picked = try interop.Callback[unit, unit].bind_mutating(state, pick_from_menu)
+        defer picked.release()
+        state.value().connections[0] = try right.value().on_trigger(picked)
+        state.value().connections[1] = try down.value().on_trigger(picked)
+        try set_fixed(state.value(), [divider, right, down, heading])
+        let popup = try interop.Reference[ActionPopup].adopt(new ActionPopup([right, down], selected) in memory.heap, action_popup_type, memory.heap)
         defer popup.release()
         try state.value().install(overlay_widget, popup)
         for panel in panels:
@@ -281,8 +284,21 @@ pub struct DStack: Widget:
     pub func on_select(callback: interop.Callback[interop.Reference[Panel], unit]) -> interop.Reference[interop.Connection]!:
         return try self.state.value().selected.connect(callback)
 
-    ## Called with a DockRequest when the user picks an entry of an add menu: the
-    ## application creates the panel and adds it where the request says.
+    ## Offer panels `ids`, named `titles`, in every group's add menu, replacing
+    ## what it offered. Give each panel made for an entry its id (`Panel(id =)`)
+    ## so the menu ticks it while it is open and focuses it when picked again.
+    pub mutating func set_catalog(ids: const str[], titles: const str[]) -> !:
+        try set_catalog(self.state.value(), self.state, ids, titles)
+
+    ## The open panel made from catalog entry `id`, or none.
+    pub func find(id: str) -> interop.Reference[Panel]?!:
+        let slot = catalog_slot(self.state.value(), id)
+        if slot == 0: return none
+        return try self.state.value().panel(slot)
+
+    ## Called with a DockRequest when the user picks a catalog panel that is not
+    ## open: the application makes it with the request's id and adds it where the
+    ## request says.
     pub func on_add(callback: interop.Callback[interop.Reference[DockRequest], unit]) -> interop.Reference[interop.Connection]!:
         return try self.state.value().added.connect(callback)
 

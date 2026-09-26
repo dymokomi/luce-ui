@@ -177,18 +177,26 @@ moved; inactive tabs are hidden from drawing, hit testing and keyboard traversal
 | `panel_bounds(panel)`, `tab_bounds(panel)`, `add_bounds(panel)` | Inspect geometry local to DStack; an overflowed tab has empty bounds |
 | `drag_bounds()` | Bounds of the floating drag label; empty outside a drag |
 | `active_panel()` | The focused panel, or the most recently selected panel; none when empty |
+| `set_catalog(ids, titles)` | The panels every group's `+` menu offers, in order |
+| `find(id)` | The open panel made from catalog entry `id`, or none |
 
-`DockPosition` is `tab`, `left`, `right`, `top` or `bottom`. Horizontal split
-geometry places children side by side; the menu calls this **Split Vertical**
-because its divider is vertical. **Split Horizontal** places a new group below.
+`DockPosition` is `tab`, `left`, `right`, `top` or `bottom`.
 
-The `+` menu emits `on_add(request)` with a retained `DockRequest`: `panel` is the
-relative panel (none for an empty stack), and `position` is the requested placement.
-The application supplies content, for example:
+Every group's `+` menu lists the catalog set by `set_catalog(ids, titles)`, a
+tick beside each entry whose panel is open, then **Split Right…** (a group
+beside, right) and **Split Down…** (a group below). A pick docks that panel as
+a tab of the group; after a split, the menu lists the panels again under
+"Dock beside:" and the next pick docks there. Give each panel made for an entry
+its id, `Panel(title, content, id = "brushes")`, so the menu knows it is open:
+picking an open one moves it there and selects it. For one that is not open the
+menu emits `on_add(request)` with a retained `DockRequest`: `id()` is the entry,
+`panel` the relative panel (none for an empty stack) and `position` the
+placement. The application makes the panel, for example:
 
 ```luce
+workspace.set_catalog(["brushes", "swatches"], ["Brushes", "Swatches"])
 let connection = workspace.on_add(func(request: DockRequest) -> unit!:
-    let panel = Panel("New document", TextEditor("", font = font))
+    let panel = Panel(title_of(request.id()), content_for(request.id()), id = request.id())
     workspace.add(panel, relative_to = request.panel, position = request.position))
 ```
 

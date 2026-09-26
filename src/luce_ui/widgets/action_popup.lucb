@@ -40,6 +40,9 @@ pub struct ActionPopup: Widget:
     ## even when the pointer hovers another row before it is drawn.
     var reveal: i64
     var pressed: i64
+    ## The command the last choice triggered, as its place in the presented
+    ## commands; -1 before any. One handler serving many rows reads it.
+    var picked: i64
     ## Opened by a press still held (a tool group's flyout): letting go over
     ## an item chooses it.
     var held: bool
@@ -81,6 +84,7 @@ pub struct ActionPopup: Widget:
         self.reveal = -1
         self.first = 0
         self.pressed = -1
+        self.picked = -1
         self.held = false
 
     pub func layout() -> interop.Reference[Layout]:
@@ -102,6 +106,11 @@ pub struct ActionPopup: Widget:
 
     pub func is_open() -> bool:
         return self.box.value().is_visible()
+
+    ## The place, among the presented commands, of the one the last choice
+    ## triggered; -1 before any choice.
+    pub func chosen() -> i64:
+        return self.picked
 
     ## Show the list with an empty query and the first enabled row selected.
     pub mutating func open(held: bool = false) -> !:
@@ -345,6 +354,7 @@ pub struct ActionPopup: Widget:
         # replace the containing view or fail while saving a document.
         self.box.value().set_visible(false)
         self.pressed = -1
+        self.picked = (i64)self.matches[(usize)self.selected]
         return action.value().trigger()
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
