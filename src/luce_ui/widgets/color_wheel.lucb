@@ -164,14 +164,7 @@ pub struct ColorWheel: Widget:
 
     ## The part a press at (x, y) grabs, or none outside the wheel.
     func part_at(x: f64, y: f64) -> i64:
-        let wheel = self.geometry()
-        let d = math.sqrt((x - wheel.x) * (x - wheel.x) + (y - wheel.y) * (y - wheel.y))
-        if self.shape == wheel_disc:
-            return part_field if d <= wheel.outer + 4.0 else part_none
-        if d > wheel.outer + 4.0:
-            return part_none
-        # The gap between the field and the ring belongs to the nearer one.
-        return part_ring if d >= (wheel.inner + wheel.field) * 0.5 else part_field
+        return part_in(self.geometry(), self.shape, self.hue, x, y)
 
     ## Take the color at (x, y) for the grabbed part.
     mutating func pick(x: f64, y: f64) -> !:
@@ -397,6 +390,23 @@ func closest_in_triangle(p: Point, corners: Point[3]) -> Point:
             best_distance = distance
     return best
 
+## The part of `wheel` (of `shape`, at `hue`) a press at (x, y) grabs. The
+## ring reaches a little inside its drawn edge, where a pointer aimed at it
+## lands; only a press truly in the triangle or square is the field's.
+func part_in(wheel: Wheel, shape: i64, hue: f64, x: f64, y: f64) -> i64:
+    let d = math.sqrt((x - wheel.x) * (x - wheel.x) + (y - wheel.y) * (y - wheel.y))
+    if d > wheel.outer + 4.0:
+        return part_none
+    if shape == wheel_disc:
+        return part_field
+    let reach = math.max(4.0, (wheel.outer - wheel.inner) * 0.5)
+    if d < wheel.inner - reach:
+        return part_field
+    if shape == wheel_square:
+        return part_field if math.abs(x - wheel.x) <= wheel.field and math.abs(y - wheel.y) <= wheel.field else part_ring
+    let weights = barycentric(Point(x, y), triangle(wheel, hue))
+    return part_field if weights[0] >= 0.0 and weights[1] >= 0.0 and weights[2] >= 0.0 else part_ring
+
 func cross(ax: f64, ay: f64, bx: f64, by: f64) -> f64:
     return ax * by - ay * bx
 
@@ -446,3 +456,15 @@ test "a wheel keeps its HSB and shape":
         assert(failure.code == result.invalid)
         rejected = true
     assert(rejected)
+
+test "a press just inside the ring's edge takes the ring, one in the triangle's tip the field":
+    let wheel = wheel_in(200.0, 200.0, wheel_triangle)
+    # Beside the tip (hue 0 points right), a pixel inside the ring's drawn edge.
+    let angle = radians(20.0)
+    let near = wheel.inner - 2.0
+    assert(part_in(wheel, wheel_triangle, 0.0, wheel.x + math.cos(angle) * near, wheel.y + math.sin(angle) * near) == part_ring)
+    # In the tip itself, as close to the ring: the field.
+    assert(part_in(wheel, wheel_triangle, 0.0, wheel.x + wheel.field - 1.0, wheel.y) == part_field)
+    assert(part_in(wheel, wheel_triangle, 0.0, wheel.x, wheel.y) == part_field)
+    assert(part_in(wheel, wheel_triangle, 0.0, wheel.x + wheel.outer + 10.0, wheel.y) == part_none)
+
