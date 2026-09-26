@@ -5,6 +5,7 @@ import gpu
 import input
 import interop
 import math
+import memory
 import utf8
 import luce_ui.text.editing as editing
 import luce_ui.result as result
@@ -57,10 +58,15 @@ pub struct LineInput:
             elif command and event.key == input.Key.v:
                 let text = try clipboard.read_text()
                 defer text.release()
-                let scalars = try validate(text.value)
+                # Pasted text is made one line first: a path copied with its line
+                # break (PowerShell's Set-Clipboard adds one) still pastes.
+                let line = try alloc u8[text.value.length] in memory.heap
+                defer free(line) in memory.heap
+                let pasted = (str)line[..<single_line(text.value, line)]
+                let scalars = try validate(pasted)
                 if self.document.length() - (self.document.last() - self.document.first()) + scalars > 1024:
                     error(result.limit, "single-line input is limited to 1024 characters")
-                try self.document.insert(text.value)
+                try self.document.insert(pasted)
             elif command and event.key == input.Key.z:
                 discard(try self.document.redo() if event.shift else try self.document.undo())
             elif event.key == input.Key.backspace or event.key == input.Key.delete:
@@ -114,6 +120,31 @@ pub struct LineInput:
     pub mutating func close():
         self.document.close()
 
+## `text` as one line into `into` (as long as `text`); how many bytes it holds.
+## Line breaks and tabs inside become one space each, other control characters
+## go, and breaks and spaces at either end are dropped.
+func single_line(text: str, into: u8[]) -> usize:
+    var count: usize = 0
+    for byte in text.bytes:
+        if byte == 13 or byte == 10 or byte == 9:
+            # A CR LF pair is one break: one space.
+            if count > 0 and into[count - 1] != 32:
+                into[count] = 32
+                count += 1
+        elif byte >= 32 and byte != 127:
+            into[count] = byte
+            count += 1
+    var first: usize = 0
+    while first < count and into[first] == 32:
+        first += 1
+    while count > first and into[count - 1] == 32:
+        count -= 1
+    if first > 0:
+        for index in first..<count:
+            into[index - first] = into[index]
+        count -= first
+    return count
+
 func validate(text: str) -> usize!:
     if text.length > 4096:
         error(result.limit, "single-line input is too long")
@@ -129,3 +160,13 @@ func validate(text: str) -> usize!:
     if count > 1024:
         error(result.limit, "single-line input is limited to 1024 characters")
     return count
+
+test "pasted text becomes one line: breaks at the ends go, inner ones become spaces":
+    var into: u8[64]
+    let path = "C:\\luced-scratch\r\n"
+    assert((str)into[..<single_line(path, into)] == "C:\\luced-scratch")
+    let lines = "  one\r\ntwo\tthree\n"
+    assert((str)into[..<single_line(lines, into)] == "one two three")
+    let bell = "a\u{7}b"
+    assert((str)into[..<single_line(bell, into)] == "ab")
+    assert(single_line("\r\n", into) == 0)
