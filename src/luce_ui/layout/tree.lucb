@@ -347,6 +347,7 @@ pub struct Tree:
     ## (a menu in a dialog) over that one. The lit drop area goes over the pass it
     ## belongs to.
     pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        var failed: interop.Outcome[unit]? = none
         var deepest: usize = 0
         for index in 0..<self.count:
             let depth = popup_depth(self.entries, index)
@@ -381,13 +382,22 @@ pub struct Tree:
                 var widget = entry.widget.value()
                 let drawn = widget.draw(region)
                 if not drawn.is_success():
-                    return drawn
+                    # One widget that cannot draw (a document past the GPU's
+                    # memory) must not blank the window: the rest still draw,
+                    # and the first failure is reported once they have.
+                    if failed == none:
+                        failed = drawn
+                    else:
+                        drawn.release()
+                    continue
                 drawn.release()
             # Over everything in its pass, the lit drop area.
             if let hovered = self.find(self.drop_hover):
                 if popup_depth(self.entries, hovered) == pass:
                     self.draw_drop_overlay(target) catch failure:
                         return result.failure[unit](failure.code, failure.message)
+        if let first = failed:
+            return first
         return result.success[unit](())
 
     ## A soft drop shadow around the whole popup: several expanding layers, densest at

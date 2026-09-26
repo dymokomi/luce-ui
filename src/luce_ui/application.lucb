@@ -37,6 +37,9 @@ pub struct Application:
     var dirty: bool
     var last_epoch: u64
     var last_render: u64
+    ## A digest of the render failure last reported, 0 after a clean frame: a
+    ## widget that fails every frame is reported once, not once a frame.
+    var render_failure: u64
     var timers: scheduler.Scheduler
     var game: bool
     var target_fps: f64
@@ -68,6 +71,7 @@ pub struct Application:
         self.closed = false
         self.dirty = true
         self.last_epoch = 0
+        self.render_failure = 0
         self.last_render = 0
         self.timers = scheduler.Scheduler()
         self.game = game
@@ -469,10 +473,15 @@ pub struct Application:
                     # A widget that could not draw (a document too big for some pass)
                     # is reported, not fatal: the app and its unsaved work go on.
                     let handler = self.error_handler else return rendered
-                    let reported = self.report_input_failure(rendered, handler)
-                    if not reported.is_success():
-                        return reported
-                    reported.release()
+                    let digest = self.failure_digest(rendered)
+                    if digest != self.render_failure:
+                        self.render_failure = digest
+                        let reported = self.report_input_failure(rendered, handler)
+                        if not reported.is_success():
+                            return reported
+                        reported.release()
+                else:
+                    self.render_failure = 0
                 rendered.release()
                 self.update_cursor(self.session_host) catch failure:
                     return result.failure[unit](failure.code, failure.message)
@@ -491,6 +500,15 @@ pub struct Application:
         surface.wait_idle() catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
+
+    ## A digest of a failed outcome's message; never 0.
+    func failure_digest(outcome: interop.Outcome[unit]) -> u64:
+        discard(outcome.get() catch failure:
+            var digest: u64 = 1469598103934665603
+            for byte in failure.message.bytes:
+                digest = (digest ^ (u64)byte) *% 1099511628211
+            return digest if digest != 0 else 1)
+        return 1
 
     func report_input_failure(outcome: interop.Outcome[unit], handler: interop.Callback[str, unit]) -> interop.Outcome[unit]:
         discard(outcome.get() catch failure:
