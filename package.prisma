@@ -49,7 +49,7 @@ def package "luce-ui" {
 
     def dependency "luce-clipboard" {
         str owner = "dymokomi"
-        str version = "^0.3.0"
+        str version = "^0.2.0"
         str path = "../luce-clipboard"
     }
 
