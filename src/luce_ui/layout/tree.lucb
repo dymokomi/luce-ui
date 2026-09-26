@@ -507,7 +507,7 @@ pub struct Tree:
                     self.capture = 0
                     if box.accepts_focus:
                         if self.focus != destination:
-                            let cancelled_focus = self.cancel(self.focus)
+                            let cancelled_focus = self.leave(self.focus)
                             if not cancelled_focus.is_success():
                                 return cancelled_focus
                             cancelled_focus.release()
@@ -541,7 +541,7 @@ pub struct Tree:
                 if not capture_cancelled.is_success():
                     return capture_cancelled
                 capture_cancelled.release()
-                let focus_cancelled = self.cancel(self.focus)
+                let focus_cancelled = self.leave(self.focus)
                 if not focus_cancelled.is_success():
                     return focus_cancelled
                 focus_cancelled.release()
@@ -556,7 +556,7 @@ pub struct Tree:
                 return capture_cancelled
             capture_cancelled.release()
             if destination != self.focus:
-                let focus_cancelled = self.cancel(self.focus)
+                let focus_cancelled = self.leave(self.focus)
                 if not focus_cancelled.is_success():
                     return focus_cancelled
                 focus_cancelled.release()
@@ -808,6 +808,16 @@ pub struct Tree:
                 return cancelled
             cancelled.release()
         return result.success[unit](())
+
+    ## Focus moves off `identifier`: it hears focus_lost first, so a field keeps
+    ## (commits) its edit, then a cancellation, which ends any gesture it holds.
+    func leave(identifier: u64) -> interop.Outcome[unit]:
+        if let index = self.find(identifier):
+            let lost = self.send(index, Event(kind = input.EventKind.focus_lost))
+            if not lost.is_success():
+                return lost
+            lost.release()
+        return self.cancel(identifier)
 
     ## Apply after the next arrangement, including children replaced during an
     ## input callback. Detached or disabled targets cannot acquire focus.

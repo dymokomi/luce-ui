@@ -185,3 +185,42 @@ pub func number_submit() -> unit!:
     width.set_value(3.5)
     assert(width.value() == 4.0)
     other.close()
+
+## A field's edit stands when focus moves on: a click on a button, or Tab,
+## commits it (Save clicked with the caret still in a field keeps the text).
+pub func field_leaves() -> unit!:
+    let font = Font()
+    let count = Count()
+    let path = TextField("", font = font, cells = 16.0)
+    let other = TextField("", font = font, cells = 16.0)
+    let save = Button("Save", font = font)
+    var committed = ""
+    let kept = path.on_commit(func (value: str) -> unit!:
+        committed = value)
+    let clicked = save.on_click(count.click)
+    let app = Application(VStack([path, other, save], spacing = 0.0))
+    render(app)
+    let line = path.layout().bounds()
+    click(app, line.x + 6.0, line.y + line.height * 0.5)
+    render(app)
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 120))
+    let button = save.layout().bounds()
+    click(app, button.x + 4.0, button.y + button.height * 0.5)
+    render(app)
+    assert(path.text() == "x" and committed == "x")
+    # Tab from the field keeps its edit too.
+    click(app, line.x + 6.0, line.y + line.height * 0.5)
+    render(app)
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 121))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.tab))
+    render(app)
+    assert(path.text().ends_with("y") and committed.ends_with("y"))
+    # Escape still drops what was typed since.
+    click(app, line.x + 6.0, line.y + line.height * 0.5)
+    render(app)
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 122))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
+    assert(not path.text().ends_with("z"))
+    kept.disconnect()
+    clicked.disconnect()
+    app.close()
