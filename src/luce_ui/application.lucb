@@ -277,8 +277,12 @@ pub struct Application:
         if dialog_took:
             return result.success[unit](())
         let primary = event.modifiers.control or event.modifiers.super
-        let editing = event.key == input.Key.a or event.key == input.Key.c or event.key == input.Key.x or event.key == input.Key.v or event.key == input.Key.z
-        let typing = self.tree.wants_text_input() and (not primary or editing)
+        # The editing chords are Cmd/Ctrl (and Shift for redo) on A, C, X, V, Z;
+        # with Alt they are other commands (Ctrl+Alt+Z toggles wrapping in luced).
+        let editing = not event.modifiers.alt and (event.key == input.Key.a or event.key == input.Key.c or event.key == input.Key.x or event.key == input.Key.v or event.key == input.Key.z)
+        # Function keys type nothing, so they stay the commands' (F6 moves between panels).
+        let function_key = (u16)event.key >= (u16)input.Key.f1 and (u16)event.key <= (u16)input.Key.f12
+        let typing = self.tree.wants_text_input() and not function_key and (not primary or editing)
         if not self.tree.has_popup() and not typing:
             let dispatched = self.commands.dispatch(event)
             defer dispatched.release()

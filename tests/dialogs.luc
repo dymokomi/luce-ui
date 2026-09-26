@@ -226,3 +226,31 @@ pub func field_leaves() -> unit!:
     kept.disconnect()
     clicked.disconnect()
     app.close()
+
+## A focused field keeps typing and its editing chords, but function keys and
+## Alt chords stay the application's commands.
+pub func field_command_keys() -> unit!:
+    let font = Font()
+    let count = Count()
+    let field = TextField("", font = font, cells = 16.0)
+    let app = Application(VStack([field], spacing = 0.0))
+    let next = Command("Next Panel", Shortcut(Key.f6), id = "next")
+    let wrap = Command("Wrap", Shortcut(Key.z, primary = true, alt = true), id = "wrap")
+    let undo = Command("Undo", Shortcut(Key.z, primary = true), id = "undo")
+    let triggered_next = next.on_trigger(count.trigger)
+    let triggered_wrap = wrap.on_trigger(count.trigger)
+    let triggered_undo = undo.on_trigger(count.click)
+    app.set_commands([next, wrap, undo])
+    render(app)
+    app.focus(field.layout())
+    render(app)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.f6))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.z, control = true, alt = true, meta = true))
+    assert(count.triggers == 2)
+    # Cmd/Ctrl+Z is the field's own undo, not the application's.
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.z, control = true, meta = true))
+    assert(count.clicks == 0)
+    triggered_next.disconnect()
+    triggered_wrap.disconnect()
+    triggered_undo.disconnect()
+    app.close()

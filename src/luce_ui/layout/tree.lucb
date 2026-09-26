@@ -26,6 +26,9 @@ pub struct Tree:
     ## The widget a secondary (right) press went to, which its release goes to as well.
     var secondary_holder: u64
     var return_focus: u64
+    ## Where focus was before it went into a non-modal popup (a dialog's
+    ## field): it goes back there when that popup closes.
+    var dialog_return: u64
     var appearance: Theme
     var pointer_present: bool
     var pointer_x: f64
@@ -53,6 +56,7 @@ pub struct Tree:
         self.capture = 0
         self.secondary_holder = 0
         self.return_focus = 0
+        self.dialog_return = 0
         self.appearance = theme
         self.pointer_present = false
         self.pointer_x = 0.0
@@ -205,6 +209,9 @@ pub struct Tree:
                     return focus_cancelled
                 focus_cancelled.release()
             self.focus = 0
+            if self.dialog_return != 0 and eligible(replacement, count, self.dialog_return, true):
+                self.focus = self.dialog_return
+            self.dialog_return = 0
         if popup == 0 and self.return_focus != 0:
             if eligible(replacement, count, self.return_focus, true):
                 self.focus = self.return_focus
@@ -217,6 +224,7 @@ pub struct Tree:
                     for descendant in position..<entry.end:
                         let identifier = replacement[descendant].box.value().identifier
                         if eligible(replacement, count, identifier, true):
+                            self.note_popup_entry(replacement, count, identifier)
                             self.focus = identifier
                             break
         if self.requested_focus != 0 and popup == 0:
@@ -839,11 +847,27 @@ pub struct Tree:
         target.value().invalidate()
 
     mutating func set_focus(identifier: u64):
+        self.note_popup_entry(self.entries, self.count, identifier)
         self.focus = identifier
         for entry in self.entries[..<self.count]:
             entry.box.value().focused = entry.box.value().identifier == identifier
         mark_focus(self.entries, self.count, identifier, self.return_focus)
         bump_revision()
+
+    ## Focus about to move to `identifier`: from outside every popup into one,
+    ## remember where it was, to return there when the popup closes.
+    mutating func note_popup_entry(entries: const Entry[], count: usize, identifier: u64):
+        if identifier == 0 or identifier == self.focus:
+            return
+        let target = find_entry(entries, count, identifier) else return
+        if not in_popup(entries, target):
+            self.dialog_return = 0
+            return
+        if self.focus == 0:
+            return
+        if let current = find_entry(entries, count, self.focus):
+            if not in_popup(entries, current):
+                self.dialog_return = self.focus
 
     mutating func advance_focus(backwards: bool):
         if self.count == 0:
