@@ -15,7 +15,7 @@ from luce_ui.font import Font, selected_font
 from luce_ui.command import Command, command_type
 from luce_ui.widgets.panel import Panel
 from luce_ui.widgets.action_popup import ActionPopup, action_popup_type
-from luce_ui.docking.state import State, DockRequest, state_type, set_owner, add_floating, make_floating, floating, float_bounds, floating_count, default_window, set_catalog, set_fixed, pick_from_menu, catalog_slot
+from luce_ui.docking.state import State, DockRequest, state_type, set_owner, add_floating, make_floating, floating, float_bounds, floating_count, default_window, set_catalog, set_fixed, pick_from_menu, catalog_slot, arrangement_text
 from luce_ui.docking.model import DockPosition
 
 ## The top child of the stack: draws the drag previews (drop target, floating
@@ -289,6 +289,13 @@ pub struct DStack: Widget:
     ## so the menu ticks it while it is open and focuses it when picked again.
     pub mutating func set_catalog(ids: const str[], titles: const str[]) -> !:
         try set_catalog(self.state.value(), self.state, ids, titles)
+
+    ## The arrangement as text, for keeping it across runs (docking/state/layout.lucb):
+    ## the split tree with its fractions, each group's tabs by panel id and its
+    ## selected one, then the floating windows. An application rebuilds it with
+    ## `add`, `set_fraction`, `select` and `float`.
+    pub func layout_text() -> interop.Owned[str]!:
+        return try arrangement_text(self.state.value())
 
     ## The open panel made from catalog entry `id`, or none.
     pub func find(id: str) -> interop.Reference[Panel]?!:

@@ -1,5 +1,6 @@
 from ui import Application, DStack, Panel, DockPosition, DockRequest, TextEditor, Text, Size, Event
 from input import EventKind, Key
+from gpu import Rect
 
 func click(app: Application, x: float, y: float) -> unit!:
     app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y))
@@ -244,3 +245,28 @@ func floating() -> unit!:
     app.layout(805.0, 505.0)
     assert(not stack.contains(extra) and stack.panel_count() == 2)
     app.close()
+
+## The arrangement as text: the split tree in pre-order, each group's tabs by
+## id with its selected one, then the floating windows; a panel without an id
+## is written as `-`.
+pub func docking_layout() -> unit!:
+    let first = Panel("Alpha", Text("a"), minimum = Size(100.0, 60.0), id = "alpha")
+    let second = Panel("Beta", Text("b"), minimum = Size(100.0, 60.0), id = "beta")
+    let third = Panel("Gamma", Text("c"), minimum = Size(100.0, 60.0), id = "gamma")
+    let fourth = Panel("Delta", Text("d"), minimum = Size(100.0, 60.0))
+    let stack = DStack([first, second, third])
+    let app = Application(stack)
+    stack.move(second, first, DockPosition.right)
+    stack.move(third, second, DockPosition.bottom)
+    stack.set_fraction(first, 0.25)
+    stack.set_fraction(third, 0.5)
+    app.layout(805.0, 505.0)
+    assert(stack.layout_text() == "luce-dock 1\nsplit h 0.25\ngroup 0 alpha\nsplit v 0.5\ngroup 0 beta\ngroup 0 gamma\n")
+    # Tabs in order, the selected one's place first; a floating window last.
+    stack.add(fourth, first, DockPosition.tab)
+    stack.select(first)
+    stack.float(third, Rect(40.0, 60.0, 300.0, 200.0))
+    app.layout(805.0, 505.0)
+    let text = stack.layout_text()
+    assert(text.starts_with("luce-dock 1\nsplit h 0.25\ngroup 0 alpha -\ngroup 0 beta\nfloat "))
+    assert(text.ends_with(" gamma\n"))

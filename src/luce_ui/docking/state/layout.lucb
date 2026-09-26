@@ -1,0 +1,80 @@
+#==============================================================================================
+#
+#   state/layout - The dock's arrangement as text, for keeping it across runs
+#
+#   DESCRIPTION:
+#       One line a node, the split tree in pre-order from the root, then the floating
+#       windows back to front:
+#
+#           luce-dock 1
+#           split h 0.76            a split side by side (h) or stacked (v), the
+#                                   fraction going to its first child; the first
+#                                   child's lines follow, then the second's
+#           group 1 layers history  a tab group: the selected tab's place among
+#                                   them, then each tab's panel id in order
+#           float 40 60 300 240 color   a floating window in stack coordinates
+#
+#       Panels are named by their ids (`Panel(id =)`); a panel without one is written
+#       as `-`, which an application restoring the text should treat as unknown. The
+#       application rebuilds the arrangement through the DStack's own calls.
+#
+#==============================================================================================
+
+## The arrangement as text.
+pub func arrangement_text(state: const State*) -> interop.Owned[str]!:
+    let bytes = try alloc u8[(usize)1 << 16] in memory.heap
+    defer free(bytes) in memory.heap
+    var writer = LayoutWriter(bytes = bytes, length = 0)
+    try writer.put("luce-dock 1\n")
+    if state.model.root != 0:
+        try write_node(state, &writer, state.model.root)
+    for order in 0..<state.float_count:
+        let index = state.stacking[order]
+        let window = state.floats[index]
+        var number: u8[96]
+        try writer.put(try format(number, f"float {window.x} {window.y} {window.width} {window.height} "))
+        try write_id(state, &writer, index)
+        try writer.put("\n")
+    return try interop.copy_text((str)bytes[..<writer.length])
+
+## Node `node` and everything under it, in pre-order.
+func write_node(state: const State*, writer: LayoutWriter*, node: usize) -> !:
+    let current = state.model.nodes[node]
+    var number: u8[64]
+    if current.first == 0:
+        let count = state.model.tab_count(node)
+        let selected = state.model.tabs[current.selected].order if current.selected != 0 else 0
+        try writer.put(try format(number, f"group {selected}"))
+        for order in 0..<count:
+            try writer.put(" ")
+            try write_id(state, writer, state.model.at(node, order))
+        try writer.put("\n")
+        return
+    let axis = "h" if current.horizontal else "v"
+    try writer.put(try format(number, f"split {axis} {current.fraction}\n"))
+    try write_node(state, writer, current.first)
+    try write_node(state, writer, current.second)
+
+## Panel slot `index`'s id, or `-` for a panel with none (or with a space in it).
+func write_id(state: const State*, writer: LayoutWriter*, index: usize) -> !:
+    let panel = try state.panel(index)
+    defer panel.release()
+    let id = panel.value().id()
+    defer id.release()
+    var plain = id.value.length > 0
+    for byte in id.value.bytes:
+        if byte <= ' ':
+            plain = false
+    try writer.put(id.value if plain else "-")
+
+## Text appended to a fixed buffer; running out of room is an error rather
+## than a cut-off arrangement.
+struct LayoutWriter:
+    var bytes: u8[]
+    var length: usize
+
+    mutating func put(text: str) -> !:
+        if self.length + text.length > self.bytes.length:
+            error(result.limit, "the dock arrangement is too long to write")
+        memory.copy(self.bytes[self.length..<self.length + text.length], text.bytes, text.length)
+        self.length += text.length
