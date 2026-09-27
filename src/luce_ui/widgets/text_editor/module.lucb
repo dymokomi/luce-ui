@@ -1,0 +1,163 @@
+#==============================================================================================
+#
+#   widgets/text_editor/module - The TextEditor widget: its state, lifetime and type
+#
+#==============================================================================================
+#
+#   DESCRIPTION:
+#       A multiline code editor with highlighting, color chips, folding, soft wrap
+#       and change bars. The TextEditor's methods are split by concern across the
+#       fragments, each under `extend TextEditor:`. In ORDER:
+#
+#       module.lucb       the struct, construction, closing and the widget type
+#       commands.lucb     the text, selection and edit commands; change notification
+#       events.lucb       keys and pointer gestures turned into edits and selections
+#       decorations.lucb  highlights, color chips, folds, change bars and AI lines
+#       view.lucb         layout and drawing: projection, scrolling, wrap, painting
+#
+#==============================================================================================
+
+import clipboard
+import gpu
+import input
+import interop
+import math
+import memory
+import ownership
+import time
+import transfer
+import utf8
+import window
+import luce_ui.layout as layout
+import luce_ui.result as result
+import luce_ui.text.drawing as drawing
+import luce_ui.text.editing as editing
+from luce_ui.text.decorations import Decorations
+from luce_ui.text.swatches import Swatches
+from luce_ui.text.folding import FoldRange, Folding
+from luce_ui.text.projection import Projection
+from luce_ui.text.diff import LineDiff
+from luce_ui.font import Font, selected_font
+from luce_ui.layout import Widget, Layout, Size, Constraints, Event, Point
+from luce_ui.painter import Painter
+from luce_ui.text.document import Document, TextChange
+from luce_ui.text.style import Highlight, EditorTheme, Swatch, swatch_span
+
+## A reusable multiline editor. Its document owns text and history; the widget
+## owns focus, selection gestures, scrolling, drawing and application signals.
+pub struct TextEditor: Widget:
+    let box: interop.Reference[Layout]
+    var document: Document
+    let changed: interop.Signal[unit]
+    let read_only: bool
+    let line_numbers: bool
+    let font: interop.Reference[Font]
+    let theme: EditorTheme?
+    var highlights: Decorations
+    var swatches: Swatches
+    var folds: Folding
+    var projection: Projection
+    var scroll_x: f64
+    var scroll_y: f64
+    var dragging: bool
+    var dragging_scroll: bool
+    var preferred_column: usize
+    var vertical_move: bool
+    var active_since: u64
+    var last_click: u64
+    var last_offset: usize
+    var clicks: i64
+    var ai_first: i64 = 0
+    var ai_last: i64 = 0
+    var wrap: bool
+    var baseline: interop.Owned[str]?
+    var diff: LineDiff
+    var diff_version: i64
+    let swatch_activated: interop.Signal[i64]
+    var swatch_hover: bool
+    var pending_swatch: i64
+
+    pub func init(text: str = "", read_only: bool = false, line_numbers: bool = true,
+                  font: interop.Reference[Font]? = none, theme: EditorTheme? = none, wrap: bool = false) -> !:
+        var selected = try selected_font(font)
+        errdefer selected.release()
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_limits(Size(120.0, 60.0), Size(16384.0, 16384.0))
+        try box.value().set_flex()
+        box.value().set_focusable(true)
+        # It scrolls itself: the wheel over it is its own, inside a scroll view too.
+        box.value().set_takes_scroll(true)
+        box.value().set_cursor(input.Cursor.text)
+        box.value().set_text_input(not read_only, tabs = not read_only)
+        let normalized = try editing.normalize_lines(text)
+        defer normalized.release()
+        var document = try Document(normalized.value)
+        errdefer document.close()
+        let changed = try interop.Signal[unit]()
+        errdefer changed.release()
+        let swatch_activated = try interop.Signal[i64]()
+        errdefer swatch_activated.release()
+        let highlights = Decorations()
+        let swatches = Swatches()
+        var folds = Folding()
+        var projection = Projection()
+        try projection.refresh(&document, &folds)
+        errdefer projection.close()
+        self.box = box
+        self.document = document
+        self.changed = changed
+        self.read_only = read_only
+        self.line_numbers = line_numbers
+        self.font = selected
+        self.theme = theme
+        self.highlights = highlights
+        self.swatches = swatches
+        self.folds = folds
+        self.projection = projection
+        self.scroll_x = 0.0
+        self.scroll_y = 0.0
+        self.dragging = false
+        self.dragging_scroll = false
+        self.preferred_column = 0
+        self.vertical_move = false
+        self.active_since = time.now()
+        self.last_click = 0
+        self.last_offset = 0
+        self.clicks = 0
+        self.ai_first = 0
+        self.ai_last = 0
+        self.wrap = wrap
+        self.baseline = none
+        self.diff = LineDiff()
+        self.diff_version = -1
+        self.swatch_activated = swatch_activated
+        self.swatch_hover = false
+        self.pending_swatch = -1
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub mutating func close():
+        self.font.release()
+        self.changed.close()
+        self.changed.release()
+        self.swatch_activated.close()
+        self.swatch_activated.release()
+        self.document.close()
+        self.highlights.close()
+        self.swatches.close()
+        self.folds.close()
+        self.projection.close()
+        if let baseline = self.baseline:
+            baseline.release()
+        self.diff.close()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+        self.changed.trace(visit, context)
+        self.swatch_activated.trace(visit, context)
+
+pub let text_editor_type: interop.Type[TextEditor] = interop.Type[TextEditor]("Text editor", TextEditor.close, TextEditor.trace, closeable = true, main_thread = true)

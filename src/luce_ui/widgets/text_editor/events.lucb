@@ -1,0 +1,192 @@
+#==============================================================================================
+#
+#   widgets/text_editor/events - Keys and pointer gestures turned into edits and selections
+#
+#==============================================================================================
+
+extend TextEditor:
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        # Passive hover is derived by Layout and rendered without remeasuring
+        # controls or rebuilding text projections for each pointer movement. The
+        # pointer turns into a hand over a color chip, updated only on a transition.
+        if event.kind == input.EventKind.pointer_moved and not event.cancelled and not self.dragging and not self.dragging_scroll:
+            let over = self.swatch_at(event.x, event.y) >= 0
+            if over != self.swatch_hover:
+                self.swatch_hover = over
+                self.box.value().set_cursor(input.Cursor.pointer if over else input.Cursor.text)
+            return result.success[unit](())
+        let before = self.document.version()
+        self.handle(event) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        self.box.value().invalidate()
+        if self.pending_swatch >= 0:
+            let offset = self.pending_swatch
+            self.pending_swatch = -1
+            return self.swatch_activated.emit(offset)
+        if self.document.version() != before:
+            return self.notify_changed()
+        return result.success[unit](())
+
+    mutating func handle(event: Event) -> !:
+        try self.refresh_view()
+        if event.cancelled:
+            self.dragging = false
+            self.dragging_scroll = false
+            return
+        if event.kind == input.EventKind.pointer_down and event.button == 1:
+            let position = self.position_at(event.x, event.y)
+            if position < self.document.first() or position >= self.document.last():
+                try self.set_selection((i64)position, (i64)position)
+            return
+        if event.kind == input.EventKind.scroll:
+            if not math.is_finite(event.scroll_x) or not math.is_finite(event.scroll_y):
+                error(result.invalid, "scroll deltas must be finite")
+            let x_scale = self.font.value().advance() * 3.0 if event.scroll_unit == input.ScrollUnit.lines else 1.0
+            let y_scale = self.font.value().line_height() * 3.0 if event.scroll_unit == input.ScrollUnit.lines else 1.0
+            self.scroll_y -= event.scroll_y * y_scale
+            self.scroll_x -= event.scroll_x * x_scale
+            self.clamp_scroll()
+            return
+        if event.kind == input.EventKind.pointer_down and event.button == 0:
+            let chip = self.swatch_at(event.x, event.y)
+            if chip >= 0:
+                self.pending_swatch = chip
+                return
+            if self.folds.values().length > 0 and event.x >= self.gutter_width() - self.font.value().advance() * 2.0 and event.x < self.gutter_width():
+                let visible = (usize)(math.max(0.0, event.y - drawing.vertical_padding(self.font) + self.scroll_y) / self.font.value().line_height())
+                if visible < self.projection.visible_count():
+                    discard(try self.toggle_fold((i64)self.projection.physical_row(visible) + 1))
+                return
+            self.dragging_scroll = event.x >= self.box.value().bounds().width - 10.0
+            self.dragging = not self.dragging_scroll
+            if self.dragging_scroll:
+                self.scroll_to_pointer(event.y)
+            else:
+                let position = self.position_at(event.x, event.y)
+                let now = time.now()
+                self.clicks = self.clicks + 1 if now - self.last_click < 400000000 and position == self.last_offset and not event.shift else 1
+                self.last_click = now
+                self.last_offset = position
+                if self.clicks >= 2:
+                    try editing.select_word(&self.document, position)
+                    self.dragging = false
+                else:
+                    try self.document.select(self.document.anchor() if event.shift else position, position)
+                self.active_since = time.now()
+            self.vertical_move = false
+            return
+        if event.kind == input.EventKind.pointer_moved:
+            if self.dragging_scroll:
+                self.scroll_to_pointer(event.y)
+            elif self.dragging:
+                if event.y < 0.0:
+                    self.scroll_y = math.max(0.0, self.scroll_y - self.font.value().line_height())
+                if event.y > self.box.value().bounds().height:
+                    self.scroll_y = math.min(self.maximum_scroll(), self.scroll_y + self.font.value().line_height())
+                try self.document.select(self.document.anchor(), self.position_at(event.x, event.y))
+            return
+        if event.kind == input.EventKind.pointer_up and event.button == 0:
+            self.dragging = false
+            self.dragging_scroll = false
+            return
+        if event.kind == input.EventKind.text_input and not self.read_only:
+            var bytes: u8[4]
+            let count = utf8.encode((u32)event.codepoint, bytes) else error(result.invalid, "text input is not a Unicode scalar")
+            try self.document.insert((str)bytes[..<count])
+            return
+        if event.kind != input.EventKind.key_down:
+            return
+        try self.key(event)
+        self.active_since = time.now()
+        try self.reveal_caret()
+
+    mutating func key(event: Event) -> !:
+        let command = (event.control and not event.alt) or event.meta
+        if command:
+            if event.key == input.Key.a:
+                try self.document.select(0, self.document.length())
+                return
+            if event.key == input.Key.c or (event.key == input.Key.x and not self.read_only):
+                if self.document.first() != self.document.last():
+                    let text = try self.selected_text()
+                    defer text.release()
+                    clipboard.write_text(text.value) catch failure:
+                        if failure.code != window.unsupported:
+                            error(failure.code, failure.message)
+                        return
+                    if event.key == input.Key.x:
+                        try self.document.insert("")
+                return
+            if event.key == input.Key.v and not self.read_only:
+                let text = clipboard.read_text() catch failure:
+                    if failure.code != window.unsupported:
+                        error(failure.code, failure.message)
+                    return
+                defer text.release()
+                let normalized = try editing.normalize_lines(text.value)
+                defer normalized.release()
+                try self.document.insert(normalized.value)
+                return
+            if event.key == input.Key.z and not self.read_only:
+                discard(try self.document.redo() if event.shift else try self.document.undo())
+                return
+            if event.key == input.Key.y and not self.read_only:
+                discard(try self.document.redo())
+                return
+        let caret = self.document.caret()
+        let extend = event.shift
+        if event.key == input.Key.left:
+            let next = self.document.line_start(caret) if event.meta else (editing.word_left(&self.document, caret) if command or event.alt else (caret - 1 if caret > 0 else 0))
+            try editing.move(&self.document, self.document.first() if not extend and self.document.first() != self.document.last() else next, extend)
+        elif event.key == input.Key.right:
+            let next = self.document.line_end(caret) if event.meta else (editing.word_right(&self.document, caret) if command or event.alt else (caret + 1 if caret < self.document.length() else caret))
+            try editing.move(&self.document, self.document.last() if not extend and self.document.first() != self.document.last() else next, extend)
+        elif event.key == input.Key.home:
+            try editing.move(&self.document, 0 if command else self.document.line_start(caret), extend)
+        elif event.key == input.Key.end:
+            try editing.move(&self.document, self.document.length() if command else self.document.line_end(caret), extend)
+        elif event.key == input.Key.up or event.key == input.Key.down or event.key == input.Key.page_up or event.key == input.Key.page_down:
+            if not self.vertical_move:
+                let here = self.projection.row(self.projection.visual_row(caret))
+                self.preferred_column = editing.column(&self.document, caret, self.active_swatches()) - here.column
+            let row = self.projection.visual_row(caret)
+            let page = (usize)math.max(1.0, self.box.value().bounds().height / self.font.value().line_height() - 1.0)
+            let step = page if event.key == input.Key.page_up or event.key == input.Key.page_down else 1
+            let upwards = event.key == input.Key.up or event.key == input.Key.page_up
+            let rows = self.projection.visible_count()
+            let raw = row - step if upwards and row >= step else (0 if upwards else row + step)
+            let target = self.projection.row(raw if raw < rows else (rows - 1 if rows > 0 else 0))
+            var offset = editing.at_column(&self.document, target.physical, target.column + self.preferred_column, self.active_swatches())
+            if offset > target.end:
+                offset = target.end
+            if offset < target.start:
+                offset = target.start
+            try editing.move(&self.document, offset, extend)
+            self.vertical_move = true
+            return
+        elif not self.read_only:
+            if event.key == input.Key.backspace or event.key == input.Key.delete:
+                if self.document.first() == self.document.last():
+                    for fold in self.folds.values():
+                        if fold.collapsed and ((event.key == input.Key.delete and caret + 1 == fold.hidden) or (event.key == input.Key.backspace and caret == fold.end)):
+                            discard(self.folds.set(fold.header, false))
+                            try self.finish_folding()
+                            return
+                try editing.erase(&self.document, event.key == input.Key.backspace, command or event.alt)
+            elif event.key == input.Key.enter and not command:
+                try editing.newline(&self.document)
+            elif event.key == input.Key.tab:
+                try editing.indent(&self.document, event.shift)
+        self.vertical_move = false
+
+    func position_at(x: f64, y: f64) -> usize:
+        let rows = self.projection.visible_count()
+        let raw = (usize)(math.max(0.0, y - drawing.vertical_padding(self.font) + self.scroll_y) / self.font.value().line_height())
+        let segment = self.projection.row(raw if raw < rows else (rows - 1 if rows > 0 else 0))
+        let cells = (usize)(math.max(0.0, x - self.gutter_width() - self.font.value().advance() + self.scroll_x) / self.font.value().advance() + 0.5)
+        var offset = editing.at_column(&self.document, segment.physical, segment.column + cells, self.active_swatches())
+        if offset > segment.end:
+            offset = segment.end
+        if offset < segment.start:
+            offset = segment.start
+        return offset

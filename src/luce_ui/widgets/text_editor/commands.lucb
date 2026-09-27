@@ -1,0 +1,184 @@
+#==============================================================================================
+#
+#   widgets/text_editor/commands - Text, selection and edit commands
+#
+#==============================================================================================
+
+extend TextEditor:
+    pub func text() -> interop.Owned[str]!:
+        return try self.document.text()
+
+    pub func selected_text() -> interop.Owned[str]!:
+        return try self.document.text(self.document.first(), self.document.last())
+
+    pub func has_selection() -> bool:
+        return self.document.first() != self.document.last()
+
+    pub func is_read_only() -> bool:
+        return self.read_only
+
+    pub func can_undo() -> bool:
+        return not self.read_only and self.document.can_undo()
+
+    pub func can_redo() -> bool:
+        return not self.read_only and self.document.can_redo()
+
+    pub mutating func select_all() -> !:
+        try self.set_selection(0, self.length())
+
+    ## Copy the selection to the clipboard; nothing without a selection.
+    pub func copy() -> !:
+        if self.has_selection():
+            let text = try self.selected_text()
+            defer text.release()
+            # Without a desktop clipboard (no X display) a copy does nothing.
+            clipboard.write_text(text.value) catch failure:
+                if failure.code != window.unsupported:
+                    error(failure.code, failure.message)
+
+    ## Copy the selection and delete it. Does nothing when read-only or when
+    ## nothing is selected.
+    pub mutating func cut() -> interop.Outcome[unit]:
+        if self.read_only or not self.has_selection():
+            return result.success[unit](())
+        self.copy() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return self.insert("")
+
+    ## Replace the selection with the clipboard's text, newlines normalized. Does
+    ## nothing when read-only.
+    pub mutating func paste() -> interop.Outcome[unit]:
+        if self.read_only:
+            return result.success[unit](())
+        let text = clipboard.read_text() catch failure:
+            # Without a desktop clipboard (no X display) a paste does nothing.
+            if failure.code == window.unsupported:
+                return result.success[unit](())
+            return result.failure[unit](failure.code, failure.message)
+        defer text.release()
+        return self.insert(text.value)
+
+    ## The document version, which every edit, undo, redo and `set_text` moves on.
+    ## Analysis results carry it back to `update_highlights` and `set_folds`.
+    pub func version() -> i64:
+        return (i64)self.document.version()
+
+    pub func length() -> i64:
+        return (i64)self.document.length()
+
+    ## The caret's scalar offset.
+    pub func caret() -> i64:
+        return (i64)self.document.caret()
+
+    ## The caret's 1-based line.
+    pub func line() -> i64:
+        return (i64)self.document.line_number(self.document.caret()) + 1
+
+    ## The caret's 1-based display column: tabs expanded, and color chips counted
+    ## when soft wrap is off.
+    pub func column() -> i64:
+        return (i64)editing.column(&self.document, self.document.caret(), self.active_swatches()) + 1
+
+    ## The 1-based first and last lines the selection spans (equal when it is a caret).
+    pub func selection_first_line() -> i64:
+        return (i64)self.document.line_number(self.document.first()) + 1
+
+    pub func selection_last_line() -> i64:
+        return (i64)self.document.line_number(self.document.last()) + 1
+
+    ## Called after every change to the text, from typing or from code
+    ## (`set_text`, `insert`, `cut`, `paste`, `undo`, `redo`); `change` describes it.
+    pub func on_change(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.changed.connect(callback)
+
+    ## Load new text: newlines are normalized, history is cleared, the caret goes
+    ## to the start and scrolling resets. Notifies `on_change`.
+    pub mutating func set_text(text: str) -> interop.Outcome[unit]:
+        let normalized = editing.normalize_lines(text) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer normalized.release()
+        self.document.set_text(normalized.value) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        self.scroll_x = 0.0
+        self.scroll_y = 0.0
+        return self.notify_changed()
+
+    ## Select scalar offsets `anchor` to `caret` and scroll the caret into view.
+    pub mutating func set_selection(anchor: i64, caret: i64) -> !:
+        if anchor < 0 or caret < 0:
+            error(result.invalid, "selection offsets must be nonnegative")
+        # A programmatic selection interrupts any in-progress multi-click gesture.
+        self.clicks = 0
+        try self.document.select((usize)anchor, (usize)caret)
+        try self.reveal_caret()
+        self.box.value().invalidate()
+
+    ## The latest change to the text, for incremental reanalysis: the replaced
+    ## range, the new end and the version it produced.
+    pub func change() -> TextChange:
+        return self.document.last_change()
+
+    ## The text of scalar offsets `start..<end`; fails outside the document.
+    pub func text_range(start: i64, end: i64) -> interop.Owned[str]!:
+        if start < 0 or end < start or end > self.length():
+            error(result.invalid, "text interval is outside the document")
+        return try self.document.text((usize)start, (usize)end)
+
+    ## The offset where the line containing `offset` starts.
+    pub func line_start(offset: i64) -> i64!:
+        if offset < 0 or offset > self.length():
+            error(result.invalid, "line offset is outside the document")
+        return (i64)self.document.line_start((usize)offset)
+
+    ## The offset of the newline ending the line containing `offset`, or the
+    ## length on the last line.
+    pub func line_end(offset: i64) -> i64!:
+        if offset < 0 or offset > self.length():
+            error(result.invalid, "line offset is outside the document")
+        return (i64)self.document.line_end((usize)offset)
+
+    ## The 0-based physical line number containing `offset`.
+    pub func line_number(offset: i64) -> i64!:
+        if offset < 0 or offset > self.length():
+            error(result.invalid, "line offset is outside the document")
+        return (i64)self.document.line_number((usize)offset)
+
+    ## Replace the selection with `text` (newlines normalized) as one undoable
+    ## edit. Unlike the other editing calls, this fails on a read-only editor.
+    pub mutating func insert(text: str) -> interop.Outcome[unit]:
+        if self.read_only:
+            return result.failure[unit](result.invalid, "the text editor is read only")
+        let normalized = editing.normalize_lines(text) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer normalized.release()
+        let before = self.document.version()
+        self.document.insert(normalized.value) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return self.notify_changed() if before != self.document.version() else result.success[unit](())
+
+    ## Undo the latest edit; nothing when read-only or there is none.
+    pub mutating func undo() -> interop.Outcome[unit]:
+        if self.read_only:
+            return result.success[unit](())
+        let changed = self.document.undo() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return self.notify_changed() if changed else result.success[unit](())
+
+    ## Redo the next undone edit; nothing when read-only or there is none.
+    pub mutating func redo() -> interop.Outcome[unit]:
+        if self.read_only:
+            return result.success[unit](())
+        let changed = self.document.redo() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return self.notify_changed() if changed else result.success[unit](())
+
+    mutating func notify_changed() -> interop.Outcome[unit]:
+        self.highlights.transform(self.document.last_change())
+        self.swatches.transform(self.document.last_change())
+        self.folds.transform(self.document.last_change())
+        self.vertical_move = false
+        self.active_since = time.now()
+        self.reveal_caret() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        self.box.value().invalidate()
+        return self.changed.emit(())
