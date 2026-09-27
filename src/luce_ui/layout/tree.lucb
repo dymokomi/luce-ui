@@ -603,7 +603,9 @@ pub struct Tree:
                                    button = (i64)event.button, repeated = event.repeated, shift = event.modifiers.shift,
                                    control = event.modifiers.control, alt = event.modifiers.alt, meta = event.modifiers.super,
                                    codepoint = (i64)event.codepoint, scroll_unit = event.scroll_unit,
-                                   inside = inside(box.clipping, event.x, event.y), scroll_x = event.scroll_x, scroll_y = event.scroll_y, pressure = event.pressure)
+                                   inside = inside(box.clipping, event.x, event.y), scroll_x = event.scroll_x, scroll_y = event.scroll_y, pressure = event.pressure,
+                                   pointer_kind = event.pointer_kind, tilt_x = event.tilt_x, tilt_y = event.tilt_y, azimuth = event.azimuth,
+                                   altitude = event.altitude, rotation = event.rotation, tangential = event.tangential)
             let delivered = self.send(index, translated)
             if not delivered.is_success():
                 return delivered
