@@ -172,9 +172,10 @@ pub struct Accordion: Widget:
     pub func open_section_index() -> i64:
         return self.open_index
 
-    ## Open section `index` (closing the open one), or -1 to close all; animated.
-    ## An index past the last section is ignored.
-    pub mutating func open_section(index: i64) -> interop.Outcome[unit]:
+    ## Open section `index` (closing the open one), or -1 to close all; eased
+    ## unless `animated` is false, when the sections are at once as asked (a
+    ## program restoring a panel, a capture). An index past the last is ignored.
+    pub mutating func open_section(index: i64, animated: bool = true) -> interop.Outcome[unit]:
         if index >= (i64)self.count:
             return result.success[unit](())
         let now = time.now()
@@ -189,6 +190,12 @@ pub struct Accordion: Widget:
                 section.header.value().set_open(opening)
                 if opening:
                     section.content_box.value().set_visible(true)
+            if not animated:
+                section.origin = wanted
+                section.progress = wanted
+                section.content_box.value().set_visible(opening)
+                section.content_box.value().set_limits(Size(0.0, 0.0), Size(16384.0, 16384.0)) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
         self.open_index = index if index >= 0 else -1
         self.box.value().invalidate()
         return self.changed.emit(self.open_index)
@@ -281,3 +288,9 @@ test "an accordion opens one section at a time":
     assert(closed.is_success())
     closed.release()
     assert(stack.open_section_index() == -1)
+    # Unanimated, the section is shown or hidden at once, as its header says.
+    let at_once = stack.open_section(1, animated = false)
+    assert(at_once.is_success())
+    at_once.release()
+    assert(stack.sections[1].progress == 1.0 and stack.sections[0].progress == 0.0)
+    assert(b.value().layout().value().is_visible() and not a.value().layout().value().is_visible())
