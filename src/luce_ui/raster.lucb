@@ -7,6 +7,7 @@ import math
 import memory
 import ownership
 import luce_ui.result as result
+from luce_ui.texture_cache import TextureCache
 
 struct Pixel:
     var red: f32
@@ -47,10 +48,8 @@ pub struct Raster:
     var columns: i64
     var rows: i64
     var pixels: Pixel[]
-    var texture: gpu.Texture?
-    var device: gpu.Device?
+    var cache: TextureCache
     var revision: u64 = 1
-    var uploaded: u64
 
     ## A transparent `width` by `height` raster, each dimension in 1..16384 and at
     ## most 67108864 pixels in all.
@@ -62,10 +61,8 @@ pub struct Raster:
         self.columns = width
         self.rows = height
         self.pixels = pixels
-        self.texture = none
-        self.device = none
+        self.cache = TextureCache()
         self.revision = 1
-        self.uploaded = 0
 
     pub func width() -> i64:
         return self.columns
@@ -239,16 +236,8 @@ pub struct Raster:
 
     ## Make the texture match the pixels, on the device `target` draws on.
     mutating func refresh(target: const gpu.RenderTarget*) -> gpu.Texture?!:
-        let device = self.device else gpu.device_of(target) catch failure:
-            if failure.code == gpu.unavailable:
-                return none
-            error(failure.code, failure.message)
-        self.device = device
-        let texture = self.texture else try gpu.Texture.create(device, (u32)self.columns, (u32)self.rows, gpu.Format.rgba8_linear)
-        if self.texture == none:
-            self.texture = texture
-            self.uploaded = 0
-        if self.uploaded == self.revision:
+        let texture = (try self.cache.texture_for(target, (u32)self.columns, (u32)self.rows, gpu.Format.rgba8_linear)) else return none
+        if not self.cache.stale(self.revision):
             return texture
         let count = self.pixels.length
         let bytes = try alloc u8[count * 4] in memory.heap
@@ -260,20 +249,13 @@ pub struct Raster:
             bytes[index * 4 + 2] = (u8)(packed // 65536 % 256)
             bytes[index * 4 + 3] = (u8)(packed // 16777216)
         try texture.upload(bytes)
-        self.uploaded = self.revision
+        self.cache.mark_uploaded(self.revision)
         return texture
 
     ## Release the texture, the device reference and the pixels; later calls fail.
     ## Closing twice is harmless.
     pub mutating func close():
-        if let texture = self.texture:
-            var owned = texture
-            owned.destroy()
-            self.texture = none
-        if let device = self.device:
-            var owned = device
-            owned.destroy()
-            self.device = none
+        self.cache.release()
         if self.pixels.length > 0:
             free(self.pixels) in memory.heap
         var empty: Pixel[]
@@ -409,7 +391,7 @@ test "raster draw on a standalone frame records nothing":
     defer target.release()
     # A standalone frame has no device: the draw records nothing and succeeds.
     try raster.draw(target, gpu.Rect(0.0, 0.0, 160.0, 120.0))
-    assert(raster.texture == none)
+    assert(not raster.cache.has_texture())
 
 test "raster deep copies, resizing, composite opacity and self composite":
     let source = try interop.Reference[Raster].adopt(new Raster(2, 2) in memory.heap, raster_type, memory.heap)

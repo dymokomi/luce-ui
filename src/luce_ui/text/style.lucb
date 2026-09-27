@@ -37,3 +37,13 @@ pub struct EditorTheme:
     pub var diff_added: gpu.Color = gpu.Color(0.24, 0.63, 0.35)
     pub var diff_modified: gpu.Color = gpu.Color(0.20, 0.55, 0.86)
     pub var diff_deleted: gpu.Color = gpu.Color(0.82, 0.32, 0.32)
+
+## The value 0..15 of a hex-digit scalar, or -1 when it is not one.
+pub func hex_digit(scalar: u32) -> i64:
+    if scalar >= (u32)'0' and scalar <= (u32)'9':
+        return (i64)(scalar - (u32)'0')
+    if scalar >= (u32)'a' and scalar <= (u32)'f':
+        return (i64)(scalar - (u32)'a') + 10
+    if scalar >= (u32)'A' and scalar <= (u32)'F':
+        return (i64)(scalar - (u32)'A') + 10
+    return -1

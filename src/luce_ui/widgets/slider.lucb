@@ -10,6 +10,7 @@ from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 import input
 from luce_ui.font import Font, selected_font
+from luce_ui.widgets.number_field import format_number
 
 ## A horizontal slider over `minimum..maximum` with an optional label and the
 ## value shown after it. Dragging anywhere on the track sets the value; arrow
@@ -148,7 +149,7 @@ pub struct Slider: Widget:
         if not self.show_value:
             return
         var digits: u8[32]
-        let shown = try format_value(digits, self.current, self.decimals)
+        let shown = try format_number(digits, self.current, self.decimals)
         try painter.text(shown, rail.x + rail.width + self.font.value().advance(), text_y, color = theme.foreground if enabled else theme.muted, font = self.font)
 
     func value_at(x: f64, width: f64, height: f64) -> f64:
@@ -208,39 +209,6 @@ pub struct Slider: Widget:
         self.caption.trace(visit, context)
         self.changed.trace(visit, context)
 
-## `value` with `decimals` places, into `digits`.
-func format_value(digits: u8[], value: f64, decimals: i64) -> str!:
-    var scale = 1.0
-    for _ in 0..<decimals:
-        scale *= 10.0
-    let scaled = (i64)math.floor(math.abs(value) * scale + 0.5)
-    var whole = scaled
-    var fraction: i64 = 0
-    if decimals > 0:
-        let divisor = (i64)scale
-        whole = scaled // divisor
-        fraction = scaled % divisor
-    var end = digits.length
-    if decimals > 0:
-        var remaining = fraction
-        for _ in 0..<decimals:
-            end -= 1
-            digits[end] = (u8)('0' + (u8)(remaining % 10))
-            remaining //= 10
-        end -= 1
-        digits[end] = '.'
-    if whole == 0:
-        end -= 1
-        digits[end] = '0'
-    while whole > 0 and end > 0:
-        end -= 1
-        digits[end] = (u8)('0' + (u8)(whole % 10))
-        whole //= 10
-    if value < 0.0 and scaled != 0 and end > 0:
-        end -= 1
-        digits[end] = '-'
-    return (str)digits[end..]
-
 pub let slider_type: interop.Type[Slider] = interop.Type[Slider]("Slider", Slider.close, Slider.trace, closeable = true, main_thread = true)
 
 test "slider values clamp, snap and format":
@@ -251,10 +219,10 @@ test "slider values clamp, snap and format":
     assert(slider.value() == 200.0)
     assert(slider.snap(3.4) == 3.0 and slider.snap(3.6) == 4.0)
     var digits: u8[32]
-    assert((try format_value(digits, 40.0, 0)) == "40")
-    assert((try format_value(digits, 0.756, 2)) == "0.76")
-    assert((try format_value(digits, -12.5, 1)) == "-12.5")
-    assert((try format_value(digits, 0.0, 1)) == "0.0")
+    assert((try format_number(digits, 40.0, 0)) == "40")
+    assert((try format_number(digits, 0.756, 2)) == "0.76")
+    assert((try format_number(digits, -12.5, 1)) == "-12.5")
+    assert((try format_number(digits, 0.0, 1)) == "0.0")
     var rejected = false
     discard(Slider("Bad", 1.0, 1.0) catch failure:
         assert(failure.code == result.invalid)

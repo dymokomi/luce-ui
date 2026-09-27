@@ -41,7 +41,7 @@ from luce_ui.font import Font, selected_font
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event, Point
 from luce_ui.painter import Painter
 from luce_ui.text.document import Document, TextChange
-from luce_ui.text.style import Highlight, EditorTheme, Swatch, swatch_span
+from luce_ui.text.style import Highlight, EditorTheme, Swatch, swatch_span, hex_digit
 
 ## A reusable multiline editor. Its document owns text and history; the widget
 ## owns focus, selection gestures, scrolling, drawing and application signals.
