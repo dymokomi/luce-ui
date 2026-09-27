@@ -9,6 +9,7 @@ import luce_ui.layout as layout
 import luce_ui.result as result
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
+from luce_ui.theme import srgb_decoded
 from luce_ui.geometry import Point
 import input
 
@@ -101,7 +102,7 @@ pub struct HsbField: Widget:
                 for corner in order:
                     let unit_point = corners[corner]
                     points[index] = Point(unit_point.x * size.width, unit_point.y * size.height)
-                    colors[index] = linear(hsb_to_rgb(self.hue, unit_point.x, 1.0 - unit_point.y))
+                    colors[index] = srgb_decoded(hsb_to_rgb(self.hue, unit_point.x, 1.0 - unit_point.y))
                     index += 1
         try painter.shaded_mesh(points, colors)
         # The marker: a white ring over a black one, at the chosen color.
@@ -209,8 +210,8 @@ pub struct HueStrip: Widget:
         for step in 0..<steps:
             let y0 = (f64)step / (f64)steps * size.height
             let y1 = (f64)(step + 1) / (f64)steps * size.height
-            let top = linear(hsb_to_rgb(360.0 - (f64)step / (f64)steps * 360.0, 1.0, 1.0))
-            let bottom = linear(hsb_to_rgb(360.0 - (f64)(step + 1) / (f64)steps * 360.0, 1.0, 1.0))
+            let top = srgb_decoded(hsb_to_rgb(360.0 - (f64)step / (f64)steps * 360.0, 1.0, 1.0))
+            let bottom = srgb_decoded(hsb_to_rgb(360.0 - (f64)(step + 1) / (f64)steps * 360.0, 1.0, 1.0))
             let corners: Point[4] = [Point(left, y0), Point(right, y0), Point(right, y1), Point(left, y1)]
             let shades: gpu.Color[4] = [top, top, bottom, bottom]
             let order: usize[6] = [0, 1, 2, 0, 2, 3]
@@ -316,13 +317,6 @@ pub func rgb_to_hsb(color: gpu.Color, hue: f64*, saturation: f64*, brightness: f
     else:
         h = 4.0 + (color.red - color.green) / delta
     *hue = wrap_hue(h * 60.0)
-
-## The linear components the GPU wants for an sRGB color.
-pub func linear(color: gpu.Color) -> gpu.Color:
-    return gpu.Color(srgb_to_linear(color.red), srgb_to_linear(color.green), srgb_to_linear(color.blue))
-
-func srgb_to_linear(value: f64) -> f64:
-    return value / 12.92 if value <= 0.04045 else math.pow((value + 0.055) / 1.055, 2.4)
 
 test "HSB converts to RGB and back":
     let red = hsb_to_rgb(0.0, 1.0, 1.0)

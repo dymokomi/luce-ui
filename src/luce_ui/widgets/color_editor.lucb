@@ -13,6 +13,8 @@ import luce_ui.result as result
 from luce_ui.layout import Widget, Layout, Constraints, Size, Event
 from luce_ui.font import Font, selected_font
 from luce_ui.painter import Painter
+from luce_ui.theme import srgb_decoded
+from luce_ui.text.style import hex_digit
 from luce_ui.text.line_input import LineInput
 
 let hex_digits: str = "0123456789abcdef"
@@ -104,7 +106,7 @@ pub struct ColorEditor: Widget:
         # Preview of the current color across the header row.
         let preview = gpu.Color((f64)self.red / 255.0, (f64)self.green / 255.0, (f64)self.blue / 255.0)
         try painter.rectangle(gpu.Rect(inset, (rh - rh * 0.6) * 0.5, rh * 1.2, rh * 0.6), theme.border)
-        try painter.rectangle(gpu.Rect(inset + 1.0, (rh - rh * 0.6) * 0.5 + 1.0, rh * 1.2 - 2.0, rh * 0.6 - 2.0), to_linear(preview))
+        try painter.rectangle(gpu.Rect(inset + 1.0, (rh - rh * 0.6) * 0.5 + 1.0, rh * 1.2 - 2.0, rh * 0.6 - 2.0), srgb_decoded(preview))
         try painter.text(self.hex_string(), inset + rh * 1.5, (rh - self.font.value().height()) * 0.5, theme.foreground, self.font)
         # Three channel sliders.
         let labels = ["R", "G", "B"]
@@ -230,23 +232,6 @@ pub struct ColorEditor: Widget:
         self.font.trace(visit, context)
         self.box.trace(visit, context)
 
-## Convert an sRGB preview color to the linear components the GPU target expects, so
-## the preview matches how the same hex renders elsewhere.
-func to_linear(color: gpu.Color) -> gpu.Color:
-    return gpu.Color(srgb_to_linear(color.red), srgb_to_linear(color.green), srgb_to_linear(color.blue))
-
-func srgb_to_linear(value: f64) -> f64:
-    return value / 12.92 if value <= 0.04045 else math.pow((value + 0.055) / 1.055, 2.4)
-
-func digit_value(byte: u8) -> i64:
-    if byte >= (u8)'0' and byte <= (u8)'9':
-        return (i64)(byte - (u8)'0')
-    if byte >= (u8)'a' and byte <= (u8)'f':
-        return (i64)(byte - (u8)'a') + 10
-    if byte >= (u8)'A' and byte <= (u8)'F':
-        return (i64)(byte - (u8)'A') + 10
-    return -1
-
 ## Parse `#rgb` or `#rrggbb` into channels; returns false and leaves them unchanged
 ## for anything else (e.g. a half-typed value).
 func parse_hex(text: str, red: i64*, green: i64*, blue: i64*) -> bool:
@@ -258,7 +243,7 @@ func parse_hex(text: str, red: i64*, green: i64*, blue: i64*) -> bool:
     var values: i64[6]
     let count = bytes.length - 1
     for index in 0..<count:
-        let value = digit_value(bytes[index + 1])
+        let value = hex_digit((u32)bytes[index + 1])
         if value < 0:
             return false
         values[index] = value

@@ -5,7 +5,9 @@ import interop
 import math
 import memory
 import ownership
+import transfer
 import luce_ui.result as result
+from luce_ui.texture_cache import TextureCache
 
 ## A picture for drawing: straight-alpha sRGB pixels held on the CPU and
 ## uploaded to a texture on the target's device the first time they are drawn
@@ -14,10 +16,8 @@ pub struct Image:
     var columns: u32
     var rows: u32
     var pixels: u8[]
-    var texture: gpu.Texture?
-    var device: gpu.Device?
+    var cache: TextureCache
     var revision: u64
-    var uploaded: u64
 
     ## A transparent `width` by `height` image, each dimension in 1..16384.
     pub func init(width: i64, height: i64) -> !:
@@ -31,10 +31,8 @@ pub struct Image:
         self.columns = (u32)width
         self.rows = (u32)height
         self.pixels = pixels
-        self.texture = none
-        self.device = none
+        self.cache = TextureCache()
         self.revision = 1
-        self.uploaded = 0
 
     pub func width() -> i64:
         return (i64)self.columns
@@ -80,18 +78,10 @@ pub struct Image:
         try gpu.draw_image(checked, texture, rectangle, source, opacity, filter)
 
     mutating func refresh(target: const gpu.RenderTarget*) -> gpu.Texture?!:
-        let device = self.device else gpu.device_of(target) catch failure:
-            if failure.code == gpu.unavailable:
-                return none
-            error(failure.code, failure.message)
-        self.device = device
-        let texture = self.texture else try gpu.Texture.create(device, self.columns, self.rows, gpu.Format.rgba8)
-        if self.texture == none:
-            self.texture = texture
-            self.uploaded = 0
-        if self.uploaded != self.revision:
+        let texture = (try self.cache.texture_for(target, self.columns, self.rows, gpu.Format.rgba8)) else return none
+        if self.cache.stale(self.revision):
             try texture.upload(self.pixels)
-            self.uploaded = self.revision
+            self.cache.mark_uploaded(self.revision)
         return texture
 
     func require_open() -> !:
@@ -101,14 +91,7 @@ pub struct Image:
     ## Release the texture, the device reference and the pixels; later writes and
     ## draws fail. Closing twice is harmless.
     pub mutating func close():
-        if let texture = self.texture:
-            var owned = texture
-            owned.destroy()
-            self.texture = none
-        if let device = self.device:
-            var owned = device
-            owned.destroy()
-            self.device = none
+        self.cache.release()
         if self.pixels.length > 0:
             free(self.pixels) in memory.heap
         var empty: u8[]
@@ -122,8 +105,7 @@ pub struct Image:
 
 ## The sRGB encoding of a linear component.
 func encode(value: f64) -> u8:
-    let clamped = math.clamp(value, 0.0, 1.0)
-    let encoded = clamped * 12.92 if clamped <= 0.0031308 else 1.055 * math.pow(clamped, 1.0 / 2.4) - 0.055
+    let encoded = transfer.srgb_encode(math.clamp(value, 0.0, 1.0))
     return (u8)(encoded * 255.0 + 0.5)
 
 pub let image_type: interop.Type[Image] = interop.Type[Image]("Image", Image.close, Image.trace, closeable = true, main_thread = true)

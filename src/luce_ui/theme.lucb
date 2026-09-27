@@ -4,6 +4,7 @@ import gpu
 import interop
 import math
 import color
+import transfer
 from luce_ui.font import Font
 from luce_ui.text.style import EditorTheme
 import luce_ui.result as result
@@ -106,3 +107,8 @@ func between(first: gpu.Color, second: gpu.Color, amount: f64) -> gpu.Color:
 ## Both models are linear-light sRGB triples, so bridging is a field-wise copy.
 func carry(value: gpu.Color) -> color.Color:
     return color.Color(value.red, value.green, value.blue)
+
+## The linear components a GPU target takes for an sRGB-encoded color (a picked
+## HSB value, a typed hex), so it shows as the same color does elsewhere.
+pub func srgb_decoded(value: gpu.Color) -> gpu.Color:
+    return gpu.Color(transfer.srgb_decode(value.red), transfer.srgb_decode(value.green), transfer.srgb_decode(value.blue))
