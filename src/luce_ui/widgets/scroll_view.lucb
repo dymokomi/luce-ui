@@ -78,9 +78,11 @@ pub struct ScrollView: Widget:
     pub func offset() -> f64:
         return math.min(self.scroll.value().offset, self.overflow())
 
-    ## Scroll to `offset` points from the content's top, kept within it.
+    ## Scroll to `offset` points from the content's top. It is kept within the
+    ## content when placed, so an offset asked for while the content is still
+    ## growing (a section opening) is reached once it has room.
     pub mutating func scroll_to(offset: f64):
-        self.scroll.value().offset = math.clamp(offset, 0.0, self.overflow())
+        self.scroll.value().offset = math.max(0.0, offset)
         self.box.value().invalidate()
 
     func overflow() -> f64:
