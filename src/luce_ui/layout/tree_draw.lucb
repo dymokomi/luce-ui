@@ -1,0 +1,85 @@
+#==============================================================================================
+#
+#   layout/tree_draw - Drawing the tree: boxes in order, then popups with their shadows
+#
+#==============================================================================================
+
+extend Tree:
+    ## Draw every visible box in tree order, each clipped to its box, then every
+    ## popup subtree over the rest with its shadow — a popup opened inside another
+    ## (a menu in a dialog) over that one. The lit drop area goes over the pass it
+    ## belongs to.
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        var failed: interop.Outcome[unit]? = none
+        var deepest: usize = 0
+        for index in 0..<self.count:
+            let depth = popup_depth(self.entries, index)
+            if depth > deepest:
+                deepest = depth
+        for pass in 0..<(deepest + 1):
+            for index in 0..<self.count:
+                if popup_depth(self.entries, index) != pass:
+                    continue
+                let entry = self.entries[index]
+                let box = entry.box.value()
+                if box.clipping.width <= 0.0 or box.clipping.height <= 0.0:
+                    continue
+                let native_target = target.get() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                # Shadows use the window target before popup clipping. They do
+                # not enlarge layout or hit bounds, and remain sharp at any scale.
+                if box.popup:
+                    self.draw_shadow(target, box.rectangle, box.appearance) catch failure:
+                        return result.failure[unit](failure.code, failure.message)
+                let clipped = native_target.clipped(box.clipping) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                defer clipped.release()
+                let native_clipped = clipped.get() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                let region = native_clipped.region(box.rectangle) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                defer region.release()
+                entry.widget.enter() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                defer entry.widget.leave()
+                var widget = entry.widget.value()
+                let drawn = widget.draw(region)
+                if not drawn.is_success():
+                    # One widget that cannot draw (a document past the GPU's
+                    # memory) must not blank the window: the rest still draw,
+                    # and the first failure is reported once they have.
+                    if failed == none:
+                        failed = drawn
+                    else:
+                        drawn.release()
+                    continue
+                drawn.release()
+            # Over everything in its pass, the lit drop area.
+            if let hovered = self.find(self.drop_hover):
+                if popup_depth(self.entries, hovered) == pass:
+                    self.draw_drop_overlay(target) catch failure:
+                        return result.failure[unit](failure.code, failure.message)
+        if let first = failed:
+            return first
+        return result.success[unit](())
+
+    ## A soft drop shadow around the whole popup: several expanding layers, densest at
+    ## the box and fading outward, with a slight downward bias so the surface reads as
+    ## lifted off the content behind it. Drawn before the popup's own clip.
+    func draw_shadow(target: interop.View[gpu.RenderTarget], bounds: Rect, theme: Theme) -> !:
+        if theme.shadow_offset == 0.0 or theme.shadow_opacity == 0.0:
+            return
+        var painter = try Painter(target)
+        defer painter.close()
+        # Many thin nested layers feather smoothly instead of banding. Each adds the
+        # same alpha, chosen so the layers composite to shadow_opacity right at the box
+        # and fall off across `spread`; a downward bias reads as a lifted surface.
+        let layers = 24
+        let spread = theme.shadow_offset * 6.0
+        let step = spread / (f64)layers
+        let bias = theme.shadow_offset * 0.6
+        let per = 1.0 - math.pow(1.0 - theme.shadow_opacity, 1.0 / (f64)layers)
+        for ring in 0..<layers:
+            let grow = step * (f64)(ring + 1)
+            try painter.rectangle(Rect(bounds.x - grow, bounds.y - grow + bias,
+                                       bounds.width + grow * 2.0, bounds.height + grow * 2.0), theme.shadow, per)

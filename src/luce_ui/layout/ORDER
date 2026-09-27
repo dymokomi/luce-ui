@@ -1,5 +1,9 @@
 module.lucb
 box.lucb
 tree.lucb
+tree_arrange.lucb
+tree_focus.lucb
+tree_dispatch.lucb
+tree_draw.lucb
 drops.lucb
 placement.lucb

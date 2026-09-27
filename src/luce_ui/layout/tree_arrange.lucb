@@ -1,0 +1,231 @@
+#==============================================================================================
+#
+#   layout/tree_arrange - Gathering the widget tree and placing its boxes and popups
+#
+#==============================================================================================
+
+extend Tree:
+    ## Arrange again at the last size; see `arrange`.
+    pub mutating func refresh() -> interop.Outcome[unit]:
+        return self.arrange(self.width, self.height)
+
+    ## Rebuild the arrangement for a `width` by `height` window, unless neither the
+    ## size nor the layout epoch changed since the last one. Gathers the visible
+    ## widgets, resolves themes top-down, measures bottom-up, places boxes and then
+    ## popups, and settles focus, capture and hover. A popup that opens takes
+    ## focus and hands it back when it closes. On failure the previous arrangement
+    ## stays in effect; a widget that invalidates while measuring fails it.
+    pub mutating func arrange(width: f64, height: f64) -> interop.Outcome[unit]:
+        extent(width) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        extent(height) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        if self.count > 0 and self.width == width and self.height == height and self.version == epoch():
+            return result.success[unit](())
+        self.animating = false
+        let replacement = alloc Entry[1024] in memory.heap catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        var count: usize = 0
+        var committed = false
+        defer discard_replacement(replacement, &count, &committed)
+        let started = epoch()
+        gather(self.root, replacement, &count, -1, 0, self.identifier) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        # Resolve parent context before measuring descendants. Values avoid
+        # shared mutable theme state and require no work in widget draw paths.
+        for position in 0..<count:
+            let entry = &replacement[position]
+            let inherited = replacement[(usize)entry.parent].box.value().appearance if entry.parent >= 0 else self.appearance
+            entry.box.value().appearance = entry.box.value().local_theme else inherited
+        # Inside a box that takes scroll (a scroll view) a box measures its
+        # natural height, unbounded; parents come before their children.
+        let unbounded = alloc bool[count + 1] in memory.heap catch _:
+            return result.failure[unit](result.limit, "out of memory measuring the tree")
+        defer free(unbounded) in memory.heap
+        for position in 0..<count:
+            let parent = replacement[position].parent
+            unbounded[position] = parent >= 0 and (replacement[(usize)parent].box.value().scrolls or unbounded[(usize)parent])
+        var index = count
+        while index > 0:
+            index -= 1
+            let entry = &replacement[index]
+            entry.widget.enter() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            defer entry.widget.leave()
+            let measured = entry.widget.value().measure(Constraints(width, 16384.0 if unbounded[index] else height))
+            defer measured.release()
+            let size = measured.get() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            extent(size.width) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            extent(size.height) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            let box = entry.box.value()
+            box.measured = Size(math.clamp(size.width, box.minimum.width, box.maximum.width),
+                                math.clamp(size.height, box.minimum.height, box.maximum.height))
+        if epoch() != started:
+            return result.failure[unit](result.busy, "a widget changed the tree during measurement")
+        let bounds = Rect(width = width, height = height)
+        place(replacement, 0, bounds, bounds) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        var popup: u64 = 0
+        for entry in replacement[..<count]:
+            let box = entry.box.value()
+            if box.popup and entry.parent >= 0:
+                let anchor = replacement[(usize)entry.parent].box.value().rectangle
+                var placed = popup_rectangle(box.popup_placement, box.popup_point, box.measured, anchor, bounds)
+                if box.animate_open and box.visible:
+                    if box.opening:
+                        # Grow downward from the pinned top: start at half height with the
+                        # same top and width, so the search field never moves — only the
+                        # bottom eases open. Height changes while open animate the same way.
+                        box.opening = false
+                        box.rectangle = Rect(placed.x, placed.y, placed.width, placed.height * 0.5)
+                    let eased = ease_rect(box.rectangle, placed, 0.22)
+                    if not settled(eased, placed):
+                        placed = eased
+                        self.animating = true
+                        bump_revision()
+                let position = find_entry(replacement, count, box.identifier) else trap("popup missing from tree")
+                place(replacement, position, placed, bounds) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+                if box.modal and box.visible:
+                    popup = box.identifier
+        if popup != 0 and popup != self.focus:
+            if self.return_focus == 0:
+                self.return_focus = self.focus
+            self.focus = popup
+        # A box that claims the press under way (a flyout a held button opened)
+        # takes the capture: the drag and its release are its now.
+        for entry in replacement[..<count]:
+            let claimant = entry.box.value()
+            if claimant.claims_press and claimant.visible:
+                claimant.claims_press = false
+                if self.capture != 0 and self.capture != claimant.identifier:
+                    let claimed = self.cancel(self.capture)
+                    if not claimed.is_success():
+                        return claimed
+                    claimed.release()
+                    self.capture = claimant.identifier
+        # Cancel against the old retained snapshot before its edges are released.
+        if self.capture != 0 and not eligible(replacement, count, self.capture, false):
+            let capture_cancelled = self.cancel(self.capture)
+            if not capture_cancelled.is_success():
+                return capture_cancelled
+            capture_cancelled.release()
+            self.capture = 0
+        if self.focus != 0 and not eligible(replacement, count, self.focus, true):
+            if self.focus != self.capture:
+                let focus_cancelled = self.cancel(self.focus)
+                if not focus_cancelled.is_success():
+                    return focus_cancelled
+                focus_cancelled.release()
+            self.focus = 0
+            if self.dialog_return != 0 and eligible(replacement, count, self.dialog_return, true):
+                self.focus = self.dialog_return
+            self.dialog_return = 0
+        if popup == 0 and self.return_focus != 0:
+            if eligible(replacement, count, self.return_focus, true):
+                self.focus = self.return_focus
+            self.return_focus = 0
+        if popup == 0:
+            for position in 0..<count:
+                let entry = &replacement[position]
+                if entry.box.value().focus_requested:
+                    entry.box.value().focus_requested = false
+                    for descendant in position..<entry.end:
+                        let identifier = replacement[descendant].box.value().identifier
+                        if eligible(replacement, count, identifier, true):
+                            self.note_popup_entry(replacement, count, identifier)
+                            self.focus = identifier
+                            break
+        if self.requested_focus != 0 and popup == 0:
+            if eligible(replacement, count, self.requested_focus, true):
+                self.focus = self.requested_focus
+            self.requested_focus = 0
+        for entry in self.entries[..<self.count]:
+            entry.box.value().application = 0
+            entry.box.value().focused = false
+            entry.box.value().focus_within = false
+            entry.box.value().hovered = false
+            entry.box.value().pointer_within = false
+        # Swap first, release after: a release can run the cycle collector,
+        # which traces `self.entries`, so they must never name references
+        # already given up.
+        let previous = self.entries
+        let previous_count = self.count
+        committed = true
+        self.entries = replacement
+        self.count = count
+        release_entries(previous, previous_count)
+        self.width = width
+        self.height = height
+        self.version = started
+        for entry in self.entries[..<self.count]:
+            let box = entry.box.value()
+            box.application = self.identifier
+            box.focused = box.identifier == self.focus
+        mark_focus(self.entries, self.count, self.focus, self.return_focus)
+        self.update_hover()
+        return result.success[unit](())
+
+func gather(widget: interop.Interface[Widget], entries: Entry[], count: usize*, parent: i64,
+            depth: usize, application: u64) -> !:
+    if depth >= 64 or *count >= entries.length:
+        error(result.limit, "a widget tree supports at most 1024 widgets and 64 levels")
+    let box = try widget_layout(widget)
+    errdefer box.release()
+    let state = try box.get()
+    if not state.visible:
+        if parent == -1:
+            error(result.invalid, "an application root must be visible")
+        box.release()
+        return
+    if state.application != 0 and state.application != application:
+        error(result.busy, "a widget already belongs to another application")
+    if parent == -1 and state.parent != 0:
+        error(result.busy, "an application root already has a parent")
+    for previous in entries[..<*count]:
+        if previous.box.value().identifier == state.identifier:
+            error(result.invalid, "widgets must return distinct stable layouts")
+    let index = *count
+    entries[index] = Entry(widget.clone(), box.clone(), parent, 0)
+    *count += 1
+    let length = state.child_count()
+    var child_index: i64 = 0
+    while child_index < length:
+        let child = try state.child(child_index)
+        defer child.release()
+        if state.split != none:
+            let child_box = try widget_layout(child)
+            defer child_box.release()
+            if not child_box.value().visible or child_box.value().popup:
+                error(result.invalid, "split panes and dividers must be visible ordinary children")
+        try gather(child, entries, count, (i64)index, depth + 1, application)
+        child_index += 1
+    entries[index].end = *count
+    box.release()
+
+func discard_replacement(entries: Entry[], count: usize*, committed: bool*):
+    if not *committed:
+        release_entries(entries, *count)
+
+## Where a popup of `measured` size goes for its `placement`, opened from `anchor`
+## (its parent's box) and kept inside the window `bounds`.
+func popup_rectangle(placement: PopupPlacement, point: Point, measured: Size, anchor: Rect, bounds: Rect) -> Rect:
+    let popup_width = math.min(measured.width, bounds.width)
+    let popup_height = math.min(measured.height, bounds.height)
+    var x = math.clamp(anchor.x, 0.0, bounds.width - popup_width)
+    let below = anchor.y + anchor.height
+    var y = below if below + popup_height <= bounds.height else math.max(0.0, anchor.y - popup_height)
+    if placement == PopupPlacement.point:
+        x = math.clamp(anchor.x + point.x, 0.0, bounds.width - popup_width)
+        y = math.clamp(anchor.y + point.y, 0.0, bounds.height - popup_height)
+    elif placement == PopupPlacement.window_top:
+        x = (bounds.width - popup_width) * 0.5
+        y = math.min(math.min(40.0, bounds.height * 0.1), bounds.height - popup_height)
+    elif placement == PopupPlacement.window_center:
+        # Centered, moved by its offset (a dragged dialog), kept inside.
+        x = math.clamp((bounds.width - popup_width) * 0.5 + point.x, 0.0, math.max(0.0, bounds.width - popup_width))
+        y = math.clamp((bounds.height - popup_height) * 0.5 + point.y, 0.0, math.max(0.0, bounds.height - popup_height))
+    return Rect(x, y, popup_width, popup_height)

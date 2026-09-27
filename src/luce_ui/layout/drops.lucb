@@ -1,8 +1,9 @@
 #==============================================================================================
 #
-#   layout/drops - The files of the drag in progress
+#   layout/drops - Drags from other applications: the payload and its drop areas
 #
 #==============================================================================================
+
 
 ## The files of the drag in progress, or of the last drop, copied from the window
 ## (or given by a test); read through a drop area's `drop_path`. UI thread only.
@@ -27,3 +28,95 @@ pub func set_drop_payload(paths: const str[]) -> !:
         copy[path.length] = 0
         drop_payload[drop_payload_count] = (str)copy[..<path.length]
         drop_payload_count += 1
+
+extend Tree:
+    ## Whether a drop would be taken where the drag is now: the application tells
+    ## the window so after every drag event.
+    pub func drop_accepted() -> bool:
+        let index = self.find(self.drop_hover) else return false
+        return self.entries[index].box.value().drop_accepted
+
+    ## The innermost visible, enabled drop area under a point (a popup's, while one is open).
+    func drop_at(x: f64, y: f64) -> u64:
+        let modal = self.has_popup()
+        var index = self.count
+        while index > 0:
+            index -= 1
+            let box = self.entries[index].box.value()
+            if box.drop_target and (not modal or in_popup(self.entries, index)) and path_enabled(self.entries, index) and inside(box.clipping, x, y):
+                return box.identifier
+        return 0
+
+    ## Route a drag: the area under the pointer gets entered/moved, the one it
+    ## left gets left, and a drop goes to the area that takes it.
+    mutating func dispatch_drag(event: input.Event) -> interop.Outcome[unit]:
+        let target = 0 if event.kind == input.EventKind.drag_left else self.drop_at(event.x, event.y)
+        if target != self.drop_hover:
+            let left = self.leave_drop()
+            if not left.is_success():
+                return left
+            left.release()
+            if let index = self.find(target):
+                let box = self.entries[index].box.value()
+                box.drop_accepted = true
+                box.drop_hovered = true
+                box.invalidate()
+                self.drop_hover = target
+                let entered = self.send_drag(index, input.EventKind.drag_entered, event.x, event.y)
+                if not entered.is_success():
+                    return entered
+                entered.release()
+        elif event.kind == input.EventKind.drag_moved:
+            if let index = self.find(target):
+                let moved = self.send_drag(index, input.EventKind.drag_moved, event.x, event.y)
+                if not moved.is_success():
+                    return moved
+                moved.release()
+        if event.kind == input.EventKind.drop:
+            if let index = self.find(self.drop_hover):
+                let box = self.entries[index].box.value()
+                box.drop_hovered = false
+                box.invalidate()
+                self.drop_hover = 0
+                if box.drop_accepted:
+                    return self.send_drag(index, input.EventKind.drop, event.x, event.y)
+        return result.success[unit](())
+
+    mutating func leave_drop() -> interop.Outcome[unit]:
+        let found = self.find(self.drop_hover)
+        if found == none:
+            self.drop_hover = 0
+            return result.success[unit](())
+        let index = found else return result.success[unit](())
+        let box = self.entries[index].box.value()
+        box.drop_hovered = false
+        box.invalidate()
+        self.drop_hover = 0
+        return self.send_drag(index, input.EventKind.drag_left, 0.0, 0.0)
+
+    func send_drag(index: usize, kind: input.EventKind, x: f64, y: f64) -> interop.Outcome[unit]:
+        let box = self.entries[index].box.value()
+        return self.send(index, Event(kind = kind, x = x - box.rectangle.x, y = y - box.rectangle.y, inside = true))
+
+    ## The lit drop area: the accent laid thinly over it with a two-point edge,
+    ## so the place a drop would land is plain.
+    func draw_drop_overlay(target: interop.View[gpu.RenderTarget]) -> !:
+        let index = self.find(self.drop_hover) else return
+        let box = self.entries[index].box.value()
+        if not box.drop_overlay or not box.drop_accepted or box.clipping.width <= 0.0 or box.clipping.height <= 0.0:
+            return
+        let native_target = try target.get()
+        let clipped = try native_target.clipped(box.clipping)
+        defer clipped.release()
+        let region = try (try clipped.get()).region(box.rectangle)
+        defer region.release()
+        var painter = try Painter(region)
+        defer painter.close()
+        let theme = box.appearance
+        let area = gpu.Rect(width = box.rectangle.width, height = box.rectangle.height)
+        try painter.rounded_rectangle(area, theme.accent, theme.control_radius, 0.14)
+        let edge = 2.0
+        try painter.rectangle(gpu.Rect(0.0, 0.0, area.width, edge), theme.accent)
+        try painter.rectangle(gpu.Rect(0.0, area.height - edge, area.width, edge), theme.accent)
+        try painter.rectangle(gpu.Rect(0.0, 0.0, edge, area.height), theme.accent)
+        try painter.rectangle(gpu.Rect(area.width - edge, 0.0, edge, area.height), theme.accent)

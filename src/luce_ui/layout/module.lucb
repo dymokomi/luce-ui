@@ -9,11 +9,15 @@
 #       custom arrangements), routes input to them (hit testing, capture, focus, popups,
 #       menus, drags) and draws them in order. Fragments, in ORDER:
 #
-#       module.lucb     shared types: geometry, constraints, axes, events, the Widget interface
-#       box.lucb        the Layout box a widget owns
-#       tree.lucb       the Tree: gathering, focus, capture, dispatch and drawing
-#       drops.lucb      the files of the drag in progress, shared by drop areas
-#       placement.lucb  placing a box's children: stacks, splits and custom arrangements
+#       module.lucb         shared types: geometry, constraints, axes, events, the Widget interface
+#       box.lucb            the Layout box a widget owns
+#       tree.lucb           the Tree: its entries, lifetime and shared lookups
+#       tree_arrange.lucb   gathering the tree, measuring, placing boxes and popups
+#       tree_focus.lucb     keyboard focus, Tab order, focus returning from popups
+#       tree_dispatch.lucb  routing input: pointer, keys, menus, dialogs, hover, cursors
+#       tree_draw.lucb      drawing boxes in order, popups over them with shadows
+#       drops.lucb          drags from other applications: the payload, drop areas
+#       placement.lucb      placing a box's children: stacks, splits and custom arrangements
 #
 #==============================================================================================
 

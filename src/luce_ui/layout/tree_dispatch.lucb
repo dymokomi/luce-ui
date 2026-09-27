@@ -1,0 +1,395 @@
+#==============================================================================================
+#
+#   layout/tree_dispatch - Routing input: pointer, keys, menus, dialogs, hover and cursors
+#
+#==============================================================================================
+
+extend Tree:
+    ## Route one window event, arranging before and after. Pointer events go to
+    ## the capturing box or the one hit, which a primary press focuses (when
+    ## focusable) and captures until release; keys and text go to the focused box,
+    ## and Tab moves focus unless the focused box keeps Tab. Secondary clicks and
+    ## Shift-F10 open the nearest context menu. Focus loss cancels capture and
+    ## focus. While a modal popup is open input is modal: only its subtree is hit,
+    ## key and text input go to the popup's root widget, and a press outside it
+    ## is swallowed after sending the popup a cancellation. A non-modal popup is
+    ## only hit first.
+    pub mutating func dispatch(event: input.Event) -> interop.Outcome[unit]:
+        # A move while a widget holds the pointer (a stroke, a drag) goes to it on
+        # the arrangement already made: a fast pointer sends hundreds a frame, and
+        # arranging the whole tree for each is what would slow the frame down.
+        if not self.captured_move(event):
+            let arranged = self.arrange(self.width, self.height)
+            if not arranged.is_success():
+                return arranged
+            arranged.release()
+        if event.kind == input.EventKind.pointer_left:
+            self.pointer_present = false
+            self.update_hover()
+            return result.success[unit](())
+        if event.kind == input.EventKind.drag_entered or event.kind == input.EventKind.drag_moved or event.kind == input.EventKind.drag_left or event.kind == input.EventKind.drop:
+            return self.dispatch_drag(event)
+        if event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_down or event.kind == input.EventKind.pointer_up or event.kind == input.EventKind.scroll or event.kind == input.EventKind.magnify:
+            self.pointer_x = event.x
+            self.pointer_y = event.y
+            self.pointer_present = math.is_finite(event.x) and math.is_finite(event.y)
+            self.update_hover()
+        if event.kind == input.EventKind.focus_lost or event.kind == input.EventKind.overflow:
+            self.pointer_present = false
+            self.update_hover()
+            let capture_cancelled = self.cancel(self.capture)
+            if not capture_cancelled.is_success():
+                return capture_cancelled
+            capture_cancelled.release()
+            if self.focus != self.capture:
+                let focus_cancelled = self.cancel(self.focus)
+                if not focus_cancelled.is_success():
+                    return focus_cancelled
+                focus_cancelled.release()
+            self.capture = 0
+            self.return_focus = 0
+            self.requested_focus = 0
+            self.set_focus(0)
+            return result.success[unit](())
+        if let popup = self.popup_index():
+            let box = self.entries[popup].box.value()
+            if event.kind == input.EventKind.pointer_moved or (event.kind == input.EventKind.pointer_down and event.button == 0):
+                if let peer = self.menu_at(popup, event.x, event.y):
+                    if self.entries[popup].parent != (i64)peer:
+                        return self.switch_menu(popup, peer)
+            if event.kind == input.EventKind.key_down and not event.repeated and (event.key == input.Key.left or event.key == input.Key.right):
+                if let peer = self.next_menu(popup, event.key == input.Key.left):
+                    return self.switch_menu(popup, peer)
+            if event.kind == input.EventKind.pointer_down and not inside(box.clipping, event.x, event.y):
+                let cancelled = self.cancel(box.identifier)
+                if not cancelled.is_success():
+                    return cancelled
+                cancelled.release()
+                self.capture = 0
+                return self.arrange(self.width, self.height)
+            # Tab stays within the popup; its widget chooses how to navigate.
+            if event.kind == input.EventKind.key_down or event.kind == input.EventKind.key_up or event.kind == input.EventKind.text_input or event.kind == input.EventKind.modifiers_changed:
+                let delivered = self.send(popup, Event(kind = event.kind, key = event.key,
+                                                       repeated = event.repeated, shift = event.modifiers.shift,
+                                                       control = event.modifiers.control, alt = event.modifiers.alt, meta = event.modifiers.super,
+                                                       codepoint = (i64)event.codepoint))
+                if not delivered.is_success():
+                    return delivered
+                delivered.release()
+                return self.arrange(self.width, self.height)
+        let secondary = event.kind == input.EventKind.pointer_down and event.button == 1
+        let keyboard_context = event.kind == input.EventKind.key_down and event.key == input.Key.f10 and event.modifiers.shift and not event.repeated
+        if (secondary or keyboard_context) and not self.has_popup():
+            let destination = self.hit(event.x, event.y) if secondary else self.focus
+            if let target = self.find(destination):
+                let box = self.entries[target].box.value()
+                if secondary:
+                    let cancelled = self.cancel(self.capture)
+                    if not cancelled.is_success():
+                        return cancelled
+                    cancelled.release()
+                    self.capture = 0
+                    if box.accepts_focus:
+                        if self.focus != destination:
+                            let cancelled_focus = self.leave(self.focus)
+                            if not cancelled_focus.is_success():
+                                return cancelled_focus
+                            cancelled_focus.release()
+                        self.set_focus(destination)
+                    if not box.context_menu:
+                        self.secondary_holder = destination
+                        let selected = self.send(target, Event(kind = event.kind, button = 1,
+                                                               x = event.x - box.rectangle.x, y = event.y - box.rectangle.y, inside = true))
+                        if not selected.is_success():
+                            return selected
+                        selected.release()
+                var ancestor = (i64)target
+                while ancestor >= 0:
+                    let provider = self.entries[(usize)ancestor].box.value()
+                    if provider.context_menu and path_enabled(self.entries, (usize)ancestor):
+                        let x = event.x - provider.rectangle.x if secondary else 0.0
+                        let y = event.y - provider.rectangle.y if secondary else math.min(box.rectangle.y - provider.rectangle.y + box.rectangle.height, provider.rectangle.height)
+                        let opened = self.send((usize)ancestor, Event(kind = input.EventKind.pointer_down, button = 1, x = x, y = y, inside = true))
+                        if not opened.is_success():
+                            return opened
+                        opened.release()
+                        return self.arrange(self.width, self.height)
+                    ancestor = self.entries[(usize)ancestor].parent
+            return result.success[unit](())
+        var text_tab = false
+        if let focused = self.find(self.focus):
+            text_tab = self.entries[focused].box.value().accepts_tab and not event.modifiers.control
+        if event.kind == input.EventKind.key_down and event.key == input.Key.tab and not text_tab:
+            if not event.repeated:
+                let capture_cancelled = self.cancel(self.capture)
+                if not capture_cancelled.is_success():
+                    return capture_cancelled
+                capture_cancelled.release()
+                let focus_cancelled = self.leave(self.focus)
+                if not focus_cancelled.is_success():
+                    return focus_cancelled
+                focus_cancelled.release()
+                self.capture = 0
+                self.advance_focus(event.modifiers.shift)
+            return result.success[unit](())
+        var destination: u64 = 0
+        if event.kind == input.EventKind.pointer_down and event.button == 0:
+            destination = self.hit(event.x, event.y)
+            let capture_cancelled = self.cancel(self.capture)
+            if not capture_cancelled.is_success():
+                return capture_cancelled
+            capture_cancelled.release()
+            if destination != self.focus:
+                let focus_cancelled = self.leave(self.focus)
+                if not focus_cancelled.is_success():
+                    return focus_cancelled
+                focus_cancelled.release()
+            self.capture = destination
+            let selected = self.find(destination)
+            if let index = selected:
+                self.set_focus(destination if self.entries[index].box.value().accepts_focus else 0)
+            else:
+                self.set_focus(0)
+        elif event.kind == input.EventKind.pointer_down and event.button >= 2:
+            # Middle and extra buttons go to what is under the pointer and hold it for
+            # the drag, as the primary button does, but leave keyboard focus alone.
+            destination = self.hit(event.x, event.y)
+            let held_cancelled = self.cancel(self.capture)
+            if not held_cancelled.is_success():
+                return held_cancelled
+            held_cancelled.release()
+            self.capture = destination
+        elif event.kind == input.EventKind.pointer_up and (event.button == 0 or event.button >= 2):
+            destination = self.capture if self.capture != 0 else self.hit(event.x, event.y)
+            self.capture = 0
+        elif event.kind == input.EventKind.pointer_up and event.button == 1 and self.secondary_holder != 0:
+            # A right-button drag (a brush sized by it) ends where it began.
+            destination = self.secondary_holder
+            self.secondary_holder = 0
+        elif event.kind == input.EventKind.pointer_moved:
+            destination = self.capture if self.capture != 0 else self.hit(event.x, event.y)
+        elif event.kind == input.EventKind.scroll or event.kind == input.EventKind.magnify:
+            destination = self.scroll_target(self.hit(event.x, event.y))
+        elif event.kind == input.EventKind.key_down or event.kind == input.EventKind.key_up or event.kind == input.EventKind.text_input or event.kind == input.EventKind.modifiers_changed:
+            destination = self.focus
+        if let index = self.find(destination):
+            let box = self.entries[index].box.value()
+            let translated = Event(kind = event.kind, key = event.key,
+                                   x = event.x - box.rectangle.x, y = event.y - box.rectangle.y,
+                                   button = (i64)event.button, repeated = event.repeated, shift = event.modifiers.shift,
+                                   control = event.modifiers.control, alt = event.modifiers.alt, meta = event.modifiers.super,
+                                   codepoint = (i64)event.codepoint, scroll_unit = event.scroll_unit,
+                                   inside = inside(box.clipping, event.x, event.y), scroll_x = event.scroll_x, scroll_y = event.scroll_y, pressure = event.pressure,
+                                   pointer_kind = event.pointer_kind, tilt_x = event.tilt_x, tilt_y = event.tilt_y, azimuth = event.azimuth,
+                                   altitude = event.altitude, rotation = event.rotation, tangential = event.tangential)
+            let delivered = self.send(index, translated)
+            if not delivered.is_success():
+                return delivered
+            delivered.release()
+        # A captured move changes no arrangement: the run loop arranges once
+        # before it draws, so a fast pointer does not arrange hundreds of times.
+        if self.captured_move(event):
+            return result.success[unit](())
+        let refreshed = self.arrange(self.width, self.height)
+        if not refreshed.is_success():
+            return refreshed
+        refreshed.release()
+        return result.success[unit](())
+
+    ## Escape or Enter while a dialog is open goes to the topmost open one (a
+    ## picker opened over another dialog takes them first), to cancel or
+    ## accept; true when one took it. A focused field first drops (Escape) or keeps
+    ## (Enter) what was typed. Enter stays with a multi-line editor.
+    pub mutating func dialog_key(event: input.Event) -> interop.Outcome[bool]:
+        if event.kind != input.EventKind.key_down or event.repeated or (event.key != input.Key.escape and event.key != input.Key.enter):
+            return result.success[bool](false)
+        if event.modifiers.control or event.modifiers.alt or event.modifiers.super or event.modifiers.shift or self.has_popup():
+            return result.success[bool](false)
+        let focused = self.find(self.focus)
+        var target: usize? = none
+        var index = self.count
+        while index > 0 and target == none:
+            index -= 1
+            let box = self.entries[index].box.value()
+            if box.dialog and box.visible and path_enabled(self.entries, index):
+                target = index
+        let dialog = target else return result.success[bool](false)
+        if let field = focused:
+            let box = self.entries[field].box.value()
+            if box.accepts_text:
+                if event.key == input.Key.enter and box.accepts_tab:
+                    return result.success[bool](false)
+                # A field left by Enter keeps its text, as focus moving away would.
+                let resolved = self.send(field, Event(kind = input.EventKind.focus_lost) if event.key == input.Key.enter else Event(kind = input.EventKind.key_down, key = input.Key.escape))
+                defer resolved.release()
+                discard(resolved.get() catch failure:
+                    return result.failure[bool](failure.code, failure.message))
+        let delivered = self.send(dialog, Event(kind = input.EventKind.key_down, key = event.key))
+        defer delivered.release()
+        discard(delivered.get() catch failure:
+            return result.failure[bool](failure.code, failure.message))
+        let arranged = self.arrange(self.width, self.height)
+        defer arranged.release()
+        discard(arranged.get() catch failure:
+            return result.failure[bool](failure.code, failure.message))
+        return result.success[bool](true)
+
+    ## The open modal popup, if any; a non-modal one does not hold input.
+    func popup_index() -> usize?:
+        var index = self.count
+        while index > 0:
+            index -= 1
+            let box = self.entries[index].box.value()
+            if box.popup and box.modal and box.visible:
+                return index
+        return none
+
+    func menu_owner(popup: usize) -> usize?:
+        let parent = self.entries[popup].parent
+        if parent < 0 or not self.entries[(usize)parent].box.value().menu_trigger:
+            return none
+        return (usize)parent
+
+    func menu_at(popup: usize, x: f64, y: f64) -> usize?:
+        let owner = self.menu_owner(popup) else return none
+        let group = self.entries[owner].parent
+        for index in 0..<self.count:
+            let box = self.entries[index].box.value()
+            if self.entries[index].parent == group and box.menu_trigger and path_enabled(self.entries, index) and inside(box.clipping, x, y):
+                return index
+        return none
+
+    func next_menu(popup: usize, backwards: bool) -> usize?:
+        let owner = self.menu_owner(popup) else return none
+        let group = self.entries[owner].parent
+        var index = owner
+        for visited in 0..<self.count:
+            index = (self.count - 1 if index == 0 else index - 1) if backwards else (index + 1) % self.count
+            let box = self.entries[index].box.value()
+            if self.entries[index].parent == group and box.menu_trigger and path_enabled(self.entries, index) and box.clipping.width > 0.0 and box.clipping.height > 0.0:
+                return index
+        return none
+
+    mutating func switch_menu(popup: usize, peer: usize) -> interop.Outcome[unit]:
+        let cancelled = self.cancel(self.entries[popup].box.value().identifier)
+        if not cancelled.is_success():
+            return cancelled
+        cancelled.release()
+        let capture_cancelled = self.cancel(self.capture)
+        if not capture_cancelled.is_success():
+            return capture_cancelled
+        capture_cancelled.release()
+        self.capture = 0
+        self.return_focus = self.entries[peer].box.value().identifier
+        let opened = self.send(peer, Event(menu_requested = true))
+        if not opened.is_success():
+            return opened
+        opened.release()
+        return self.arrange(self.width, self.height)
+
+    ## Hover is derived from current geometry, including after layout changes
+    ## beneath a stationary pointer. Updating it never remeasures the widget tree.
+    mutating func update_hover():
+        for entry in self.entries[..<self.count]:
+            let box = entry.box.value()
+            box.hovered = false
+            box.pointer_within = false
+            box.pointer = Point(self.pointer_x - box.rectangle.x, self.pointer_y - box.rectangle.y)
+        if not self.pointer_present:
+            return
+        var hovered: usize? = none
+        let popup = self.popup_index()
+        if let active = popup:
+            if not inside(self.entries[active].box.value().clipping, self.pointer_x, self.pointer_y):
+                hovered = self.menu_at(active, self.pointer_x, self.pointer_y)
+        if hovered == none:
+            var index = self.count
+            while index > 0:
+                index -= 1
+                let box = self.entries[index].box.value()
+                if (popup == none or in_popup(self.entries, index)) and path_enabled(self.entries, index) and not box.hover_transparent and inside(box.clipping, self.pointer_x, self.pointer_y):
+                    hovered = index
+                    break
+        let index = hovered else return
+        self.entries[index].box.value().hovered = true
+        var ancestor = (i64)index
+        while ancestor >= 0:
+            self.entries[(usize)ancestor].box.value().pointer_within = true
+            ancestor = self.entries[(usize)ancestor].parent
+
+
+    ## Whether `event` is a pointer move while a widget holds the pointer.
+    pub func captured_move(event: input.Event) -> bool:
+        return event.kind == input.EventKind.pointer_moved and self.capture != 0 and self.count > 0
+
+    ## Whether a visible modal popup is open, which makes input modal.
+    pub func has_popup() -> bool:
+        return self.popup_index() != none
+
+    ## Whether the focused box takes text input, so the window should deliver it.
+    pub func wants_text_input() -> bool:
+        let index = self.find(self.focus) else return false
+        return self.entries[index].box.value().accepts_text
+
+    ## The cursor for the capturing box, or else the box under the pointer: its
+    ## cursor source's choice or its fixed cursor. The arrow when the pointer is
+    ## away, over nothing, or over a disabled box.
+    pub func cursor() -> input.Cursor!:
+        if not self.pointer_present and self.capture == 0: return input.Cursor.arrow
+        var target = self.capture
+        if target == 0:
+            if let popup = self.popup_index():
+                if let menu = self.menu_at(popup, self.pointer_x, self.pointer_y):
+                    target = self.entries[menu].box.value().identifier
+            if target == 0: target = self.hit(self.pointer_x, self.pointer_y)
+        let index = self.find(target) else return input.Cursor.arrow
+        if not path_enabled(self.entries, index): return input.Cursor.arrow
+        let box = self.entries[index].box.value()
+        if let source = box.cursor_source:
+            try source.enter()
+            defer source.leave()
+            let started = epoch()
+            let cursor = source.value().cursor(Point(self.pointer_x - box.rectangle.x, self.pointer_y - box.rectangle.y), self.capture == target)
+            if epoch() != started: error(result.busy, "a cursor query changed the widget tree")
+            return cursor
+        return box.pointer_cursor
+
+    ## The box a press at a point reaches: popups first, as they draw on top;
+    ## while a modal one is open, nothing else.
+    func hit(x: f64, y: f64) -> u64:
+        let modal = self.has_popup()
+        # Popups first, the innermost (a dropdown's list inside a dialog) above
+        # the popup it opens from, whatever their order in the tree.
+        var best: u64 = 0
+        var best_depth: usize = 0
+        var index = self.count
+        while index > 0:
+            index -= 1
+            let depth = popup_depth(self.entries, index)
+            if depth <= best_depth:
+                continue
+            let box = self.entries[index].box.value()
+            if path_enabled(self.entries, index) and box.accepts_pointer and inside(box.clipping, x, y):
+                best = box.identifier
+                best_depth = depth
+        if best != 0 or modal:
+            return best
+        index = self.count
+        while index > 0:
+            index -= 1
+            let box = self.entries[index].box.value()
+            if not in_popup(self.entries, index) and path_enabled(self.entries, index) and box.accepts_pointer and inside(box.clipping, x, y):
+                return box.identifier
+        return 0
+
+    ## Where a scroll over box `hit` goes: the nearest box at or above it that
+    ## takes scroll, or `hit` itself when none does.
+    func scroll_target(hit: u64) -> u64:
+        let found = self.find(hit) else return hit
+        var at = (i64)found
+        while at >= 0:
+            let box = self.entries[(usize)at].box.value()
+            if box.takes_scroll():
+                return (u64)box.id()
+            at = self.entries[(usize)at].parent
+        return hit

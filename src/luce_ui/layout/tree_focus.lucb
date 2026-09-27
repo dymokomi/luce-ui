@@ -1,0 +1,68 @@
+#==============================================================================================
+#
+#   layout/tree_focus - Keyboard focus: requests, Tab order, and returning from popups
+#
+#==============================================================================================
+
+extend Tree:
+    ## Apply after the next arrangement, including children replaced during an
+    ## input callback. Detached or disabled targets cannot acquire focus.
+    pub mutating func focus_layout(target: interop.Reference[Layout]):
+        self.requested_focus = target.value().identifier
+        target.value().invalidate()
+
+    mutating func set_focus(identifier: u64):
+        self.note_popup_entry(self.entries, self.count, identifier)
+        self.focus = identifier
+        for entry in self.entries[..<self.count]:
+            entry.box.value().focused = entry.box.value().identifier == identifier
+        mark_focus(self.entries, self.count, identifier, self.return_focus)
+        bump_revision()
+
+    ## Focus about to move to `identifier`: from outside every popup into one,
+    ## remember where it was, to return there when the popup closes.
+    mutating func note_popup_entry(entries: const Entry[], count: usize, identifier: u64):
+        if identifier == 0 or identifier == self.focus:
+            return
+        let target = find_entry(entries, count, identifier) else return
+        if not in_popup(entries, target):
+            self.dialog_return = 0
+            return
+        if self.focus == 0:
+            return
+        if let current = find_entry(entries, count, self.focus):
+            if not in_popup(entries, current):
+                self.dialog_return = self.focus
+
+    mutating func advance_focus(backwards: bool):
+        if self.count == 0:
+            return
+        var index = self.find(self.focus) else (0 if backwards else self.count - 1)
+        var visited: usize = 0
+        while visited < self.count:
+            index = (self.count - 1 if index == 0 else index - 1) if backwards else (index + 1) % self.count
+            let box = self.entries[index].box.value()
+            if path_enabled(self.entries, index) and box.accepts_focus and box.clipping.width > 0.0 and box.clipping.height > 0.0:
+                self.set_focus(box.identifier)
+                return
+            visited += 1
+        self.set_focus(0)
+
+func mark_focus(entries: Entry[], count: usize, focus: u64, return_focus: u64):
+    for entry in entries[..<count]:
+        entry.box.value().focus_within = false
+    for identifier in [focus, return_focus]:
+        if let index = find_entry(entries, count, identifier):
+            var ancestor = (i64)index
+            while ancestor >= 0:
+                entries[(usize)ancestor].box.value().focus_within = true
+                ancestor = entries[(usize)ancestor].parent
+
+func eligible(entries: const Entry[], count: usize, identifier: u64, focus: bool) -> bool:
+    var index: usize = 0
+    while index < count:
+        let box = entries[index].box.value()
+        if box.identifier == identifier:
+            return path_enabled(entries, index) and (box.accepts_focus if focus else box.accepts_pointer) and box.clipping.width > 0.0 and box.clipping.height > 0.0
+        index += 1
+    return false
