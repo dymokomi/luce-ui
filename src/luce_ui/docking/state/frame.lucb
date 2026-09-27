@@ -33,7 +33,7 @@ pub struct Frame: Widget:
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         let state = self.state.get() else return result.success[unit](())
         defer state.release()
-        draw_float(state.value(), self.slot, target, self.box.value().pointer_position(), self.box.value().contains_pointer()) catch failure:
+        state.value().draw_float(self.slot, target, self.box.value().pointer_position(), self.box.value().contains_pointer()) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
@@ -44,7 +44,7 @@ pub struct Frame: Widget:
         defer stack.release()
         let mine = self.box.value().bounds()
         let base = stack.value().bounds()
-        float_event(state.value(), self.slot, event, event.x + mine.x - base.x, event.y + mine.y - base.y) catch failure:
+        state.value().float_event(self.slot, event, event.x + mine.x - base.x, event.y + mine.y - base.y) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
@@ -73,7 +73,7 @@ struct FrameCursor: CursorSource:
         let state = self.state.get() else return input.Cursor.arrow
         defer state.release()
         let window = state.value().floats[self.slot]
-        return float_cursor(state.value(), self.slot, position.x + window.x, position.y + window.y)
+        return state.value().float_cursor(self.slot, position.x + window.x, position.y + window.y)
 
     pub mutating func close():
         self.state.release()

@@ -1,0 +1,78 @@
+#==============================================================================================
+#
+#   docking/state/tab_drag - Where a dragged tab or moved window would dock
+#
+#==============================================================================================
+
+extend State:
+    ## Where the drag in progress would dock if released now, a dragged tab or a
+    ## moved floating window; an unaccepted Drop when it would not dock.
+    pub func current_drop() -> drag.Drop:
+        # A window may resize beneath a stationary pointer. Always resolve the
+        # preview from current detached geometry, just like the final release.
+        if self.gesture == Gesture.moving and self.float_moved:
+            return self.drop_for(self.float_pressed, self.model, self.drag_pointer.x, self.drag_pointer.y, false)
+        return self.drop_at(self.drag_pointer.x, self.drag_pointer.y) if self.dragging and self.drag_inside else drag.Drop()
+
+    ## Where a dragged tab would float if let go here, or nothing while it
+    ## would dock.
+    pub func float_preview() -> gpu.Rect:
+        if not self.dragging or self.current_drop().accepted: return gpu.Rect()
+        return self.float_window(self.pressed_tab, self.drag_pointer)
+
+    ## The slot of the tab being dragged, or 0.
+    pub func dragged_tab() -> usize:
+        return self.pressed_tab if self.dragging else 0
+
+    ## The label that follows a dragged tab, kept inside the stack; empty when no
+    ## tab is dragged.
+    pub func drag_bounds() -> gpu.Rect:
+        if not self.dragging: return gpu.Rect()
+        let size = self.size()
+        let width = math.min(size.width, self.font.value().advance() * 28.0)
+        let height = self.height() + 2.0
+        return gpu.Rect(math.clamp(self.drag_pointer.x + 14.0, 0.0, math.max(0.0, size.width - width)),
+            math.clamp(self.drag_pointer.y + 18.0, 0.0, math.max(0.0, size.height - height)), width, height)
+
+    func insertion(drop: drag.Drop, x: f64, y: f64) -> Model!:
+        return try self.inserted(self.pressed_tab, self.visible_model(), drop, x, y)
+
+    ## `base` with `tab` added where `drop` says; within a header, at the tab
+    ## under the pointer.
+    func inserted(tab: usize, base: Model, drop: drag.Drop, x: f64, y: f64) -> Model!:
+        var next = base
+        let relative = next.nodes[drop.group].selected if drop.group != 0 else 0
+        var order = next.tab_count(drop.group)
+        if drop.group != 0 and drop.position == DockPosition.tab:
+            let geometry = self.geometry(self.size())
+            let header = self.strip(drop.group, geometry.panes[drop.group])
+            for index in header.first..<header.first + header.count:
+                let bounds = header.tab(index)
+                if strip.contains(bounds, x, y):
+                    order = index + (1 if x >= bounds.x + bounds.width * 0.5 else 0)
+                    break
+        try next.add(tab, relative, drop.position)
+        if drop.position == DockPosition.tab:
+            try next.reorder(tab, order)
+        return next
+
+    func drop_at(x: f64, y: f64) -> drag.Drop:
+        return self.drop_for(self.pressed_tab, self.visible_model(), x, y, true)
+
+    ## The dock target for `tab` over `base` at a point: a header joins its
+    ## group, an edge splits beside it, and a pane's middle is no target, so
+    ## the panel floats there. An empty stack takes a dragged tab anywhere, a
+    ## floating window only by a double press on its title.
+    func drop_for(tab: usize, base: Model, x: f64, y: f64, empty: bool) -> drag.Drop:
+        let size = self.size()
+        let area = gpu.Rect(width = size.width, height = size.height)
+        if not strip.contains(area, x, y): return drag.Drop()
+        if base.root == 0 and not empty: return drag.Drop()
+        var model = base
+        var geometry = self.geometry_for(base, size)
+        var drop = drag.Drop(accepted = true, preview = area) if model.root == 0 else drag.target(&model, &geometry, x, y, self.height())
+        if not drop.accepted: return drop
+        let inserted = self.inserted(tab, base, drop, x, y) catch failure: return drag.Drop()
+        let placed = self.geometry_for(inserted, size)
+        drop.preview = placed.panes[inserted.tabs[tab].group]
+        return drop

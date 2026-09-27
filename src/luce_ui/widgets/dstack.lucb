@@ -15,7 +15,7 @@ from luce_ui.font import Font, selected_font
 from luce_ui.command import Command, command_type
 from luce_ui.widgets.panel import Panel
 from luce_ui.widgets.action_popup import ActionPopup, action_popup_type
-from luce_ui.docking.state import State, DockRequest, state_type, set_owner, add_floating, make_floating, floating, float_bounds, floating_count, default_window, set_catalog, set_fixed, pick_from_menu, catalog_slot, arrangement_text
+from luce_ui.docking.state import State, DockRequest, state_type
 from luce_ui.docking.model import DockPosition
 
 ## The top child of the stack: draws the drag previews (drop target, floating
@@ -78,7 +78,7 @@ pub struct DStack: Widget:
         let state = try interop.Reference[State].adopt(new State(box, selected) in memory.heap, state_type, memory.heap)
         errdefer state.release()
         errdefer state.close()
-        set_owner(state.value(), state)
+        state.value().set_owner(state)
         let arrangement = state.as_interface[Arrangement](state.value())
         defer arrangement.release()
         try box.value().set_arrangement(arrangement)
@@ -100,11 +100,11 @@ pub struct DStack: Widget:
         let heading = try interop.Reference[Command].adopt(new Command("Dock beside:") in memory.heap, command_type, memory.heap)
         defer heading.release()
         heading.value().set_enabled(false)
-        let picked = try interop.Callback[unit, unit].bind_mutating(state, pick_from_menu)
+        let picked = try interop.Callback[unit, unit].bind_mutating(state, State.pick_from_menu)
         defer picked.release()
         state.value().connections[0] = try right.value().on_trigger(picked)
         state.value().connections[1] = try down.value().on_trigger(picked)
-        try set_fixed(state.value(), [divider, right, down, heading])
+        try state.value().set_fixed([divider, right, down, heading])
         let popup = try interop.Reference[ActionPopup].adopt(new ActionPopup([right, down], selected) in memory.heap, action_popup_type, memory.heap)
         defer popup.release()
         try state.value().install(overlay_widget, popup)
@@ -137,9 +137,9 @@ pub struct DStack: Widget:
     pub mutating func float(panel: interop.Reference[Panel], window: gpu.Rect? = none) -> !:
         let state = self.state.value()
         let index = state.index(panel) catch failure:
-            try add_floating(state, panel, window)
+            try state.add_floating(panel, window)
             return
-        try make_floating(state, index, window else (float_bounds(state, index) if floating(state, index) else default_window(state, index)))
+        try state.make_floating(index, window else (state.float_bounds(index) if state.floating(index) else state.default_window(index)))
 
     ## Whether the panel is in this stack, docked or floating.
     pub func contains(panel: interop.Reference[Panel]) -> bool:
@@ -147,13 +147,13 @@ pub struct DStack: Widget:
         return true
 
     pub func is_floating(panel: interop.Reference[Panel]) -> bool!:
-        return floating(self.state.value(), try self.state.value().index(panel))
+        return self.state.value().floating(try self.state.value().index(panel))
 
     ## A floating panel's window, title bar included, in the stack's coordinates.
     pub func float_bounds(panel: interop.Reference[Panel]) -> gpu.Rect!:
         let index = try self.state.value().index(panel)
-        if not floating(self.state.value(), index): error(result.invalid, "the panel is docked")
-        return float_bounds(self.state.value(), index)
+        if not self.state.value().floating(index): error(result.invalid, "the panel is docked")
+        return self.state.value().float_bounds(index)
 
     ## Show `panel` (raising its window when it floats), focus its content and emit
     ## `on_select`. Cancels any drag in progress.
@@ -169,7 +169,7 @@ pub struct DStack: Widget:
         if state.model.root == 0: return
         let geometry = state.geometry(state.size())
         # From a floating window, move among the panes from the last docked one.
-        let current = state.model.tabs[state.model.active if floating(state, state.active()) else state.active()].group
+        let current = state.model.tabs[state.model.active if state.floating(state.active()) else state.active()].group
         var next: usize = 0
         var wrap: usize = 0
         for group in 1..<state.model.nodes.length:
@@ -192,7 +192,7 @@ pub struct DStack: Widget:
         if state.model.root == 0: return
         let geometry = state.geometry(state.size())
         # From a floating window, move among the panes from the last docked one.
-        let current = state.model.tabs[state.model.active if floating(state, state.active()) else state.active()].group
+        let current = state.model.tabs[state.model.active if state.floating(state.active()) else state.active()].group
         let origin = geometry.panes[current]
         let cx = origin.x + origin.width * 0.5
         let cy = origin.y + origin.height * 0.5
@@ -220,7 +220,7 @@ pub struct DStack: Widget:
 
     ## Every panel in the stack, docked or floating.
     pub func panel_count() -> i64:
-        return (i64)(self.state.value().model.count() + floating_count(self.state.value()))
+        return (i64)(self.state.value().model.count() + self.state.value().floating_count())
 
     ## The docked tab groups; floating windows do not count.
     pub func group_count() -> i64:
@@ -243,7 +243,7 @@ pub struct DStack: Widget:
     ## in the stack's coordinates.
     pub func panel_bounds(panel: interop.Reference[Panel]) -> gpu.Rect!:
         let index = try self.state.value().index(panel)
-        if floating(self.state.value(), index): return float_bounds(self.state.value(), index)
+        if self.state.value().floating(index): return self.state.value().float_bounds(index)
         let geometry = self.state.value().geometry(self.state.value().size())
         let model = self.state.value().visible_model()
         return geometry.panes[model.tabs[index].group]
@@ -288,18 +288,18 @@ pub struct DStack: Widget:
     ## what it offered. Give each panel made for an entry its id (`Panel(id =)`)
     ## so the menu ticks it while it is open and focuses it when picked again.
     pub mutating func set_catalog(ids: const str[], titles: const str[]) -> !:
-        try set_catalog(self.state.value(), self.state, ids, titles)
+        try self.state.value().set_catalog(self.state, ids, titles)
 
     ## The arrangement as text, for keeping it across runs (docking/state/layout.lucb):
     ## the split tree with its fractions, each group's tabs by panel id and its
     ## selected one, then the floating windows. An application rebuilds it with
     ## `add`, `set_fraction`, `select` and `float`.
     pub func layout_text() -> interop.Owned[str]!:
-        return try arrangement_text(self.state.value())
+        return try self.state.value().arrangement_text()
 
     ## The open panel made from catalog entry `id`, or none.
     pub func find(id: str) -> interop.Reference[Panel]?!:
-        let slot = catalog_slot(self.state.value(), id)
+        let slot = self.state.value().catalog_slot(id)
         if slot == 0: return none
         return try self.state.value().panel(slot)
 

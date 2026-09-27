@@ -1,5 +1,8 @@
 module.lucb
+panels.lucb
 catalog.lucb
+tab_drag.lucb
+input.lucb
 floating.lucb
 frame.lucb
 layout.lucb
