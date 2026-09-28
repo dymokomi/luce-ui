@@ -49,8 +49,8 @@ pub struct NumberField: Widget:
                   suffix: str = "", font: interop.Reference[Font]? = none, cells: f64 = 7.0) -> !:
         if not math.is_finite(minimum) or not math.is_finite(maximum) or maximum <= minimum or not math.is_finite(value) or not math.is_finite(step) or step < 0.0:
             error(result.invalid, "a number field needs finite bounds with maximum above minimum, a finite value and a nonnegative step")
-        if decimals < 0 or decimals > 6:
-            error(result.invalid, "number field decimals must be 0..6")
+        if decimals < 0 or decimals > 9:
+            error(result.invalid, "number field decimals must be 0..9")
         var selected = try selected_font(font)
         errdefer selected.release()
         let box = try layout.make_layout()
@@ -112,10 +112,10 @@ pub struct NumberField: Widget:
             error(result.invalid, "number field defaults must be finite")
         self.fallback = self.snap(value)
 
-    ## Show `decimals` places (0..6) from now on.
+    ## Show `decimals` places (0..9) from now on, including CAD tolerances.
     pub mutating func set_decimals(decimals: i64) -> !:
-        if decimals < 0 or decimals > 6:
-            error(result.invalid, "number field decimals must be 0..6")
+        if decimals < 0 or decimals > 9:
+            error(result.invalid, "number field decimals must be 0..9")
         self.decimals = decimals
         self.box.value().invalidate()
 
@@ -414,6 +414,8 @@ test "a number field clamps, snaps, formats and parses":
     assert((try format_number(digits, 33.0, 0)) == "33")
     assert((try format_number(digits, 2.5, 1)) == "2.5")
     assert((try format_number(digits, -0.25, 2)) == "-0.25")
+    assert((try format_number(digits, 0.000000001, 9)) == "0.000000001")
+    assert((try format_number(digits, 0.000012345, 9)) == "0.000012345")
     assert(trimmed("  12 ") == "12")
     try field.set_decimals(2)
     try field.set_step(0.01)
@@ -425,4 +427,22 @@ test "a number field clamps, snaps, formats and parses":
         assert(failure.code == result.invalid)
         rejected = true
         recover try NumberField())
+    assert(rejected)
+
+test "sub-micron numerical fields preserve typed and programmatic precision":
+    var field = try NumberField(0.0,0.0,1.0,0.00001,9)
+    defer field.close()
+    try field.set_value(0.000000001)
+    assert(math.abs(field.value()-0.000000001) < 1e-20)
+    try field.begin_editing()
+    try field.input.set_text("0.000015856")
+    let committed = field.finish_editing(true)
+    defer committed.release()
+    try committed.get()
+    assert(math.abs(field.value()-0.000015856) < 1e-18)
+    var rejected = false
+    field.set_decimals(10) catch failure:
+        assert(failure.code == result.invalid)
+        rejected = true
+        recover ()
     assert(rejected)
