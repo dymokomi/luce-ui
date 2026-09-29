@@ -1,0 +1,286 @@
+#==============================================================================================
+#
+#   widgets/parameters/editing - Typing into fields, keys, Tab between fields, polled popups
+#
+#==============================================================================================
+
+extend ParameterPanel:
+    ## Type into field `component` of `row`: its value (every decimal it
+    ## keeps) or its text, all selected, so typing replaces it.
+    mutating func begin_editing(row: i64, component: i64) -> !:
+        if row < 0 or row >= (i64)self.total:
+            return
+        let index = (usize)row
+        let kind = self.rows[index].kind
+        if kind == ParameterKind.text or kind == ParameterKind.path:
+            try self.input.set_text(self.rows[index].text.value)
+        else:
+            var digits: u8[48]
+            try self.input.set_text(try format_number(digits, self.rows[index].values[(usize)component], self.rows[index].decimals))
+        self.hide_tip()
+        self.edit_row = row
+        self.edit_component = component
+        self.current = row
+        self.box.value().request_focus()
+        self.box.value().set_text_input(true)
+        # While typing, Tab moves to the next field of the panel, not out of it.
+        self.box.value().set_accepts_tab(true)
+        self.box.value().set_cursor(input.Cursor.text)
+        self.box.value().invalidate()
+
+    ## Stop typing. Kept, the text becomes the value: arithmetic and `+=`
+    ## forms are worked out, anything unreadable leaves the value as it was.
+    mutating func end_editing(keep: bool) -> !:
+        let row = self.edit_row
+        let component = self.edit_component
+        self.edit_row = -1
+        self.box.value().set_text_input(false)
+        self.box.value().set_accepts_tab(false)
+        self.box.value().set_cursor(self.cursor_for(self.hot_row, self.hot_part))
+        self.box.value().invalidate()
+        if not keep or row < 0 or row >= (i64)self.total:
+            return
+        let index = (usize)row
+        let typed = try self.input.text()
+        defer typed.release()
+        let kind = self.rows[index].kind
+        if kind == ParameterKind.text or kind == ParameterKind.path:
+            try self.edit_text(index, typed.value)
+            return
+        let value = parameter_text.evaluate(typed.value, self.rows[index].values[(usize)component]) else return
+        var values = self.rows[index].values
+        values[(usize)component] = value
+        try self.edit(index, values)
+
+    ## An event while a field is typed in; true when the field took it.
+    mutating func editing_event(event: Event) -> bool!:
+        let kind = event.kind
+        let field = self.field_rect(self.rows[(usize)self.edit_row], self.edit_component)
+        let inset = math.floor(self.font.value().advance() * 0.6)
+        if kind == input.EventKind.pointer_down or kind == input.EventKind.pointer_moved or kind == input.EventKind.pointer_up:
+            let inside = event.x >= field.x and event.x < field.x + field.width and event.y >= field.y and event.y < field.y + field.height
+            if kind == input.EventKind.pointer_down and not inside:
+                # A press elsewhere keeps what was typed, then does what it does.
+                try self.end_editing(true)
+                return false
+            if kind == input.EventKind.pointer_moved and not inside and event.button == 0 and self.press_row < 0:
+                let (row, part, component) = self.hit(event.x, event.y)
+                self.set_hot(row, part, component)
+            try self.input.pointer(Event(kind = event.kind, x = event.x - field.x, y = event.y - field.y, button = event.button, shift = event.shift),
+                                   self.font, inset, 0.0, field.width - inset * 2.0, field.height)
+            self.box.value().invalidate()
+            return true
+        if kind == input.EventKind.focus_lost:
+            try self.end_editing(true)
+            return true
+        if kind == input.EventKind.key_down:
+            if event.key == input.Key.escape:
+                try self.end_editing(false)
+                return true
+            if event.key == input.Key.enter and not event.repeated:
+                try self.end_editing(true)
+                return true
+            if event.key == input.Key.tab:
+                let row = self.edit_row
+                let component = self.edit_component
+                try self.end_editing(true)
+                try self.edit_next(row, component, event.shift)
+                return true
+            if (event.key == input.Key.up or event.key == input.Key.down) and numeric(self.rows[(usize)self.edit_row].kind):
+                # Arrows nudge the value typed so far, then keep typing there.
+                let row = self.edit_row
+                let component = self.edit_component
+                try self.end_editing(true)
+                if row < (i64)self.total:
+                    try self.nudge((usize)row, component, 1.0 if event.key == input.Key.up else -1.0, event)
+                    try self.begin_editing(row, component)
+                return true
+        if kind == input.EventKind.key_down or kind == input.EventKind.text_input:
+            if try self.input.event(event):
+                self.box.value().invalidate()
+            return true
+        return false
+
+    ## Type into the field after (or, `backwards`, before) `row`'s `component`,
+    ## over components, then rows that show and take input; round to the start.
+    mutating func edit_next(row: i64, component: i64, backwards: bool) -> !:
+        let total = (i64)self.total
+        if total == 0:
+            return
+        var at = between(row, 0, total - 1)
+        var part = component
+        for _ in 0..<(total * 5 + 5):
+            if backwards:
+                part -= 1
+                if part < 0:
+                    at = at - 1 if at > 0 else total - 1
+                    part = self.field_count(self.rows[(usize)at]) - 1
+            else:
+                part += 1
+                if part >= self.field_count(self.rows[(usize)at]):
+                    at = at + 1 if at + 1 < total else 0
+                    part = 0
+            let fields = self.field_count(self.rows[(usize)at])
+            if part >= 0 and part < fields and self.rows[(usize)at].shown and self.enabled((usize)at):
+                try self.begin_editing(at, part)
+                return
+
+    ## Move `row`'s `component` by one step up (1) or down (-1); Shift ten, Alt a tenth.
+    mutating func nudge(index: usize, component: i64, direction: f64, event: Event) -> !:
+        let row = self.rows[index]
+        var values = row.values
+        if row.kind == ParameterKind.toggle:
+            values[0] = 1.0 if direction > 0.0 else 0.0
+        elif row.kind == ParameterKind.menu:
+            let items = row.items.value
+            let count = (i64)parameter_text.item_count(items)
+            if count == 0:
+                return
+            let at = between(parameter_text.item_of(items, row.values[0]) - (i64)direction, 0, count - 1)
+            values[0] = parameter_text.item_value(items, (usize)at)
+        elif numeric(row.kind):
+            values[(usize)component] = self.snapped(row, row.values[(usize)component] + direction * self.increment(row) * modifier(event))
+        else:
+            return
+        try self.edit(index, values)
+
+    ## Keys on the focused panel, not typing: Up and Down nudge the current
+    ## row (a menu moves through its items), Cmd/Ctrl with them moves between
+    ## rows, Enter types into the row (or toggles, opens, presses), Space toggles.
+    mutating func key(event: Event) -> !:
+        if self.current < 0 or self.current >= (i64)self.total or not self.rows[(usize)self.current].shown:
+            self.current = self.next_row(-1, false)
+        let row = self.current
+        if row < 0:
+            return
+        let index = (usize)row
+        if (event.key == input.Key.up or event.key == input.Key.down) and (event.control or event.meta):
+            let moved = self.next_row(row, event.key == input.Key.up)
+            if moved >= 0:
+                self.current = moved
+                self.box.value().invalidate()
+            return
+        if not self.enabled(index):
+            return
+        let kind = self.rows[index].kind
+        if event.key == input.Key.up or event.key == input.Key.down:
+            try self.nudge(index, 0, 1.0 if event.key == input.Key.up else -1.0, event)
+        elif (event.key == input.Key.enter or event.key == input.Key.space) and not event.repeated:
+            if kind == ParameterKind.toggle:
+                var values = self.rows[index].values
+                values[0] = 0.0 if values[0] != 0.0 else 1.0
+                try self.edit(index, values)
+            elif event.key == input.Key.space:
+                return
+            elif kind == ParameterKind.menu:
+                try self.open_items(index)
+            elif kind == ParameterKind.button:
+                try self.emit(self.activated, row)
+            elif self.field_count(self.rows[index]) > 0:
+                try self.begin_editing(row, 0)
+
+    ## The next row (or previous, `backwards`) after `row` that shows and takes input.
+    func next_row(row: i64, backwards: bool) -> i64:
+        var at = row
+        for _ in 0..<self.total:
+            at += -1 if backwards else 1
+            if at < 0 or at >= (i64)self.total:
+                return -1
+            let kind = self.rows[(usize)at].kind
+            if self.rows[(usize)at].shown and self.enabled((usize)at) and kind != ParameterKind.info and kind != ParameterKind.separator and kind != ParameterKind.folder:
+                return at
+        return -1
+
+    # -- Popups, polled each frame.
+
+    ## Take what an open popup chose once it closes: a menu item, a context
+    ## menu command; a color while its editor is open, live.
+    mutating func poll_popups() -> !:
+        if self.popup_mode != popup_none and not self.items_popup.value().is_open():
+            let mode = self.popup_mode
+            let row = self.popup_row
+            let chosen = self.items_popup.value().take_chosen()
+            self.popup_mode = popup_none
+            self.popup_row = -1
+            self.box.value().invalidate()
+            if chosen >= 0:
+                try self.chose(mode, row, chosen)
+        if self.color_row >= 0:
+            let index = (usize)self.color_row
+            if index >= self.total:
+                self.color_row = -1
+            elif self.color_popup.value().is_open():
+                let channels = self.color_popup.value().rgb()
+                if channels != self.color_shown:
+                    self.color_shown = channels
+                    let linear = self.rows[index].linear
+                    var values = self.rows[index].values
+                    values[0] = component_of(channels.0, linear)
+                    values[1] = component_of(channels.1, linear)
+                    values[2] = component_of(channels.2, linear)
+                    try self.begin((i64)index)
+                    try self.set_live(index, values)
+            else:
+                self.color_row = -1
+                try self.finish()
+
+    mutating func chose(mode: i64, row: i64, chosen: i64) -> !:
+        if mode == popup_items:
+            if row < 0 or row >= (i64)self.total:
+                return
+            let index = (usize)row
+            var values = self.rows[index].values
+            values[0] = parameter_text.item_value(self.rows[index].items.value, (usize)chosen)
+            try self.edit(index, values)
+            return
+        if chosen == 5:
+            for index in 0..<self.total:
+                if self.enabled(index) and not at_default(self.rows[index]):
+                    try self.revert(index)
+            return
+        if row < 0 or row >= (i64)self.total:
+            return
+        let index = (usize)row
+        if chosen == 0:
+            try self.revert(index)
+        elif chosen == 2:
+            copied = self.rows[index].values
+            copied_count = self.rows[index].components
+        elif chosen == 3 and copied_count > 0:
+            var values = self.rows[index].values
+            for component in 0..<between(copied_count, 0, self.rows[index].components):
+                values[(usize)component] = copied[(usize)component]
+            try self.edit(index, values)
+
+    # -- Tooltips.
+
+    ## The pointer rests on `row`: its doc shows after a moment.
+    mutating func schedule_tip(row: i64):
+        if row == self.tip_row:
+            return
+        self.hide_tip()
+        self.tip_row = row
+        self.tip_since = time.now()
+        if row >= 0 and self.rows[(usize)row].doc.value.length > 0:
+            layout.wake_at(self.tip_since + self.tip_delay)
+
+    mutating func hide_tip():
+        self.tip_row = -1
+        if self.tip.value().is_open():
+            self.tip.value().hide()
+
+    ## Show the tooltip that is due, under its row: the doc, and the name to
+    ## write in a condition or a script.
+    mutating func show_due_tip() -> !:
+        let row = self.tip_row
+        if row < 0 or row >= (i64)self.total or self.tip.value().is_open():
+            return
+        if self.press_row >= 0 or self.edit_row >= 0 or self.popup_mode != popup_none or self.color_row >= 0:
+            return
+        let placed = self.rows[(usize)row]
+        if placed.doc.value.length == 0 or not placed.shown:
+            return
+        if time.now() < self.tip_since + self.tip_delay:
+            layout.wake_at(self.tip_since + self.tip_delay)
+            return
+        try self.tip.value().show(placed.doc.value, placed.name.value, self.margin + 8.0, placed.y + placed.height + 2.0)

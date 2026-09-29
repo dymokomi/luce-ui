@@ -203,6 +203,10 @@ pub struct ColorEditor: Widget:
         self.editing_hex = false
         return true
 
+    ## The shown color's 0..255 channels, for a host that polls the editor.
+    pub func rgb() -> (i64, i64, i64):
+        return (self.red, self.green, self.blue)
+
     func hex_string() -> str:
         var buffer: u8[8]
         return self.hex_string_into(buffer)

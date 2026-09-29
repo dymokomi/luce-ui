@@ -112,6 +112,13 @@ pub struct ActionPopup: Widget:
     pub func chosen() -> i64:
         return self.picked
 
+    ## The last choice's place, forgetting it: a host that polls the popup
+    ## (a parameter panel's menus) tells a new choice from none.
+    pub mutating func take_chosen() -> i64:
+        let picked = self.picked
+        self.picked = -1
+        return picked
+
     ## Show the list with an empty query and the first enabled row selected.
     pub mutating func open(held: bool = false) -> !:
         self.held = held

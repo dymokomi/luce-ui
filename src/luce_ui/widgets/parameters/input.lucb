@@ -1,0 +1,439 @@
+#==============================================================================================
+#
+#   widgets/parameters/input - Pointer gestures: scrubbing, the value ladder, clicks, menus
+#
+#==============================================================================================
+
+## A scrub moves this many steps per point; Shift ten times as many, Alt a tenth.
+let scrub_rate: f64 = 0.5
+## The value ladder moves one rung's step per this many points across.
+let ladder_pitch: f64 = 12.0
+
+extend ParameterPanel:
+    mutating func handle(event: Event) -> !:
+        if event.cancelled:
+            try self.cancel()
+            return
+        self.arrange(self.box.value().bounds().width)
+        if self.edit_row >= 0 and try self.editing_event(event):
+            return
+        let kind = event.kind
+        if kind == input.EventKind.pointer_moved or kind == input.EventKind.pointer_entered:
+            try self.moved(event)
+        elif kind == input.EventKind.pointer_left:
+            self.set_hot(-1, part_none, 0)
+            self.hide_tip()
+        elif kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
+            try self.press(event)
+        elif kind == input.EventKind.pointer_down and event.button == 1:
+            try self.open_context(event.x, event.y)
+        elif kind == input.EventKind.pointer_down and event.button == 2 and event.inside:
+            try self.start_ladder(event)
+        elif kind == input.EventKind.pointer_up and event.button == 0:
+            try self.release(event)
+        elif kind == input.EventKind.pointer_up and event.button == 2 and self.laddering:
+            self.laddering = false
+            self.press_row = -1
+            self.ladder.value().hide()
+            try self.finish()
+        elif kind == input.EventKind.key_down:
+            try self.key(event)
+
+    ## The press is gone (focus moved, the window lost it): a drag keeps what
+    ## it reached and commits; typing keeps what was typed, as a field left does.
+    mutating func cancel() -> !:
+        let dragged = self.scrubbing or self.laddering or self.press_part == part_slider
+        self.scrubbing = false
+        self.laddering = false
+        self.press_row = -1
+        self.press_part = part_none
+        self.ladder.value().hide()
+        self.hide_tip()
+        if dragged:
+            try self.finish()
+        if self.edit_row >= 0:
+            try self.end_editing(true)
+        self.box.value().invalidate()
+
+    # -- Hover.
+
+    mutating func set_hot(row: i64, part: i64, component: i64):
+        if row == self.hot_row and part == self.hot_part and component == self.hot_component:
+            return
+        self.hot_row = row
+        self.hot_part = part
+        self.hot_component = component
+        self.box.value().set_cursor(self.cursor_for(row, part))
+        self.box.value().invalidate()
+
+    ## Scrubbable parts show the resize cursor, as every scrubber does; typing
+    ## fields the text cursor; things to click the pointer.
+    func cursor_for(row: i64, part: i64) -> input.Cursor:
+        if row < 0 or (part != part_folder and part != part_divider and not self.enabled((usize)row)):
+            return input.Cursor.arrow
+        let kind = self.rows[(usize)row].kind
+        if part == part_divider:
+            return input.Cursor.resize_horizontal
+        if (part == part_field or part == part_label) and numeric(kind):
+            return input.Cursor.resize_horizontal
+        if part == part_field:
+            return input.Cursor.text
+        if part == part_none or part == part_label:
+            return input.Cursor.arrow
+        return input.Cursor.pointer
+
+    mutating func moved(event: Event) -> !:
+        if self.press_part == part_divider:
+            let advance = self.font.value().advance()
+            self.fixed_label = math.clamp(self.press_label + event.x - self.press_x, advance * 3.0, math.max(advance * 3.0, self.placed_width - 80.0))
+            self.stale = true
+            self.box.value().invalidate()
+            return
+        if self.laddering:
+            try self.climb(event)
+            return
+        if self.press_part == part_slider and self.press_row >= 0:
+            try self.slide(event.x)
+            return
+        if (self.press_part == part_field or self.press_part == part_label) and self.press_row >= 0 and numeric(self.rows[(usize)self.press_row].kind):
+            try self.scrub(event)
+            return
+        if self.press_row >= 0:
+            return
+        let (row, part, component) = self.hit(event.x, event.y)
+        self.set_hot(row, part, component)
+        self.schedule_tip(row)
+
+    # -- Presses.
+
+    mutating func press(event: Event) -> !:
+        self.hide_tip()
+        let (row, part, component) = self.hit(event.x, event.y)
+        self.set_hot(row, part, component)
+        if row < 0:
+            return
+        let index = (usize)row
+        if part == part_folder:
+            let open = not self.rows[index].open
+            self.rows[index].open = open
+            try self.remember_folder(self.rows[index].name.value, open)
+            self.stale = true
+            self.box.value().invalidate()
+            return
+        if part == part_divider:
+            self.press_part = part_divider
+            self.press_x = event.x
+            self.press_label = self.label_column(self.placed_width)
+            return
+        if not self.enabled(index):
+            return
+        let kind = self.rows[index].kind
+        if kind != ParameterKind.info and kind != ParameterKind.separator:
+            self.current = row
+        if part == part_toggle:
+            var values = self.rows[index].values
+            values[0] = 0.0 if values[0] != 0.0 else 1.0
+            try self.edit(index, values)
+            return
+        if (part == part_field or part == part_label) and numeric(kind) and (event.control or event.meta):
+            # Cmd/Ctrl-click puts the default back, as the number field does.
+            try self.revert(index)
+            return
+        if part == part_none or (part == part_label and not numeric(kind)):
+            return
+        self.press_row = row
+        self.press_part = part
+        self.press_component = component
+        self.press_x = event.x
+        self.press_y = event.y
+        self.press_values = self.rows[index].values
+        self.scrubbing = false
+        if part == part_slider:
+            try self.begin(row)
+            try self.slide(event.x)
+        self.box.value().invalidate()
+
+    mutating func release(event: Event) -> !:
+        let row = self.press_row
+        let part = self.press_part
+        let component = self.press_component
+        let scrubbed = self.scrubbing
+        self.press_row = -1
+        self.press_part = part_none
+        self.scrubbing = false
+        self.box.value().invalidate()
+        if part == part_divider or row < 0 or row >= (i64)self.total:
+            return
+        if scrubbed or part == part_slider:
+            try self.finish()
+            return
+        let (at, over, over_component) = self.hit(event.x, event.y)
+        if at != row or over != part or (part == part_field and over_component != component):
+            return
+        let index = (usize)row
+        if part == part_field:
+            try self.begin_editing(row, component)
+        elif part == part_menu:
+            try self.open_items(index)
+        elif part == part_swatch:
+            try self.open_color(index)
+        elif part == part_browse or part == part_button:
+            try self.emit(self.activated, row)
+
+    ## Scrubbing a field or its label: each point across moves the value by
+    ## half a step (Shift ten times, Alt a tenth); the label moves every
+    ## component of a vector together.
+    mutating func scrub(event: Event) -> !:
+        let row = self.press_row
+        let index = (usize)row
+        let travelled = event.x - self.press_x
+        if not self.scrubbing:
+            if math.abs(travelled) < 3.0:
+                return
+            self.scrubbing = true
+            self.press_x = event.x
+            self.press_rate = self.increment(self.rows[index]) * scrub_rate * modifier(event)
+            try self.begin(row)
+            return
+        if row >= (i64)self.total:
+            return
+        let rate = self.increment(self.rows[index]) * scrub_rate * modifier(event)
+        if rate != self.press_rate:
+            # A modifier pressed mid-drag goes on from here, rather than jumping.
+            self.press_rate = rate
+            self.press_values = self.rows[index].values
+            self.press_x = event.x
+            return
+        var values = self.rows[index].values
+        for component in 0..<self.rows[index].components:
+            if self.press_part == part_field and component != self.press_component:
+                continue
+            values[(usize)component] = self.snapped(self.rows[index], self.press_values[(usize)component] + travelled * rate)
+        try self.set_live(index, values)
+
+    ## A press on the slider jumps there, and the drag follows.
+    mutating func slide(x: f64) -> !:
+        let index = (usize)self.press_row
+        if index >= self.total:
+            return
+        let row = self.rows[index]
+        let range = self.slider_range(row) else return
+        let rect = self.slider_rect(row)
+        let fraction = math.clamp((x - rect.x - 3.0) / math.max(1.0, rect.width - 6.0), 0.0, 1.0)
+        var values = row.values
+        values[0] = self.snapped(row, range.0 + fraction * (range.1 - range.0))
+        try self.set_live(index, values)
+
+    ## A live value during a drag: shown now, reported with the frame.
+    mutating func set_live(index: usize, values: f64[4]) -> !:
+        var kept = values
+        for component in 0..<4:
+            kept[component] = row_clamp(self.rows[index], kept[component])
+        if kept == self.rows[index].values:
+            return
+        self.rows[index].values = kept
+        try self.touch((i64)index)
+
+    ## The step arrows, scrubbing and the ladder's middle rung move by.
+    func increment(row: Row) -> f64:
+        if row.step > 0.0:
+            return row.step
+        if row.kind == ParameterKind.integer:
+            return 1.0
+        if let range = self.slider_range(row):
+            return nice_step((range.1 - range.0) / 100.0)
+        return math.min(1.0, math.pow(10.0, 1.0 - (f64)row.decimals))
+
+    ## `value` on the row's grid: its step, or the decimals it shows.
+    func snapped(row: Row, value: f64) -> f64:
+        let grid = row.step if row.step > 0.0 else math.pow(10.0, -(f64)row.decimals)
+        return row_clamp(row, math.floor(value / grid + 0.5) * grid)
+
+    # -- The value ladder.
+
+    ## Houdini's value ladder: the middle button over a number opens a column
+    ## of steps (100, 10, 1, 0.1 … around the row's own) centred on the
+    ## pointer; up and down choose the step, left and right move the value by it.
+    mutating func start_ladder(event: Event) -> !:
+        let (row, part, component) = self.hit(event.x, event.y)
+        if row < 0 or not self.enabled((usize)row) or not numeric(self.rows[(usize)row].kind) or (part != part_field and part != part_label and part != part_slider):
+            return
+        let index = (usize)row
+        var rungs: f64[8]
+        let middle = self.increment(self.rows[index])
+        let smallest = 1.0 if self.rows[index].kind == ParameterKind.integer else math.pow(10.0, -(f64)self.rows[index].decimals)
+        var count: usize = 0
+        var start: usize = 0
+        var power = 3
+        while power >= -4 and count < 8:
+            let step = middle * math.pow(10.0, (f64)power)
+            if step >= smallest * 0.999:
+                if power == 0:
+                    start = count
+                rungs[count] = step
+                count += 1
+            power -= 1
+        self.laddering = true
+        self.press_row = row
+        self.press_part = part_label if part == part_label else part_field
+        self.press_component = component
+        self.press_y = event.y
+        self.rung = (i64)start
+        self.rung_x = event.x
+        self.rung_values = self.rows[index].values
+        let cell = self.row_height()
+        try self.ladder.value().show(rungs, count, start, event.x - 40.0, event.y - cell * ((f64)start + 0.5))
+        try self.begin(row)
+        self.box.value().invalidate()
+
+    mutating func climb(event: Event) -> !:
+        let index = (usize)self.press_row
+        if index >= self.total:
+            return
+        let cell = self.row_height()
+        let count = (i64)self.ladder.value().count
+        let rung = between((i64)self.ladder.value().start + (i64)math.floor((event.y - self.press_y) / cell + 0.5), 0, count - 1)
+        if rung != self.rung:
+            self.rung = rung
+            self.rung_x = event.x
+            self.rung_values = self.rows[index].values
+            self.ladder.value().select((usize)rung)
+        let step = self.ladder.value().rungs[(usize)rung]
+        let moved = math.floor((event.x - self.rung_x) / ladder_pitch) * step
+        var values = self.rows[index].values
+        for component in 0..<self.rows[index].components:
+            if self.press_part == part_field and component != self.press_component:
+                continue
+            values[(usize)component] = row_clamp(self.rows[index], math.floor((self.rung_values[(usize)component] + moved) / step + 0.5) * step)
+        try self.set_live(index, values)
+
+    # -- Menus.
+
+    ## A menu parameter's items in a popup under its face, the chosen one ticked.
+    mutating func open_items(index: usize) -> !:
+        let items = self.rows[index].items.value
+        let count = (usize)between((i64)parameter_text.item_count(items), 0, 64)
+        if count == 0:
+            return
+        let chosen = parameter_text.item_of(items, self.rows[index].values[0])
+        var commands: interop.Reference[Command][64] = ---
+        var made: usize = 0
+        defer release_commands(commands[..<made])
+        for item in 0..<count:
+            commands[made] = try interop.Reference[Command].adopt(new Command(parameter_text.item_label(items, item)) in memory.heap, command_type, memory.heap)
+            commands[made].value().set_checked((i64)item == chosen)
+            made += 1
+        try self.show_popup(commands[..<made], self.span_rect(self.rows[index]), popup_items, (i64)index)
+
+    ## The context menu, after Houdini's: revert this or every parameter, and
+    ## copy one parameter's value to paste into another.
+    mutating func open_context(x: f64, y: f64) -> !:
+        self.hide_tip()
+        let (row, part, component) = self.hit(x, y)
+        discard(part)
+        discard(component)
+        var valued = false
+        var changed = false
+        var pastes = false
+        if row >= 0 and self.enabled((usize)row):
+            let target = self.rows[(usize)row]
+            valued = holds_values(target.kind)
+            changed = not at_default(target)
+            pastes = valued and copied_count > 0
+        var all = false
+        for index in 0..<self.total:
+            if self.enabled(index) and not at_default(self.rows[index]):
+                all = true
+        var commands: interop.Reference[Command][6] = ---
+        var made: usize = 0
+        defer release_commands(commands[..<made])
+        for caption in ["Revert to Default", "", "Copy Value", "Paste Value", "", "Revert All to Defaults"]:
+            commands[made] = try interop.Reference[Command].adopt(new Command(caption, divider = caption.length == 0) in memory.heap, command_type, memory.heap)
+            made += 1
+        commands[0].value().set_enabled(changed)
+        commands[2].value().set_enabled(valued)
+        commands[3].value().set_enabled(pastes)
+        commands[5].value().set_enabled(all)
+        try self.show_popup(commands[..<made], Rect(x, y, 0.0, 0.0), popup_context, row)
+
+    mutating func show_popup(commands: const interop.Reference[Command][], under: Rect, mode: i64, row: i64) -> !:
+        try self.items_popup.value().set_commands(commands)
+        discard(self.items_popup.value().take_chosen())
+        let box = self.items_popup.value().layout()
+        defer box.release()
+        # A menu's items list at least as wide as the menu, as a dropdown's do.
+        try box.value().set_limits(Size(under.width, 0.0), Size(16384.0, 16384.0))
+        try box.value().set_popup_point(under.x, under.y + under.height)
+        try self.items_popup.value().open()
+        self.popup_mode = mode
+        self.popup_row = row
+        self.box.value().invalidate()
+
+    ## A color's editor under its swatch.
+    mutating func open_color(index: usize) -> !:
+        let row = self.rows[index]
+        var buffer: u8[8]
+        var channels = (0, 0, 0)
+        let red = byte_of(row.values[0], row.linear)
+        let green = byte_of(row.values[1], row.linear)
+        let blue = byte_of(row.values[2], row.linear)
+        let written = hex_color(buffer, red, green, blue)
+        let rect = self.swatch_rect(row)
+        try self.color_popup.value().open_at(written, rect.x, rect.y + rect.height)
+        channels = self.color_popup.value().rgb()
+        self.color_row = (i64)index
+        self.color_shown = channels
+        self.box.value().invalidate()
+
+## Whether a kind scrubs and takes the ladder.
+func numeric(kind: ParameterKind) -> bool:
+    return kind == ParameterKind.number or kind == ParameterKind.integer or kind == ParameterKind.vector or kind == ParameterKind.color
+
+## Whether a kind holds a value to copy and paste.
+func holds_values(kind: ParameterKind) -> bool:
+    return numeric(kind) or kind == ParameterKind.toggle or kind == ParameterKind.menu
+
+## Shift is coarse (ten times), Alt fine (a tenth).
+func modifier(event: Event) -> f64:
+    if event.shift:
+        return 10.0
+    if event.alt:
+        return 0.1
+    return 1.0
+
+## 1, 2 or 5 times a power of ten, at or below `value`.
+func nice_step(value: f64) -> f64:
+    if value <= 0.0 or not math.is_finite(value):
+        return 1.0
+    let power = math.pow(10.0, math.floor(math.log10(value)))
+    let scaled = value / power
+    if scaled >= 5.0:
+        return power * 5.0
+    if scaled >= 2.0:
+        return power * 2.0
+    return power
+
+func release_commands(commands: const interop.Reference[Command][]):
+    for command in commands:
+        command.release()
+
+## A 0..1 component as a 0..255 sRGB byte; linear components are encoded first.
+func byte_of(value: f64, linear: bool) -> i64:
+    let encoded = transfer.srgb_encode(math.clamp(value, 0.0, 1.0)) if linear else math.clamp(value, 0.0, 1.0)
+    return (i64)math.floor(encoded * 255.0 + 0.5)
+
+## A 0..255 sRGB byte as the row keeps it.
+func component_of(byte: i64, linear: bool) -> f64:
+    let encoded = (f64)byte / 255.0
+    return transfer.srgb_decode(encoded) if linear else encoded
+
+## `#rrggbb` into `buffer`.
+func hex_color(buffer: u8[], red: i64, green: i64, blue: i64) -> str:
+    let digits = "0123456789abcdef"
+    buffer[0] = '#'
+    var at: usize = 1
+    for channel in [red, green, blue]:
+        buffer[at] = digits.bytes[(usize)((channel >> 4) & 15)]
+        buffer[at + 1] = digits.bytes[(usize)(channel & 15)]
+        at += 2
+    return (str)buffer[..<7]

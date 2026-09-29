@@ -1,0 +1,261 @@
+#==============================================================================================
+#
+#   widgets/parameters/paint - Drawing the rows that show
+#
+#==============================================================================================
+
+extend ParameterPanel:
+    ## Place the rows for the width given, then draw those inside the part of
+    ## the panel the window shows: in a scroll view, a hundred rows cost what
+    ## the dozen showing do.
+    mutating func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        self.arrange(size.width)
+        let theme = self.box.value().theme()
+        let bounds = self.box.value().bounds()
+        let shown = self.box.value().visible_bounds()
+        var top = shown.y - bounds.y
+        var bottom = top + shown.height
+        if shown.height <= 0.0:
+            top = 0.0
+            bottom = size.height
+        for index in 0..<self.total:
+            let row = self.rows[index]
+            if not row.shown or row.y + row.height < top or row.y > bottom:
+                continue
+            try self.paint_row(&painter, index, theme, size.width)
+
+    mutating func paint_row(painter: Painter*, index: usize, theme: Theme, width: f64) -> !:
+        let row = self.rows[index]
+        let enabled = self.enabled(index)
+        let kind = row.kind
+        if kind == ParameterKind.folder:
+            try self.paint_folder(painter, index, theme)
+            return
+        if kind == ParameterKind.separator:
+            let middle = row.y + math.floor(row.height * 0.5)
+            try painter.rectangle(Rect(row.control_x, middle, row.control_width, 1.0), theme.border)
+            return
+        let changed = not at_default(row)
+        let ink = theme.foreground if enabled else theme.muted
+        # Houdini sets a changed parameter's label in bold; here a tick of the
+        # accent at the line's edge and the label in full ink.
+        if changed and row.label_x < 0.0 and kind != ParameterKind.button:
+            # Just before the label (the box, for a toggle).
+            let tick = self.row_height() - 10.0
+            var before = row.control_x - tick_room
+            if kind != ParameterKind.toggle:
+                before = self.label_right(width) - math.min(text_width(self.font, row.label.value), self.label_column(width)) - tick_room
+            try painter.rectangle(Rect(math.max(0.0, before), row.y + 5.0, 2.0, tick), theme.accent if enabled else theme.muted)
+        if kind != ParameterKind.toggle and kind != ParameterKind.button:
+            try self.paint_label(painter, row, theme, (changed or index == (usize)self.current) and enabled, width)
+        if kind == ParameterKind.number or kind == ParameterKind.integer:
+            try self.paint_number(painter, index, 0, theme, enabled)
+            if row.slider:
+                try self.paint_slider(painter, row, theme, enabled)
+        elif kind == ParameterKind.vector:
+            for component in 0..<row.components:
+                try self.paint_number(painter, index, component, theme, enabled)
+        elif kind == ParameterKind.color:
+            try self.paint_swatch(painter, index, theme, enabled)
+            for component in 0..<row.components:
+                try self.paint_number(painter, index, component, theme, enabled)
+        elif kind == ParameterKind.toggle:
+            try self.paint_toggle(painter, index, theme, enabled)
+        elif kind == ParameterKind.menu:
+            try self.paint_menu(painter, index, theme, enabled)
+        elif kind == ParameterKind.text or kind == ParameterKind.path:
+            try self.paint_text_field(painter, index, theme, enabled)
+            if kind == ParameterKind.path:
+                let browse = self.browse_rect(row)
+                let hot = enabled and self.hot_row == (i64)index and self.hot_part == part_browse
+                try self.paint_raised(painter, browse, theme, hot, self.press_row == (i64)index and self.press_part == part_browse)
+                let icon = math.floor(browse.height * 0.62)
+                try icons.draw_named(painter, "folder", Rect(browse.x + math.floor((browse.width - icon) * 0.5), browse.y + math.floor((browse.height - icon) * 0.5), icon, icon), ink)
+        elif kind == ParameterKind.button:
+            let rect = self.span_rect(row)
+            let hot = enabled and self.hot_row == (i64)index and self.hot_part == part_button
+            try self.paint_raised(painter, rect, theme, hot, self.press_row == (i64)index and self.press_part == part_button)
+            let caption = row.label.value
+            let caption_width = text_width(self.font, caption)
+            try painter.text(caption, rect.x + math.max(4.0, math.floor((rect.width - caption_width) * 0.5)), self.text_y(row), ink, self.font)
+        elif kind == ParameterKind.info:
+            try self.paint_fitted(painter, row.text.value, row.control_x, self.text_y(row), row.control_width, ink)
+
+    ## The label right-aligned against the column's edge (inline for a joined
+    ## row), cut with an ellipsis when the column is narrower.
+    func paint_label(painter: Painter*, row: Row, theme: Theme, strong: bool, width: f64) -> !:
+        let label = row.label.value
+        if label.length == 0:
+            return
+        let ink = theme.foreground if strong else theme.muted
+        let y = self.text_y(row)
+        if row.label_x >= 0.0:
+            try painter.text(label, row.label_x, y, ink, self.font)
+            return
+        let right = self.label_right(width)
+        let room = right - self.margin
+        let wide = text_width(self.font, label)
+        if wide <= room:
+            try painter.text(label, right - wide, y, ink, self.font)
+            return
+        try self.paint_fitted(painter, label, self.margin, y, room, ink)
+
+    ## `text` from `x`, cut to `room` with an ellipsis.
+    func paint_fitted(painter: Painter*, text: str, x: f64, y: f64, room: f64, ink: gpu.Color) -> !:
+        let advance = self.font.value().advance()
+        let fits = (usize)math.max(0.0, math.floor(room / advance))
+        if scalars(text) <= fits:
+            try painter.text(text, x, y, ink, self.font)
+            return
+        if fits < 2:
+            return
+        let kept = first_scalars(text, fits - 1)
+        try painter.text(kept, x, y, ink, self.font)
+        try painter.text("…", x + (f64)(fits - 1) * advance, y, ink, self.font)
+
+    func text_y(row: Row) -> f64:
+        return row.y + math.max(0.0, math.floor((self.row_height() - self.font.value().height()) * 0.5))
+
+    ## A sunken well with a one-point border: the accent while typed in or
+    ## scrubbed, lighter while hovered.
+    func paint_well(painter: Painter*, rect: Rect, theme: Theme, hot: bool, active: bool, current: bool) -> !:
+        let radius = math.min(theme.control_radius, 3.0)
+        let border = theme.accent if active else (theme.hover_border() if hot else (theme.active_border if current else theme.border))
+        try painter.rounded_rectangle(rect, border, radius)
+        try painter.rounded_rectangle(Rect(rect.x + 1.0, rect.y + 1.0, math.max(0.0, rect.width - 2.0), math.max(0.0, rect.height - 2.0)), theme.sunken, math.max(0.0, radius - 1.0))
+
+    ## A raised face for buttons and menus.
+    func paint_raised(painter: Painter*, rect: Rect, theme: Theme, hot: bool, pressed: bool) -> !:
+        let radius = math.min(theme.control_radius, 3.0)
+        try painter.rounded_rectangle(rect, theme.hover_border() if hot else theme.border, radius)
+        let face = theme.pressed if pressed else (theme.button_hover if hot else theme.button)
+        try painter.rounded_rectangle(Rect(rect.x + 1.0, rect.y + 1.0, math.max(0.0, rect.width - 2.0), math.max(0.0, rect.height - 2.0)), face, math.max(0.0, radius - 1.0))
+
+    ## One numeric field: typed text while edited, else the value (as many
+    ## decimals as fit) and its unit, muted.
+    mutating func paint_number(painter: Painter*, index: usize, component: i64, theme: Theme, enabled: bool) -> !:
+        let row = self.rows[index]
+        let rect = self.field_rect(row, component)
+        let editing = self.edit_row == (i64)index and self.edit_component == component
+        let scrubbed = (self.scrubbing or self.laddering) and self.press_row == (i64)index and (self.press_part == part_label or self.press_component == component)
+        let hot = enabled and self.hot_row == (i64)index and (self.hot_part == part_field or self.hot_part == part_label) and (self.hot_component == component or self.hot_part == part_label)
+        let current = self.box.value().is_focused() and self.current == (i64)index and component == 0
+        try self.paint_well(painter, rect, theme, hot, editing or scrubbed, current)
+        let inset = math.floor(self.font.value().advance() * 0.6)
+        let y = self.text_y(row)
+        if editing:
+            try self.input.paint(painter, self.font, theme, rect.x + inset, y, rect.width - inset * 2.0)
+            return
+        var digits: u8[48]
+        let room = rect.width - inset * 2.0
+        let suffix = row.suffix.value
+        let suffix_width = text_width(self.font, suffix)
+        var decimals = row.decimals
+        var shown = try format_number(digits, row.values[(usize)component], decimals)
+        while decimals > 0 and text_width(self.font, shown) + suffix_width > room:
+            decimals -= 1
+            shown = try format_number(digits, row.values[(usize)component], decimals)
+        let ink = theme.foreground if enabled else theme.muted
+        try painter.text(shown, rect.x + inset, y, ink, self.font)
+        if suffix.length > 0 and text_width(self.font, shown) + suffix_width <= room:
+            try painter.text(suffix, rect.x + inset + text_width(self.font, shown), y, theme.muted, self.font)
+
+    ## The range a slider spans: the soft range, else a finite hard one.
+    func slider_range(row: Row) -> (f64, f64)?:
+        if row.soft_maximum > row.soft_minimum:
+            return (row.soft_minimum, row.soft_maximum)
+        if row.maximum - row.minimum > 0.0 and row.maximum - row.minimum <= 1.0e6:
+            return (row.minimum, row.maximum)
+        return none
+
+    ## A thin track filled to the value in the accent, with a square knob.
+    func paint_slider(painter: Painter*, row: Row, theme: Theme, enabled: bool) -> !:
+        let rect = self.slider_rect(row)
+        let range = self.slider_range(row) else return
+        if rect.width < 12.0:
+            return
+        let knob = 6.0
+        let fraction = math.clamp((row.values[0] - range.0) / (range.1 - range.0), 0.0, 1.0)
+        let middle = rect.y + math.floor(rect.height * 0.5) - 1.0
+        let travel = rect.width - knob
+        try painter.rectangle(Rect(rect.x, middle, rect.width, 2.0), theme.border)
+        try painter.rectangle(Rect(rect.x, middle, math.floor(travel * fraction) + knob * 0.5, 2.0), theme.accent if enabled else theme.muted)
+        let knob_height = math.min(rect.height - 8.0, 12.0)
+        let hot = self.hot_row >= 0 and self.rows[(usize)self.hot_row].y == row.y and self.hot_part == part_slider
+        try painter.rectangle(Rect(rect.x + math.floor(travel * fraction), rect.y + math.floor((rect.height - knob_height) * 0.5), knob, knob_height),
+                              (theme.accent if hot else theme.foreground) if enabled else theme.muted)
+
+    func paint_toggle(painter: Painter*, index: usize, theme: Theme, enabled: bool) -> !:
+        let row = self.rows[index]
+        let well = self.toggle_rect(row)
+        let on = row.values[0] != 0.0
+        let hot = enabled and self.hot_row == (i64)index
+        let radius = math.min(theme.control_radius, 3.0)
+        let current = self.box.value().is_focused() and self.current == (i64)index
+        let border = theme.active_border if current else (theme.accent if on else (theme.hover_border() if hot else theme.border))
+        try painter.rounded_rectangle(well, border if enabled else theme.muted, radius)
+        let face = theme.accent if on else (theme.hover() if hot else theme.sunken)
+        try painter.rounded_rectangle(Rect(well.x + 1.0, well.y + 1.0, well.width - 2.0, well.height - 2.0), face if enabled else theme.sunken, math.max(0.0, radius - 1.0))
+        if on:
+            let ink = theme.accent_text if enabled else theme.muted
+            try painter.line(Point(well.x + 3.5, well.y + 7.5), Point(well.x + 6.0, well.y + 10.0), 1.8, ink)
+            try painter.line(Point(well.x + 6.0, well.y + 10.0), Point(well.x + 10.8, well.y + 4.2), 1.8, ink)
+        try painter.text(row.label.value, well.x + well.width + math.floor(self.font.value().advance() * 0.75), self.text_y(row),
+                         theme.foreground if enabled else theme.muted, self.font)
+
+    ## The chosen item on a raised face, a chevron at the right.
+    func paint_menu(painter: Painter*, index: usize, theme: Theme, enabled: bool) -> !:
+        let row = self.rows[index]
+        let rect = self.span_rect(row)
+        let hot = enabled and self.hot_row == (i64)index
+        let open = self.popup_mode == popup_items and self.popup_row == (i64)index
+        try self.paint_raised(painter, rect, theme, hot or open, open)
+        let chosen = parameter_text.item_of(row.items.value, row.values[0])
+        let caption = parameter_text.item_label(row.items.value, (usize)chosen) if chosen >= 0 else ""
+        let inset = math.floor(self.font.value().advance() * 0.6)
+        try self.paint_fitted(painter, caption, rect.x + inset, self.text_y(row), rect.width - inset * 2.0 - 12.0, theme.foreground if enabled else theme.muted)
+        let cx = rect.x + rect.width - 10.0
+        let cy = rect.y + rect.height * 0.5
+        try painter.triangle(Point(cx - 4.0, cy - 2.0), Point(cx + 4.0, cy - 2.0), Point(cx, cy + 3.0), theme.muted if not hot else theme.foreground)
+
+    func paint_text_field(painter: Painter*, index: usize, theme: Theme, enabled: bool) -> !:
+        let row = self.rows[index]
+        let rect = self.field_rect(row, 0)
+        let editing = self.edit_row == (i64)index
+        let hot = enabled and self.hot_row == (i64)index and self.hot_part == part_field
+        let current = self.box.value().is_focused() and self.current == (i64)index
+        try self.paint_well(painter, rect, theme, hot, editing, current)
+        let inset = math.floor(self.font.value().advance() * 0.6)
+        let y = self.text_y(row)
+        if editing:
+            try self.input.paint(painter, self.font, theme, rect.x + inset, y, rect.width - inset * 2.0)
+            return
+        try self.paint_fitted(painter, row.text.value, rect.x + inset, y, rect.width - inset * 2.0, theme.foreground if enabled else theme.muted)
+
+    ## The color, a checker of the panel behind it when dimmed.
+    func paint_swatch(painter: Painter*, index: usize, theme: Theme, enabled: bool) -> !:
+        let row = self.rows[index]
+        let rect = self.swatch_rect(row)
+        let hot = enabled and self.hot_row == (i64)index and self.hot_part == part_swatch
+        let radius = math.min(theme.control_radius, 3.0)
+        try painter.rounded_rectangle(rect, theme.hover_border() if hot else theme.border, radius)
+        let shown = gpu.Color(row.values[0], row.values[1], row.values[2]) if row.linear else srgb_decoded(gpu.Color(row.values[0], row.values[1], row.values[2]))
+        try painter.rounded_rectangle(Rect(rect.x + 1.0, rect.y + 1.0, rect.width - 2.0, rect.height - 2.0), shown, math.max(0.0, radius - 1.0), 1.0 if enabled else 0.4)
+
+    ## A folder's heading: a chevron, open or closed, and its label.
+    func paint_folder(painter: Painter*, index: usize, theme: Theme) -> !:
+        let row = self.rows[index]
+        let rect = self.span_rect(row)
+        let hot = self.hot_row == (i64)index
+        try painter.rounded_rectangle(rect, theme.hover() if hot else theme.raised, math.min(theme.control_radius, 3.0))
+        let cx = rect.x + 11.0
+        let cy = rect.y + rect.height * 0.5
+        let ink = theme.accent if row.open else theme.muted
+        if row.open:
+            try painter.triangle(Point(cx - 4.0, cy - 2.0), Point(cx + 4.0, cy - 2.0), Point(cx, cy + 3.0), ink)
+        else:
+            try painter.triangle(Point(cx - 2.0, cy - 4.0), Point(cx + 3.0, cy), Point(cx - 2.0, cy + 4.0), ink)
+        try painter.text(row.label.value, rect.x + 22.0, rect.y + math.floor((rect.height - self.font.value().height()) * 0.5), theme.foreground, self.font)

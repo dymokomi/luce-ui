@@ -1,0 +1,250 @@
+## The parameter panel through the application's input: typing arithmetic,
+## scrubbing (one undo step per drag), resets, conditions, Tab between
+## fields, folders remembered across specs, buttons, the context menu, the
+## value ladder, and a long list inside a scroll view.
+from ui import Application, Font, VStack, ScrollView, Event, ParameterPanel, ParameterSpec, ParameterKind
+from gpu import Frame, Rect
+from input import EventKind, Key
+import window
+
+class Log:
+    pub var begins: int = 0
+    pub var changes: int = 0
+    pub var commits: int = 0
+    pub var actions: int = 0
+    pub var last: int = -1
+    pub func begin(self, index: int):
+        self.begins += 1
+    pub func change(self, index: int):
+        self.changes += 1
+        self.last = index
+    pub func commit(self, index: int):
+        self.commits += 1
+    pub func act(self, index: int):
+        self.actions += 1
+        self.last = index
+
+func render(app: Application) -> unit!:
+    let frame = Frame(window.Size(420.0, 700.0, 420.0, 700.0, 1.0))
+    app.layout(420.0, 700.0)
+    app.render(frame.target())
+    frame.close()
+
+func press(app: Application, x: float, y: float) -> unit!:
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x, y = y))
+
+func typed(app: Application, text: str) -> unit!:
+    let raw = text.bytes()
+    for index in 0..<raw.length:
+        app.dispatch(Event(kind = EventKind.text_input, codepoint = raw[index]))
+
+func key(app: Application, which: Key, shift: bool = false) -> unit!:
+    app.dispatch(Event(kind = EventKind.key_down, key = which, shift = shift))
+
+func origin_of(panel: ParameterPanel) -> Rect:
+    return panel.layout().bounds()
+
+## Click the middle of field `component` of parameter `index`.
+func click_field(app: Application, panel: ParameterPanel, index: int, component: int = 0) -> unit!:
+    let origin = panel.layout().bounds()
+    let field = panel.field_bounds(index, component)
+    assert(field.width > 0.0)
+    press(app, origin.x + field.x + field.width * 0.5, origin.y + field.y + field.height * 0.5)
+    render(app)
+
+func specs() -> list[ParameterSpec]:
+    return [ParameterSpec(name = "size", label = "Size", value = 2.0, minimum = 0.0, maximum = 100.0, soft_maximum = 10.0, slider = true, doc = "The edge length."),
+            ParameterSpec(name = "divisions", label = "Divisions", kind = ParameterKind.integer, value = 4.0, minimum = 1.0, maximum = 64.0),
+            ParameterSpec(name = "t", label = "Translate", kind = ParameterKind.vector, components = 3),
+            ParameterSpec(name = "shape", label = "Shape", kind = ParameterKind.menu, items = "Round|Chamfer|Custom"),
+            ParameterSpec(name = "profile", label = "Profile", hide_when = "{ shape != Custom }"),
+            ParameterSpec(name = "keep", label = "Keep original", kind = ParameterKind.toggle, value = 1.0),
+            ParameterSpec(name = "extra", label = "Extra", kind = ParameterKind.folder),
+            ParameterSpec(name = "group", label = "Group", kind = ParameterKind.text, text = "*"),
+            ParameterSpec(name = "file", label = "File", kind = ParameterKind.path),
+            ParameterSpec(name = "tint", label = "Tint", kind = ParameterKind.color, value = 1.0, y = 0.5, z = 0.25),
+            ParameterSpec(name = "apply", label = "Apply", kind = ParameterKind.button),
+            ParameterSpec(name = "note", label = "Note", kind = ParameterKind.info, text = "Read only", disable_when = "keep == 0")]
+
+pub func parameters() -> unit!:
+    let font = Font()
+    let panel = ParameterPanel(specs(), font = font)
+    let log = Log()
+    let began = panel.on_begin(log.begin)
+    let changed = panel.on_change(log.change)
+    let committed = panel.on_commit(log.commit)
+    let acted = panel.on_action(log.act)
+    let app = Application(VStack([panel], spacing = 0.0))
+    render(app)
+    assert(panel.count() == 12 and panel.find("tint") == 9 and panel.find("nothing") == -1)
+    let size = panel.find("size")
+    let profile = panel.find("profile")
+    let shape = panel.find("shape")
+    # One compact line a parameter.
+    let first = panel.row_bounds(size)
+    let second = panel.row_bounds(panel.find("divisions"))
+    assert(first.height <= 24.0 and second.y - first.y <= 26.0)
+    # A rested pointer shows the row's doc (at once here).
+    panel.set_tip_delay(0.0)
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = origin_of(panel).x + 20.0, y = origin_of(panel).y + first.y + 6.0))
+    render(app)
+    assert(panel.is_tip_shown())
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = origin_of(panel).x + 20.0, y = origin_of(panel).y + second.y + 6.0))
+    render(app)
+    assert(not panel.is_tip_shown())
+    # Conditions: Profile shows only for the Custom shape.
+    assert(not panel.is_shown(profile))
+    panel.set_value(shape, 2.0)
+    assert(panel.is_shown(profile))
+    panel.set_value(shape, 0.0)
+    assert(not panel.is_shown(profile) and log.changes == 0)
+
+    # Typed arithmetic is one edit: begin, change, commit.
+    click_field(app, panel, size)
+    assert(panel.is_editing())
+    typed(app, "2*3")
+    key(app, Key.enter)
+    assert(panel.value(size) == 6.0 and not panel.is_editing())
+    assert(log.begins == 1 and log.changes == 1 and log.commits == 1 and log.last == size)
+    assert(not panel.is_default(size))
+    click_field(app, panel, size)
+    typed(app, "+=0.5")
+    key(app, Key.enter)
+    assert(panel.value(size) == 6.5)
+    # The hard range holds whatever is typed; Escape keeps the value.
+    click_field(app, panel, size)
+    typed(app, "500")
+    key(app, Key.enter)
+    assert(panel.value(size) == 100.0)
+    click_field(app, panel, size)
+    typed(app, "1")
+    key(app, Key.escape)
+    assert(panel.value(size) == 100.0 and not panel.is_editing())
+
+    # The context menu reverts: its first row, Revert to Default, is chosen by Enter.
+    let size_row = panel.row_bounds(size)
+    app.dispatch(Event(kind = EventKind.pointer_down, x = origin_of(panel).x + 20.0, y = origin_of(panel).y + size_row.y + 6.0, button = 1))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = origin_of(panel).x + 20.0, y = origin_of(panel).y + size_row.y + 6.0, button = 1))
+    render(app)
+    key(app, Key.enter)
+    render(app)
+    assert(panel.value(size) == 2.0 and panel.is_default(size))
+    # A menu parameter opens its items; Down and Enter choose the next.
+    let shape_row = panel.row_bounds(shape)
+    press(app, origin_of(panel).x + panel.label_width() + 40.0, origin_of(panel).y + shape_row.y + 6.0)
+    render(app)
+    key(app, Key.down)
+    key(app, Key.enter)
+    render(app)
+    assert(panel.value(shape) == 1.0)
+    panel.set_value(shape, 0.0)
+
+    # A scrub is live, and one undo step however far it goes.
+    let origin = panel.layout().bounds()
+    let divisions = panel.find("divisions")
+    let well = panel.field_bounds(divisions, 0)
+    let x = origin.x + well.x + well.width * 0.5
+    let y = origin.y + well.y + well.height * 0.5
+    let commits = log.commits
+    let begins = log.begins
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x + 6.0, y = y))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x + 26.0, y = y))
+    render(app)
+    assert(panel.value(divisions) == 14.0 and log.commits == commits)
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x + 46.0, y = y))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x + 46.0, y = y))
+    assert(panel.value(divisions) == 24.0 and log.begins == begins + 1 and log.commits == commits + 1)
+    # Cmd/Ctrl-click puts the default back.
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y, control = true))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x, y = y, control = true))
+    assert(panel.value(divisions) == 4.0 and panel.is_default(divisions))
+
+    # The value ladder: the middle button, a rung down is a tenth of the step.
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y, button = 2))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x + 36.0, y = y, button = 2))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x + 36.0, y = y, button = 2))
+    assert(panel.value(divisions) == 7.0)
+    panel.reset(divisions)
+
+    # Tab walks the vector's fields and on.
+    let translate = panel.find("t")
+    click_field(app, panel, translate, 0)
+    typed(app, "1")
+    key(app, Key.tab)
+    typed(app, "2")
+    key(app, Key.tab)
+    typed(app, "3")
+    key(app, Key.tab)
+    assert(panel.is_editing())
+    key(app, Key.escape)
+    assert(panel.component(translate, 0) == 1.0 and panel.component(translate, 1) == 2.0 and panel.component(translate, 2) == 3.0)
+
+    # A toggle clicks; a condition on it dims the note.
+    let keep = panel.find("keep")
+    let note = panel.find("note")
+    assert(panel.is_enabled(note))
+    let toggle = panel.row_bounds(keep)
+    press(app, origin.x + panel.label_width() + 20.0, origin.y + toggle.y + toggle.height * 0.5)
+    assert(panel.value(keep) == 0.0 and not panel.is_enabled(note))
+
+    # A folder closes and stays closed when the specs come back.
+    let group = panel.find("group")
+    assert(panel.is_shown(group))
+    let folder = panel.row_bounds(panel.find("extra"))
+    press(app, origin.x + 30.0, origin.y + folder.y + folder.height * 0.5)
+    render(app)
+    assert(not panel.is_shown(group) and not panel.folder_open("extra"))
+    panel.set_specs(specs())
+    render(app)
+    assert(not panel.is_shown(panel.find("group")) and panel.value(panel.find("keep")) == 1.0)
+    panel.set_folder_open("extra", true)
+    render(app)
+    assert(panel.is_shown(group))
+
+    # Buttons act; texts commit as typed.
+    let apply = panel.row_bounds(panel.find("apply"))
+    press(app, origin.x + panel.label_width() + 24.0, origin.y + apply.y + apply.height * 0.5)
+    assert(log.actions == 1 and log.last == panel.find("apply"))
+    click_field(app, panel, group)
+    typed(app, "@top")
+    key(app, Key.enter)
+    assert(panel.text(group) == "@top" and not panel.is_default(group))
+    panel.reset(group)
+    assert(panel.text(group) == "*")
+
+    # The label column follows a drag of its edge.
+    let before = panel.label_width()
+    let edge_x = origin.x + 6.0 + before + 3.0
+    let row_y = origin.y + panel.row_bounds(size).y + 8.0
+    app.dispatch(Event(kind = EventKind.pointer_down, x = edge_x, y = row_y))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = edge_x + 30.0, y = row_y))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = edge_x + 30.0, y = row_y))
+    render(app)
+    assert(panel.label_width() == before + 30.0)
+
+    began.disconnect()
+    changed.disconnect()
+    committed.disconnect()
+    acted.disconnect()
+    app.close()
+    many_parameters()
+    print("PASS parameter panel: typing, scrubbing, ladder, conditions, folders, Tab")
+
+## Three hundred rows in a scroll view draw and place without trouble.
+func many_parameters() -> unit!:
+    let font = Font()
+    var many: list[ParameterSpec] = []
+    for index in 0..<300:
+        let kind = [ParameterKind.number, ParameterKind.vector, ParameterKind.toggle, ParameterKind.menu, ParameterKind.text][index % 5]
+        if index % 50 == 0:
+            many.append(ParameterSpec(name = f"folder{index}", label = f"Folder {index}", kind = ParameterKind.folder))
+        many.append(ParameterSpec(name = f"p{index}", label = f"Parameter {index}", kind = kind, items = "A|B|C", slider = index % 2 == 0, soft_maximum = 1.0))
+    let panel = ParameterPanel(many, font = font)
+    let app = Application(ScrollView(panel))
+    render(app)
+    assert(panel.count() == 306)
+    let last = panel.row_bounds(panel.find("p299"))
+    assert(last.y > 5000.0 and last.height > 0.0)
+    app.close()

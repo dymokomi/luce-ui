@@ -1,0 +1,334 @@
+#==============================================================================================
+#
+#   widgets/parameters/arrange - Rows into lines, the label column, and the parts of a row
+#
+#==============================================================================================
+
+## Rows joined onto one line, at most.
+let join_limit: usize = 8
+
+extend ParameterPanel:
+    ## One line's height: a text line, as every control in the theme is.
+    func row_height() -> f64:
+        return math.max(20.0, self.box.value().theme().row_height(self.font))
+
+    ## A folder heading's line, a little taller so sections read apart.
+    func folder_height() -> f64:
+        return self.row_height() + 2.0
+
+    func separator_height() -> f64:
+        return 9.0
+
+    ## Whether row `index` may share a line with the row before it.
+    func joins_previous(index: usize, previous: i64) -> bool:
+        if previous < 0:
+            return false
+        let before = self.rows[(usize)previous]
+        let row = self.rows[index]
+        return before.join and before.folder == row.folder and joinable(before.kind) and joinable(row.kind)
+
+    ## The height the shown rows take; the same walk as `arrange`, placing nothing.
+    func content_height() -> f64:
+        var y = self.margin * 0.5
+        var previous: i64 = -1
+        var members: usize = 0
+        for index in 0..<self.total:
+            if not self.visible(index):
+                continue
+            let kind = self.rows[index].kind
+            if self.joins_previous(index, previous) and members < join_limit:
+                members += 1
+                previous = (i64)index
+                continue
+            members = 1
+            if kind == ParameterKind.folder:
+                y += (4.0 if y > self.margin * 0.5 else 0.0) + self.folder_height() + line_gap
+            elif kind == ParameterKind.separator:
+                y += self.separator_height()
+            else:
+                y += self.row_height() + line_gap
+            previous = (i64)index
+        return y + self.margin * 0.5
+
+    ## The label column's width in a panel `width` wide: what the host or a
+    ## drag fixed, else the widest label that goes there, within reason.
+    func label_column(width: f64) -> f64:
+        let advance = self.font.value().advance()
+        let most = math.max(advance * 4.0, width * 0.45)
+        if self.fixed_label > 0.0:
+            return math.clamp(self.fixed_label, advance * 3.0, math.max(advance * 3.0, width - 80.0))
+        var widest = 0.0
+        for index in 0..<self.total:
+            let row = self.rows[index]
+            if row.kind == ParameterKind.folder or row.kind == ParameterKind.separator or row.kind == ParameterKind.toggle or row.kind == ParameterKind.button:
+                continue
+            widest = math.max(widest, text_width(self.font, row.label.value))
+        if widest == 0.0:
+            # No label goes in the column: the controls take the whole line.
+            return 0.0
+        return math.min(math.max(widest, advance * 4.0), most)
+
+    ## Where the label column ends, and where controls start and end. A
+    ## narrow margin still leaves room for the changed tick before a label.
+    func label_right(width: f64) -> f64:
+        let column = self.label_column(width)
+        let lead = math.max(0.0, tick_room - self.margin) if column > 0.0 else 0.0
+        return self.margin + lead + column
+
+    func controls_left(width: f64) -> f64:
+        let column = self.label_column(width)
+        return self.label_right(width) + (8.0 if column > 0.0 else 0.0)
+
+    ## Place every shown row for a panel `width` wide: its line, height and
+    ## the span its control takes. Joined rows share a line and its span.
+    mutating func arrange(width: f64):
+        if not self.stale and width == self.placed_width:
+            return
+        self.stale = false
+        self.placed_width = width
+        var y = self.margin * 0.5
+        var previous: i64 = -1
+        var members: usize[8]
+        var count: usize = 0
+        var line_y = y
+        for index in 0..<self.total:
+            self.rows[index].shown = false
+            if not self.visible(index):
+                continue
+            let kind = self.rows[index].kind
+            if self.joins_previous(index, previous) and count < join_limit:
+                members[count] = index
+                count += 1
+                previous = (i64)index
+                continue
+            if count > 0:
+                self.place_line(members[..<count], line_y, width)
+            count = 0
+            self.rows[index].shown = true
+            if kind == ParameterKind.folder:
+                if y > self.margin * 0.5:
+                    y += 4.0
+                self.rows[index].y = y
+                self.rows[index].height = self.folder_height()
+                self.rows[index].control_x = self.margin
+                self.rows[index].control_width = math.max(0.0, width - self.margin * 2.0)
+                self.rows[index].label_x = -1.0
+                y += self.folder_height() + line_gap
+            elif kind == ParameterKind.separator:
+                self.rows[index].y = y
+                self.rows[index].height = self.separator_height()
+                self.rows[index].control_x = self.margin
+                self.rows[index].control_width = math.max(0.0, width - self.margin * 2.0)
+                self.rows[index].label_x = -1.0
+                y += self.separator_height()
+            else:
+                line_y = y
+                members[0] = index
+                count = 1
+                y += self.row_height() + line_gap
+            previous = (i64)index
+        if count > 0:
+            self.place_line(members[..<count], line_y, width)
+
+    ## Share one line's control span among its `members`: toggles and buttons
+    ## take what they need, the rest share what is left; every member after
+    ## the first shows its label inline before its control.
+    mutating func place_line(members: const usize[], y: f64, width: f64):
+        let left = self.controls_left(width)
+        let right = math.max(left + 20.0, width - self.margin)
+        let advance = self.font.value().advance()
+        var fixed = 0.0
+        var flexible: f64 = 0.0
+        for place in 0..<members.length:
+            let row = self.rows[members[place]]
+            let natural = self.natural_width(row)
+            if natural > 0.0:
+                fixed += natural
+            else:
+                flexible += 1.0
+                if place > 0:
+                    fixed += text_width(self.font, row.label.value) + advance
+        let gaps = (f64)(members.length - 1) * advance * 1.5
+        let share = math.max(advance * 3.0, (right - left - fixed - gaps) / math.max(1.0, flexible)) if flexible > 0.0 else 0.0
+        var x = left
+        for place in 0..<members.length:
+            let index = members[place]
+            let row = self.rows[index]
+            self.rows[index].shown = true
+            self.rows[index].y = y
+            self.rows[index].height = self.row_height()
+            self.rows[index].label_x = -1.0
+            let natural = self.natural_width(row)
+            if natural > 0.0:
+                # A lone toggle or button keeps the line's span: its label or caption is its own.
+                let lone = members.length == 1
+                self.rows[index].control_x = x
+                self.rows[index].control_width = right - x if lone and row.kind == ParameterKind.toggle else math.min(natural, right - x)
+                x += natural
+            else:
+                if place > 0 and row.label.value.length > 0:
+                    self.rows[index].label_x = x
+                    x += text_width(self.font, row.label.value) + advance
+                self.rows[index].control_x = x
+                self.rows[index].control_width = math.max(advance * 2.0, share)
+                x += share
+            x += advance * 1.5
+
+    ## The width a toggle (box and label) or button (caption) needs; 0 for the rest.
+    func natural_width(row: Row) -> f64:
+        let advance = self.font.value().advance()
+        if row.kind == ParameterKind.toggle:
+            return toggle_side + advance * 0.75 + text_width(self.font, row.label.value)
+        if row.kind == ParameterKind.button:
+            return text_width(self.font, row.label.value) + advance * 2.0
+        return 0.0
+
+    # -- The parts of a placed row, in the panel's points.
+
+    ## How many fields the row types into.
+    func field_count(row: Row) -> i64:
+        if row.kind == ParameterKind.number or row.kind == ParameterKind.integer or row.kind == ParameterKind.text or row.kind == ParameterKind.path:
+            return 1
+        if row.kind == ParameterKind.vector or row.kind == ParameterKind.color:
+            return row.components
+        return 0
+
+    ## A number field's width: a third of a lone row's span, so numbers line
+    ## up with a vector's first column; the whole span when joined.
+    func number_width(row: Row) -> f64:
+        let third = math.floor((row.control_width - part_gap * 2.0) / 3.0)
+        let alone = row.label_x < 0.0 and row.control_x == self.controls_left(self.placed_width)
+        let wanted = third if alone else row.control_width
+        if row.slider:
+            return math.min(row.control_width, math.max(wanted, self.font.value().advance() * 6.0))
+        return math.max(math.min(row.control_width, self.font.value().advance() * 6.0), wanted)
+
+    func swatch_width(row: Row) -> f64:
+        return math.min(math.floor(self.row_height() * 1.6), row.control_width * 0.25)
+
+    ## Field `component`'s rectangle.
+    func field_rect(row: Row, component: i64) -> Rect:
+        let height = self.row_height()
+        if row.kind == ParameterKind.number or row.kind == ParameterKind.integer:
+            return Rect(row.control_x, row.y, self.number_width(row), height)
+        if row.kind == ParameterKind.text:
+            return Rect(row.control_x, row.y, row.control_width, height)
+        if row.kind == ParameterKind.path:
+            return Rect(row.control_x, row.y, math.max(0.0, row.control_width - height - part_gap), height)
+        var left = row.control_x
+        var span = row.control_width
+        if row.kind == ParameterKind.color:
+            let swatch = self.swatch_width(row) + part_gap
+            left += swatch
+            span -= swatch
+        let n = (f64)between(row.components, 1, 4)
+        let each = math.floor((span - part_gap * (n - 1.0)) / n)
+        return Rect(left + (f64)component * (each + part_gap), row.y, math.max(0.0, each), height)
+
+    ## The slider beside a number field, when it has one.
+    func slider_rect(row: Row) -> Rect:
+        let field = self.number_width(row)
+        let x = row.control_x + field + part_gap * 2.0
+        return Rect(x, row.y, math.max(0.0, row.control_x + row.control_width - x), self.row_height())
+
+    func browse_rect(row: Row) -> Rect:
+        let height = self.row_height()
+        return Rect(row.control_x + row.control_width - height, row.y, height, height)
+
+    func swatch_rect(row: Row) -> Rect:
+        return Rect(row.control_x, row.y, self.swatch_width(row), self.row_height())
+
+    ## A toggle's box.
+    func toggle_rect(row: Row) -> Rect:
+        return Rect(row.control_x, row.y + math.floor((self.row_height() - toggle_side) * 0.5), toggle_side, toggle_side)
+
+    ## The row's whole control span.
+    func span_rect(row: Row) -> Rect:
+        return Rect(row.control_x, row.y, row.control_width, row.height)
+
+    ## What is at (`x`, `y`): the row, the part and the field's component; row -1 for nothing.
+    func hit(x: f64, y: f64) -> (i64, i64, i64):
+        let width = self.placed_width
+        let label_end = self.label_right(width)
+        for index in 0..<self.total:
+            let row = self.rows[index]
+            if not row.shown or y < row.y or y >= row.y + row.height + line_gap:
+                continue
+            if row.kind == ParameterKind.folder:
+                return ((i64)index, part_folder, 0)
+            if row.kind == ParameterKind.separator:
+                return ((i64)index, part_none, 0)
+            if x < row.control_x and row.label_x >= 0.0 and x >= row.label_x:
+                return ((i64)index, part_label, 0)
+            if x >= row.control_x and x < row.control_x + row.control_width:
+                return ((i64)index, self.part_at(row, x), self.component_at(row, x))
+            # Joined rows share a line: find the member under the pointer.
+            if x >= row.control_x + row.control_width:
+                continue
+            if x >= label_end - 2.0 and x < label_end + 8.0 and row.label_x < 0.0:
+                return ((i64)index, part_divider, 0)
+            if x < label_end and row.label_x < 0.0 and x >= self.margin:
+                return ((i64)index, part_label, 0)
+            return ((i64)index, part_none, 0)
+        return (-1, part_none, 0)
+
+    func part_at(row: Row, x: f64) -> i64:
+        let kind = row.kind
+        if kind == ParameterKind.toggle:
+            return part_toggle
+        if kind == ParameterKind.menu:
+            return part_menu
+        if kind == ParameterKind.button:
+            return part_button
+        if kind == ParameterKind.info:
+            return part_none
+        if kind == ParameterKind.path and x >= self.browse_rect(row).x:
+            return part_browse
+        if kind == ParameterKind.color and x < self.swatch_rect(row).x + self.swatch_rect(row).width:
+            return part_swatch
+        if (kind == ParameterKind.number or kind == ParameterKind.integer) and x >= row.control_x + self.number_width(row):
+            return part_slider if row.slider else part_none
+        return part_field
+
+    func component_at(row: Row, x: f64) -> i64:
+        if row.kind != ParameterKind.vector and row.kind != ParameterKind.color:
+            return 0
+        for component in 0..<row.components:
+            let field = self.field_rect(row, component)
+            if x < field.x + field.width + part_gap * 0.5:
+                return component
+        return row.components - 1
+
+## Whether a kind can share a line.
+func joinable(kind: ParameterKind) -> bool:
+    return kind != ParameterKind.folder and kind != ParameterKind.separator
+
+## Room before a label for the tick that marks a changed value.
+let tick_room: f64 = 5.0
+
+## A toggle's box, the weight of a capital beside the label.
+let toggle_side: f64 = 14.0
+
+## How wide `text` is in `font`: its scalars at the font's advance.
+func text_width(font: interop.Reference[Font], text: str) -> f64:
+    return (f64)scalars(text) * font.value().advance()
+
+## How many Unicode scalars `text` holds.
+func scalars(text: str) -> usize:
+    var count: usize = 0
+    for byte in text.bytes:
+        if byte & 0xC0 != 0x80:
+            count += 1
+    return count
+
+## The first `count` scalars of `text`.
+func first_scalars(text: str, count: usize) -> str:
+    var seen: usize = 0
+    var at: usize = 0
+    while at < text.length:
+        if text.bytes[at] & 0xC0 != 0x80:
+            if seen == count:
+                break
+            seen += 1
+        at += 1
+    return (str)text.bytes[..<at]

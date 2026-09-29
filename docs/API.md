@@ -33,6 +33,7 @@ All objects and callbacks belong to the main thread.
 | `Theme` | Semantic colors, `control_lines`, `inset_cells`, `header_inset_cells`, `row_height`, `inset` |
 | `TextEditor` | Unicode text, selection, history and decorations; see [text controls](TEXT-EDITOR.md) |
 | `ListView` | `ListItem(text, icon=IconKind.blank)` entries and optional row height/font; `select`, `set_items`, `on_activate` |
+| `ParameterPanel` | `ParameterPanel(specs, font=..., label_width=0)` from `ParameterSpec`s: one compact row a parameter; values by index (`value`, `component`, `text`, `set_*`), `find(name)`, `on_change`/`on_begin`/`on_commit`/`on_action`; see [parameter panels](#parameter-panels) |
 
 Constructors that allocate are fallible. Luce propagates automatically inside a
 function declared `-> T!`: `let button = Button("Pause")`. Base uses one explicit
@@ -95,6 +96,55 @@ backing scale. The default is 14 points on every control. Share a Font explicitl
 for consistent typography; logical metrics drive drawing and hit testing.
 Single-line labels are limited to 4096 bytes and 1024 Unicode scalars. Font shaping,
 bidi, grapheme navigation and arbitrary font-file loading are not yet provided.
+
+## Parameter panels
+
+`ParameterPanel` is a parameter editor after Houdini's parameter pane and
+Maya's Attribute Editor: one row a parameter, a right-aligned label in a
+column (fitted to the labels, or `set_label_width`; the user drags its edge),
+then the control, every row one text line high. A `ParameterSpec` describes a
+row: `name` (the key conditions and hosts use), `label`, `kind`, the default
+(`value`, and `y`, `z`, `w` for vectors and colors), the hard range
+(`minimum`, `maximum`), the slider's soft range (`soft_minimum`,
+`soft_maximum`), `step`, `decimals`, `suffix`, `slider`, a menu's `items`
+(`"Linear|Catmull-Clark"`, or `"Points=0|Faces=2"` for other values), `text`
+for texts, `doc` for the tooltip, `hide_when` and `disable_when` conditions
+in Houdini's form (`{ shape != Custom }`, clauses in braces all hold, one
+braced group suffices), `join` to share a line with the next, `open` for a
+folder, `linear` for a linear-light color, `resettable`, and the host's `tag`.
+
+| `ParameterKind` | Row |
+| --- | --- |
+| `number`, `integer` | a field (a third of the line, so numbers align with vector columns) and an optional slider |
+| `vector` | 2–4 fields on one line |
+| `toggle` | a checkbox with its label beside it |
+| `menu` | the chosen item; a click lists the items |
+| `text`, `path` | a line of text; a path has a browse button (`on_action`) |
+| `color` | a swatch that opens `ColorEditor`, and R, G, B fields |
+| `button` | a button (`on_action`) |
+| `separator`, `folder` | a rule; a collapsible heading over the rows after it, remembered by name across `set_specs` |
+| `info` | read-only text |
+
+Numbers scrub: drag a field or its label (Shift ten times faster, Alt ten
+times finer; the label moves every component of a vector); the middle button
+opens Houdini's value ladder, a column of steps chosen by moving up and down,
+the value moved by left and right. A click types into the field: arithmetic
+(`2*3`, `(1+2)/4`, `2^3`, `pi/2`) and Maya's relative forms (`+=0.5`, `-=1`,
+`*=2`, `/=4`) are worked out, a trailing unit is ignored; Enter commits,
+Escape keeps the old value, Tab and Shift-Tab move through the fields, Up and
+Down nudge. Cmd/Ctrl-click, or the context menu's Revert to Default, puts the
+default back; the context menu also copies and pastes values and reverts
+every parameter. A value off its default gets an accent tick and its label in
+full ink, where Houdini sets it in bold. A doc shows as a tooltip, with the
+name, after the pointer rests on a row.
+
+`on_change` hears every change, live during a drag but at most once a frame;
+`on_begin` and `on_commit` bracket each edit (a drag, a typed value, a click),
+so a host makes one undo step of it. Values set from code report nothing, and
+while the user drags a row a refresh from the host does not pull it back.
+Only rows the window shows are drawn, so hundreds of parameters in a
+`ScrollView` stay cheap. One spec makes a standalone row; `set_margin(0)`
+fits it inside another layout.
 
 ## Themes, actions and popups
 

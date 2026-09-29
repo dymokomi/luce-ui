@@ -1,0 +1,479 @@
+#==============================================================================================
+#
+#   widgets/parameters/values - The public API: specs, values, visibility, conditions, signals
+#
+#==============================================================================================
+
+extend ParameterPanel:
+    ## Show `specs` instead: the rows are rebuilt with their defaults. Folders
+    ## the user closed stay closed when a folder of that name comes back.
+    pub mutating func set_specs(specs: const ParameterSpec[]) -> !:
+        if specs.length > 4096:
+            error(result.invalid, "a parameter panel takes at most 4096 parameters")
+        var rows = try alloc Row[specs.length] in memory.heap
+        var made: usize = 0
+        errdefer release_rows(rows, made)
+        var folder: i64 = -1
+        for spec in specs:
+            var row = try make_row(spec)
+            if spec.kind == ParameterKind.folder:
+                folder = (i64)made
+                row.open = spec.open and not self.remembered_closed(row.name.value)
+            else:
+                row.folder = folder
+            rows[made] = row
+            made += 1
+        self.drop_interaction()
+        release_rows(self.rows, self.total)
+        self.rows = rows
+        self.total = made
+        self.apply_conditions()
+        self.stale = true
+        self.box.value().invalidate()
+
+    ## How many parameters the panel holds.
+    pub func count() -> i64:
+        return (i64)self.total
+
+    ## The index of the parameter called `name`, or -1.
+    pub func find(name: str) -> i64:
+        for index in 0..<self.total:
+            if self.rows[index].name.value == name:
+                return (i64)index
+        return -1
+
+    ## The parameter's name, kind and the host's tag.
+    pub func name(index: i64) -> str!:
+        return (try self.row(index)).name.value
+
+    pub func kind(index: i64) -> ParameterKind!:
+        return (try self.row(index)).kind
+
+    pub func tag(index: i64) -> i64!:
+        return (try self.row(index)).tag
+
+    ## The first component: a number, a toggle's 0 or 1, a menu item's value.
+    pub func value(index: i64) -> f64!:
+        return (try self.row(index)).values[0]
+
+    ## Component `component` (0..3) of a vector or color.
+    pub func component(index: i64, component: i64) -> f64!:
+        let row = try self.row(index)
+        if component < 0 or component >= row.components:
+            error(result.invalid, "no such parameter component")
+        return row.values[(usize)component]
+
+    ## A text or path's text, an info row's text.
+    pub func text(index: i64) -> interop.Owned[str]!:
+        return (try self.row(index)).text.clone()
+
+    ## Set the first component from code, kept inside the range; no signal.
+    pub mutating func set_value(index: i64, value: f64) -> !:
+        try self.set_component(index, 0, value)
+
+    ## Set component `component` from code; no signal. A field being typed in
+    ## keeps its text, and a row under the user's drag keeps what the drag set.
+    pub mutating func set_component(index: i64, component: i64, value: f64) -> !:
+        let row = try self.row(index)
+        if component < 0 or component >= row.components:
+            error(result.invalid, "no such parameter component")
+        let kept = row_clamp(row, value)
+        if self.rows[(usize)index].values[(usize)component] == kept or self.held(index):
+            return
+        self.rows[(usize)index].values[(usize)component] = kept
+        self.apply_conditions()
+        self.box.value().invalidate()
+
+    ## Set a text, path or info row's text from code; no signal.
+    pub mutating func set_text(index: i64, text: str) -> !:
+        discard(try self.row(index))
+        if self.edit_row == index:
+            return
+        try replace_text(&self.rows[(usize)index].text, text)
+        self.apply_conditions()
+        self.box.value().invalidate()
+
+    ## Change what the row shows as its label (a button's caption).
+    pub mutating func set_label(index: i64, label: str) -> !:
+        discard(try self.row(index))
+        try replace_text(&self.rows[(usize)index].label, label)
+        self.stale = true
+        self.box.value().invalidate()
+
+    ## Offer `items` in a menu from now on (a choice that depends on another).
+    pub mutating func set_items(index: i64, items: str) -> !:
+        discard(try self.row(index))
+        try replace_text(&self.rows[(usize)index].items, items)
+        self.box.value().invalidate()
+
+    ## Change the default a reset puts back, and the changed marker compares with.
+    pub mutating func set_default(index: i64, component: i64, value: f64) -> !:
+        let row = try self.row(index)
+        if component < 0 or component >= row.components:
+            error(result.invalid, "no such parameter component")
+        self.rows[(usize)index].defaults[(usize)component] = row_clamp(row, value)
+        self.box.value().invalidate()
+
+    ## Hide the row, or show it again, whatever its conditions say.
+    pub mutating func set_hidden(index: i64, hidden: bool) -> !:
+        discard(try self.row(index))
+        if self.rows[(usize)index].hidden == hidden:
+            return
+        self.rows[(usize)index].hidden = hidden
+        self.stale = true
+        self.box.value().invalidate()
+
+    ## Dim the row and ignore its input, or enable it again.
+    pub mutating func set_enabled(index: i64, enabled: bool) -> !:
+        discard(try self.row(index))
+        self.rows[(usize)index].disabled = not enabled
+        self.box.value().invalidate()
+
+    ## Whether the row shows: not hidden, its conditions do not hide it and its folder is open.
+    pub func is_shown(index: i64) -> bool!:
+        discard(try self.row(index))
+        return self.visible((usize)index)
+
+    ## Whether the row takes input: neither it nor a condition disables it, nor the panel.
+    pub func is_enabled(index: i64) -> bool!:
+        let row = try self.row(index)
+        return not row.disabled and not row.disabled_when
+
+    ## Whether every component is at its default (a text at its default text).
+    pub func is_default(index: i64) -> bool!:
+        return at_default(try self.row(index))
+
+    ## Put the default back, as the context menu's Revert to Default does:
+    ## begin, change and commit are reported.
+    pub mutating func reset(index: i64) -> !:
+        discard(try self.row(index))
+        try self.revert((usize)index)
+
+    ## Whether the folder called `name` is open.
+    pub func folder_open(name: str) -> bool:
+        let index = self.find(name)
+        if index < 0:
+            return not self.remembered_closed(name)
+        return self.rows[(usize)index].open
+
+    ## Open or close the folder called `name`, as a click on its heading does;
+    ## remembered for a folder of that name that comes later.
+    pub mutating func set_folder_open(name: str, open: bool) -> !:
+        try self.remember_folder(name, open)
+        let index = self.find(name)
+        if index >= 0 and self.rows[(usize)index].kind == ParameterKind.folder:
+            self.rows[(usize)index].open = open
+            self.stale = true
+            self.box.value().invalidate()
+
+    ## The label column's width, as last placed.
+    pub func label_width() -> f64:
+        return self.label_column(self.placed_width if self.placed_width > 0.0 else 320.0)
+
+    ## Fix the label column at `width` points (a host restoring what the user
+    ## dragged it to); 0 fits it to the labels again.
+    pub mutating func set_label_width(width: f64) -> !:
+        if not math.is_finite(width) or width < 0.0 or width > 4096.0:
+            error(result.invalid, "a label column is 0..4096 points")
+        self.fixed_label = width
+        self.stale = true
+        self.box.value().invalidate()
+
+    ## Row `index`'s line in the panel's points, as last placed; empty while it does not show.
+    pub func row_bounds(index: i64) -> Rect!:
+        let row = try self.row(index)
+        if not row.shown:
+            return Rect()
+        return Rect(0.0, row.y, self.placed_width, row.height)
+
+    ## The field of `index`'s `component` in the panel's points; empty for rows without one.
+    pub func field_bounds(index: i64, component: i64) -> Rect!:
+        let row = try self.row(index)
+        if not row.shown or component < 0 or component >= self.field_count(row):
+            return Rect()
+        return self.field_rect(row, component)
+
+    ## Leave `margin` points left and right of the rows (half above and below):
+    ## 8 in a pane, 0 for a row set inside another layout.
+    pub mutating func set_margin(margin: f64) -> !:
+        if not math.is_finite(margin) or margin < 0.0 or margin > 64.0:
+            error(result.invalid, "a panel margin is 0..64 points")
+        self.margin = margin
+        self.stale = true
+        self.box.value().invalidate()
+
+    ## How long the pointer rests on a row before its tooltip shows, in seconds (0.6 unless set).
+    pub mutating func set_tip_delay(seconds: f64) -> !:
+        if not math.is_finite(seconds) or seconds < 0.0 or seconds > 60.0:
+            error(result.invalid, "a tooltip delay is 0..60 seconds")
+        self.tip_delay = (u64)(seconds * 1.0e9)
+
+    ## Whether a row's tooltip shows.
+    pub func is_tip_shown() -> bool:
+        return self.tip.value().is_open()
+
+    ## Whether a field is being typed in.
+    pub func is_editing() -> bool:
+        return self.edit_row >= 0
+
+    ## Send a change a drag left waiting now, rather than at the next frame.
+    pub mutating func flush() -> !:
+        let row = self.pending
+        if row < 0:
+            return
+        self.pending = -1
+        try self.emit(self.changed, row)
+
+    ## Called with the parameter's index after each change the user makes:
+    ## live while dragging, once per frame. Values set from code do not call it.
+    pub func on_change(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.changed.connect(callback)
+
+    ## Called before the first change of an edit: a drag, a typed value, a click.
+    pub func on_begin(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.began.connect(callback)
+
+    ## Called when the edit ends (the drag released, the value entered): one undo step.
+    pub func on_commit(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.committed.connect(callback)
+
+    ## Called when a button, or a path's browse button, is pressed.
+    pub func on_action(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.activated.connect(callback)
+
+    # -- Inside.
+
+    func row(index: i64) -> Row!:
+        if index < 0 or index >= (i64)self.total:
+            error(result.invalid, "no parameter at that index")
+        return self.rows[(usize)index]
+
+    ## Whether the user's hand is on row `index` (a drag, a change not yet
+    ## sent, an open color editor): a host refreshing from its model then
+    ## does not pull the value back from under the pointer.
+    func held(index: i64) -> bool:
+        if index == self.pending or index == self.color_row:
+            return true
+        return index == self.press_row and (self.scrubbing or self.laddering or self.press_part == part_slider)
+
+    func visible(index: usize) -> bool:
+        let row = self.rows[index]
+        if row.hidden or row.hidden_when:
+            return false
+        if row.folder >= 0:
+            let folder = self.rows[(usize)row.folder]
+            if not folder.open or folder.hidden or folder.hidden_when:
+                return false
+        return true
+
+    func enabled(index: usize) -> bool:
+        let row = self.rows[index]
+        if row.disabled or row.disabled_when or not self.box.value().is_enabled():
+            return false
+        if row.folder >= 0:
+            let folder = self.rows[(usize)row.folder]
+            return not folder.disabled and not folder.disabled_when
+        return true
+
+    func emit(signal: interop.Signal[i64], index: i64) -> !:
+        let outcome = signal.emit(index)
+        defer outcome.release()
+        try outcome.get()
+
+    ## Start an edit of `index`, ending another still open.
+    mutating func begin(index: i64) -> !:
+        if self.gesture == index:
+            return
+        try self.finish()
+        self.gesture = index
+        try self.emit(self.began, index)
+
+    ## A change to report: at the next frame, or now if another row waits.
+    mutating func touch(index: i64) -> !:
+        if self.pending >= 0 and self.pending != index:
+            try self.flush()
+        self.pending = index
+        self.apply_conditions()
+        self.box.value().invalidate()
+
+    ## End the edit under way: its waiting change, then its commit.
+    mutating func finish() -> !:
+        try self.flush()
+        let row = self.gesture
+        if row < 0:
+            return
+        self.gesture = -1
+        try self.emit(self.committed, row)
+
+    ## Set `values` on row `index` as one edit: begin, change, commit.
+    mutating func edit(index: usize, values: f64[4]) -> !:
+        var kept = values
+        for component in 0..<4:
+            kept[component] = row_clamp(self.rows[index], kept[component])
+        if kept == self.rows[index].values:
+            return
+        try self.begin((i64)index)
+        if index < self.total:
+            self.rows[index].values = kept
+        try self.touch((i64)index)
+        try self.finish()
+
+    ## Set the text of row `index` as one edit.
+    mutating func edit_text(index: usize, text: str) -> !:
+        if self.rows[index].text.value == text:
+            return
+        try self.begin((i64)index)
+        if index < self.total:
+            try replace_text(&self.rows[index].text, text)
+        try self.touch((i64)index)
+        try self.finish()
+
+    mutating func revert(index: usize) -> !:
+        let row = self.rows[index]
+        if row.kind == ParameterKind.text or row.kind == ParameterKind.path:
+            try self.edit_text(index, row.fallback.value)
+        else:
+            try self.edit(index, row.defaults)
+
+    ## Forget presses, typing and popups: the rows under them are going.
+    mutating func drop_interaction():
+        self.edit_row = -1
+        self.press_row = -1
+        self.press_part = part_none
+        self.scrubbing = false
+        self.laddering = false
+        self.hot_row = -1
+        self.pending = -1
+        self.gesture = -1
+        self.current = -1
+        self.tip_row = -1
+        self.popup_mode = popup_none
+        self.popup_row = -1
+        self.color_row = -1
+        self.box.value().set_text_input(false)
+        self.box.value().set_accepts_tab(false)
+        let popup_box = self.items_popup.value().layout()
+        popup_box.value().set_visible(false)
+        popup_box.release()
+        self.color_popup.value().hide()
+        self.tip.value().hide()
+        self.ladder.value().hide()
+
+    # -- Conditions.
+
+    ## Evaluate every row's hide and disable conditions against the values now.
+    mutating func apply_conditions():
+        var moved = false
+        for index in 0..<self.total:
+            let row = self.rows[index]
+            let hide = row.hide_when.value.length > 0 and self.holds(row.hide_when.value)
+            let dim = row.disable_when.value.length > 0 and self.holds(row.disable_when.value)
+            if hide != row.hidden_when:
+                moved = true
+            self.rows[index].hidden_when = hide
+            self.rows[index].disabled_when = dim
+        if moved:
+            self.stale = true
+
+    ## Whether `condition` holds: every clause of some group does.
+    func holds(condition: str) -> bool:
+        var clauses: parameter_text.Clause[16]
+        let count = parameter_text.clauses(condition, clauses)
+        if count == 0:
+            return false
+        var group = clauses[0].group
+        var holding = true
+        for index in 0..<count:
+            let clause = clauses[index]
+            if clause.group != group:
+                if holding:
+                    return true
+                group = clause.group
+                holding = true
+            if holding and not self.clause_holds(clause):
+                holding = false
+        return holding
+
+    ## One clause: the named parameter's value (or text) compared with the
+    ## clause's number, menu item label or on/off word.
+    func clause_holds(clause: parameter_text.Clause) -> bool:
+        let target = self.find(clause.name)
+        if target < 0:
+            return false
+        let row = self.rows[(usize)target]
+        if row.kind == ParameterKind.text or row.kind == ParameterKind.path or row.kind == ParameterKind.info:
+            let same = row.text.value == clause.value
+            return same if clause.comparison == 0 else (not same if clause.comparison == 1 else false)
+        var wanted = 0.0
+        let parsed = strings.parse_f64(clause.value) catch _:
+            recover math.infinity
+        if math.is_finite(parsed):
+            wanted = parsed
+        elif clause.value == "on" or clause.value == "true":
+            wanted = 1.0
+        elif clause.value == "off" or clause.value == "false":
+            wanted = 0.0
+        else:
+            let item = parameter_text.item_named(row.items.value, clause.value)
+            if item < 0:
+                return false
+            wanted = parameter_text.item_value(row.items.value, (usize)item)
+        return parameter_text.compare(row.values[0], clause.comparison, wanted)
+
+    # -- Remembered folders.
+
+    func remembered_closed(name: str) -> bool:
+        if name.length == 0:
+            return false
+        let text = self.closed.value
+        var at: usize = 0
+        while at + name.length + 2 <= text.length:
+            if text.bytes[at] == '|' and text.bytes[at + name.length + 1] == '|' and (str)text.bytes[at + 1..<at + 1 + name.length] == name:
+                return true
+            at += 1
+        return false
+
+    mutating func remember_folder(name: str, open: bool) -> !:
+        if name.length == 0 or self.remembered_closed(name) == not open:
+            return
+        var buffer = try alloc u8[self.closed.value.length + name.length + 2] in memory.heap
+        defer free(buffer) in memory.heap
+        var length: usize = 0
+        if open:
+            # Drop `|name|`, keeping the bar the next entry starts with.
+            let text = self.closed.value
+            var at: usize = 0
+            while at < text.length:
+                if text.bytes[at] == '|' and at + name.length + 1 < text.length and text.bytes[at + name.length + 1] == '|' and (str)text.bytes[at + 1..<at + 1 + name.length] == name:
+                    at += name.length + 1
+                    continue
+                buffer[length] = text.bytes[at]
+                length += 1
+                at += 1
+        else:
+            let text = self.closed.value
+            for byte in text.bytes:
+                buffer[length] = byte
+                length += 1
+            if length == 0:
+                buffer[length] = '|'
+                length += 1
+            for byte in name.bytes:
+                buffer[length] = byte
+                length += 1
+            buffer[length] = '|'
+            length += 1
+        try replace_text(&self.closed, (str)buffer[..<length])
+
+## Whether every component, or the text, is at its default.
+func at_default(row: Row) -> bool:
+    if not row.resettable:
+        return true
+    if row.kind == ParameterKind.text or row.kind == ParameterKind.path:
+        return row.text.value == row.fallback.value
+    if row.kind == ParameterKind.button or row.kind == ParameterKind.separator or row.kind == ParameterKind.folder or row.kind == ParameterKind.info:
+        return true
+    for component in 0..<(usize)row.components:
+        if row.values[component] != row.defaults[component]:
+            return false
+    return true

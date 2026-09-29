@@ -225,6 +225,12 @@ pub struct Layout:
     pub func bounds() -> Rect:
         return self.rectangle
 
+    ## The part of the box the window shows, in the same absolute points as
+    ## `bounds`: smaller inside a scroll view, so long content draws only the
+    ## rows that show. Empty when nothing of it shows.
+    pub func visible_bounds() -> Rect:
+        return self.clipping
+
     pub func is_focused() -> bool:
         return self.focused
 

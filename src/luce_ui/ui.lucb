@@ -201,6 +201,21 @@ import luce_ui.widgets.color_editor as color_editor
 pub type ColorEditor = color_editor.ColorEditor
 pub let color_editor_type = color_editor.color_editor_type
 
+import luce_ui.widgets.parameters as parameters
+import luce_ui.widgets.parameter_text as parameter_text
+pub type ParameterPanel = parameters.ParameterPanel
+pub type ParameterSpec = parameters.ParameterSpec
+pub type ParameterKind = parameters.ParameterKind
+pub let parameter_panel_type = parameters.parameter_panel_type
+pub let parameter_tip_type = parameters.parameter_tip_type
+pub let value_ladder_type = parameters.value_ladder_type
+
+## What `typed` into a numeric field comes to, as a parameter panel
+## reads it: arithmetic, or `+=`/`-=`/`*=`/`/=` applied to `current`; none
+## when it cannot be read.
+pub func evaluate_number(typed: str, current: f64) -> f64?:
+    return parameter_text.evaluate(typed, current)
+
 import luce_ui.icons as icons
 import luce_ui.widgets.icon as icon
 import luce_ui.widgets.pane_header as pane_header
