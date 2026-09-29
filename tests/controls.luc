@@ -18,6 +18,7 @@ from docking import docking, docking_layout
 from cursors import cursors
 from clicks import clicks
 from dialogs import dialogs, dialog_keys, number_submit, field_leaves, field_command_keys
+from scene_views import scene_views
 
 class Custom: Widget:
     let box: Layout
@@ -119,6 +120,7 @@ pub func main(arguments: list[str]) -> int!:
     frame.close()
     text_views()
     panes()
+    scene_views()
     commands_and_themes()
     menu_wheel()
     cyclic_editor()

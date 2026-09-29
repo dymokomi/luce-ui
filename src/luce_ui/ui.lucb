@@ -127,6 +127,9 @@ pub let curve_editor_type = curve_editor.curve_editor_type
 pub let text_type = text.text_type
 pub let spacer_type = spacer.spacer_type
 pub let viewport_type = viewport.viewport_type
+import luce_ui.widgets.scene_view as scene_view
+pub type SceneView = scene_view.SceneView
+pub let scene_view_type = scene_view.scene_view_type
 pub let vstack_type = vstack.vstack_type
 pub let hstack_type = hstack.hstack_type
 pub let application_type = application.application_type

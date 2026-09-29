@@ -14,6 +14,11 @@ def package "luce_ui_tests" {
         str version = "^0.1.0"
         str path = "../../luce-std"
     }
+    def dependency "luce-3d" {
+        str owner = "dymokomi"
+        str version = "^0.2.0"
+        str path = "../../luce-3d"
+    }
     def dependency "luce-window" {
         str owner = "dymokomi"
         str version = "^0.1.0"

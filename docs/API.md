@@ -19,6 +19,7 @@ All objects and callbacks belong to the main thread.
 | `Icon` | `Icon(kind, font=...)`; vector symbol sized to its font, `set_kind`, `layout` |
 | `SplitView` | Two widgets, `axis`, preferred `fraction`, `handle_width`; `fraction`, `set_fraction`, `layout` |
 | `Viewport` | Preferred minimum width/height; `on_render`, `layout` |
+| `SceneView` | `SceneView(scene, camera, renderer=none, width=320, height=240)`: a Viewport drawing a luce-3d scene; `scene`, `camera`, `renderer`, `layout` |
 | `Application` | Content, title, dimensions, optional `game`/`fps`/`fullscreen`; `run`, `stop`, `close`, `on_frame`, `set_game`, `set_fps`, `set_fullscreen`, `set_commands`, `command`, `layout`, `dispatch`, `render` |
 | `Raster` | Mutable RGBA surface; `set_pixel`, `put`, `fill`, `fill_rect`, `dab`, `draw`, `color_at` |
 | `Painter` | Checked GPU target; `rectangle(rect, color, opacity=1.0)`, `triangle(a, b, c, color)`, `line(a, b, width, color)`, `text`, `target` |
@@ -74,7 +75,7 @@ changes take effect on the next traversal.
 `Viewport.on_render` receives a checked standard `gpu.RenderTarget` for that
 widget. Its viewport and clipping cannot escape ancestor bounds. Retained targets,
 painters and bound target methods expire when their frame ends. This is the
-extension point for the separate 3D package. Applications use `run`; the explicit
+extension point `SceneView` uses to host a luce-3d scene. Applications use `run`; the explicit
 `layout`, `dispatch` and `render` operations support embedding and deterministic
 tests. `on_frame` supplies elapsed seconds for animation. `run(frame_limit=0)`
 continues until stop/close or a native close request. `close` requests shutdown

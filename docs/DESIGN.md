@@ -23,7 +23,7 @@ without pretending to be a widget animation; it is still the same loop.
 
 `Viewport.on_render` receives a standard GPU render target scoped to its widget
 and clipped to its ancestors. Retaining it never extends the recording lifetime.
-The optional 3D adapter connects this callback; neither application code nor the
+`SceneView` connects this callback to a luce-3d `Renderer`; neither application code nor the
 UI package acquires a Metal or Vulkan handle.
 
 Standard `fonts` owns native faces; Font owns a bounded coverage cache; standard
