@@ -9,6 +9,10 @@ from luce_ui.font import Font
 from luce_ui.text.style import EditorTheme
 import luce_ui.result as result
 
+## Compact spacing defaults, in logical points; explicit layout sizes stay literal.
+pub let default_spacing: f64 = 8.0
+pub let default_padding: f64 = 12.0
+
 pub struct Theme:
     pub var background: gpu.Color = gpu.Color(0.012, 0.017, 0.027)
     pub var panel: gpu.Color = gpu.Color(0.021, 0.028, 0.041)
@@ -66,8 +70,9 @@ pub struct Theme:
         if not math.is_finite(self.control_radius) or self.control_radius < 0.0 or self.control_radius > 32.0:
             error(result.invalid, "control radius must be in 0..32 points")
 
+    ## Keep a small-font row tall enough for a checkbox and its border.
     pub func row_height(font: interop.Reference[Font]) -> f64:
-        return math.ceil(font.value().line_height() * self.control_lines)
+        return math.max(16.0, math.ceil(font.value().line_height() * self.control_lines))
 
     pub func inset(font: interop.Reference[Font]) -> f64:
         return math.ceil(font.value().advance() * self.inset_cells)

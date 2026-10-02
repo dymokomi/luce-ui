@@ -77,13 +77,16 @@ func close_bitmap(bitmap: fonts.Bitmap):
 
 let font_state_type: interop.Type[FontState] = interop.Type[FontState]("UI font cache", FontState.close, FontState.trace, closeable = true, main_thread = true)
 
+## The shared UI default, in logical points.
+pub let default_font_size: f64 = 12.0
+
 ## An installed monospace font. Size is measured in logical points; rasterization
 ## follows the target's backing scale, so Retina text retains its intended size.
 ## Use one shared Font across controls to keep typography consistent.
 pub struct Font:
     var state: interop.Reference[FontState]
 
-    pub func init(size: f64 = 14.0, family: str = "") -> !:
+    pub func init(size: f64 = default_font_size, family: str = "") -> !:
         var reservation = try interop.Reservation[FontState](font_state_type)
         errdefer reservation.cancel()
         var face = try fonts.Face(size, family)
@@ -112,7 +115,7 @@ pub struct Font:
         return face.ascent + face.descent
 
     pub func line_height() -> f64:
-        return math.ceil(self.height() + 5.0)
+        return math.ceil(self.height() + self.size() / 3.0)
 
     pub func measure(text: str) -> f64!:
         return try self.state.value().face.measure(text)

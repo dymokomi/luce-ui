@@ -53,7 +53,7 @@ pub struct SectionHeader: Widget:
         return was
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
-        return result.success[Size](Size(120.0, header_height))
+        return result.success[Size](Size(120.0, self.box.value().theme().row_height(self.font) + 2.0))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
@@ -101,7 +101,6 @@ pub struct SectionHeader: Widget:
 
 pub let section_header_type: interop.Type[SectionHeader] = interop.Type[SectionHeader]("SectionHeader", SectionHeader.close, SectionHeader.trace, closeable = true, main_thread = true)
 
-let header_height: f64 = 26.0
 ## How long a section takes to open or close, in nanoseconds (180 ms).
 let animation: f64 = 180000000.0
 

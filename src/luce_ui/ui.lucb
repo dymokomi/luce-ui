@@ -103,6 +103,7 @@ pub type Application = application.Application
 
 import luce_ui.font as font
 pub type Font = font.Font
+pub let default_font_size = font.default_font_size
 pub let font_type = font.font_type
 pub let busy: ErrorCode = result.busy
 pub let button_type = button.button_type
@@ -160,6 +161,8 @@ pub type TextChange = document.TextChange
 
 import luce_ui.theme as theme
 pub type Theme = theme.Theme
+pub let default_spacing = theme.default_spacing
+pub let default_padding = theme.default_padding
 
 import luce_ui.command as command
 pub type Command = command.Command

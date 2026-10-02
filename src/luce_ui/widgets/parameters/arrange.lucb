@@ -10,7 +10,7 @@ let join_limit: usize = 8
 extend ParameterPanel:
     ## One line's height: a text line, as every control in the theme is.
     func row_height() -> f64:
-        return math.max(20.0, self.box.value().theme().row_height(self.font))
+        return self.box.value().theme().row_height(self.font)
 
     ## A folder heading's line, a little taller so sections read apart.
     func folder_height() -> f64:

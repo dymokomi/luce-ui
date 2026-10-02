@@ -63,7 +63,47 @@ func raster_surface() -> unit!:
     copied.close()
     grown.close()
 
+## Compact defaults reach automatic fonts, layout and hit targets; larger user
+## fonts still fit their containing controls.
+func compact_layout() -> unit!:
+    let font = Font()
+    assert(font.size() == 12.0)
+    let button = Button("Save")
+    let larger = Button("Save", font = Font(14.0))
+    assert(button.measure(Constraints()).width < larger.measure(Constraints()).width)
+    assert(button.measure(Constraints()).height < larger.measure(Constraints()).height)
+    let small = ui.Checkbox("Small", font = Font(8.0))
+    assert(small.measure(Constraints()).height >= 16.0)
+    let first = Text("First")
+    let second = Text("Second")
+    let tall = Button("Large", font = Font(24.0))
+    let shelf = ui.Shelf([tall])
+    let content = Text("Dialog content")
+    let dialog = ui.Dialog([content])
+    let stack = VStack([first, second, button, small, shelf, dialog])
+    let app = Application(stack)
+    app.layout(640.0, 480.0)
+    let a = first.layout().bounds()
+    let b = second.layout().bounds()
+    assert(b.y - a.y - a.height == ui.default_spacing)
+    assert(shelf.layout().bounds().height >= tall.layout().bounds().height)
+    let counter = Counter()
+    let connection = button.on_click(counter.add)
+    let bounds = button.layout().bounds()
+    let x = bounds.x + bounds.width * 0.5
+    let y = bounds.y + bounds.height * 0.5
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x, y = y))
+    assert(counter.count == 1)
+    dialog.open()
+    app.layout(640.0, 480.0)
+    assert(content.layout().bounds().x - dialog.layout().bounds().x == ui.default_padding)
+    assert(content.layout().bounds().y - dialog.layout().bounds().y == ui.default_padding)
+    connection.disconnect()
+    app.close()
+
 pub func main(arguments: list[str]) -> int!:
+    compact_layout()
     raster_surface()
     contextual()
     hover()

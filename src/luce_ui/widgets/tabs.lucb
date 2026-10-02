@@ -69,7 +69,7 @@ pub struct TabBar: Widget:
         var width = 0.0
         for index in 0..<self.titles.length:
             width += self.tab_width(index) + 2.0
-        return result.success[Size](Size(width, bar_height))
+        return result.success[Size](Size(width, self.box.value().theme().row_height(self.font) + 4.0))
 
     pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
@@ -120,8 +120,6 @@ pub struct TabBar: Widget:
             self.titles[index].trace(visit, context)
 
 pub let tab_bar_type: interop.Type[TabBar] = interop.Type[TabBar]("TabBar", TabBar.close, TabBar.trace, closeable = true, main_thread = true)
-
-let bar_height: f64 = 30.0
 
 ## A tabbed panel: a bar of titles over one page at a time. Pages are any
 ## widgets; the selected one is shown, the rest leave the layout.

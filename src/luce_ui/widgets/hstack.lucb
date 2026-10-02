@@ -1,5 +1,6 @@
 ## The HStack container widget.
 import gpu
+from luce_ui.theme import default_spacing
 import interop
 import math
 import ownership
@@ -13,7 +14,7 @@ from luce_ui.painter import Painter
 pub struct HStack: Widget:
     let box: interop.Reference[Layout]
 
-    pub func init(children: const interop.Interface[Widget][], spacing: f64 = 12.0,
+    pub func init(children: const interop.Interface[Widget][], spacing: f64 = default_spacing,
                   padding: f64 = 0.0, alignment: layout.Alignment = layout.Alignment.stretch) -> !:
         let box = try layout.make_layout(layout.Axis.horizontal, spacing, padding, alignment)
         errdefer box.release()

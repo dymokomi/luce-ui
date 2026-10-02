@@ -1,5 +1,6 @@
 ## The Dialog widget: a centered, non-modal floating card of rows that the host opens and hides.
 import gpu
+from luce_ui.theme import default_spacing, default_padding
 import interop
 import math
 import ownership
@@ -33,7 +34,7 @@ pub struct Dialog: Widget:
     var grab_offset: Point
 
     ## `width` is the card's fixed width in points (Compositor uses 340–460).
-    pub func init(children: const interop.Interface[Widget][], width: f64 = 380.0, spacing: f64 = 12.0, padding: f64 = 20.0) -> !:
+    pub func init(children: const interop.Interface[Widget][], width: f64 = 380.0, spacing: f64 = default_spacing, padding: f64 = default_padding) -> !:
         if not math.is_finite(width) or width < 40.0 or width > 4096.0:
             error(result.invalid, "a dialog needs a width between 40 and 4096 points")
         let box = try layout.make_layout(layout.Axis.vertical, spacing, padding, layout.Alignment.stretch)

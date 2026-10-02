@@ -52,12 +52,17 @@ future work. MIT or Apache-2.0, at your option.
 Build sibling `luce-base` and `luce` checkouts with `python tools/build_windows.py` in each compiler repository. Run `python tests/run.py` in this repository; the runner selects the sibling Windows executables.
 For real windows and rendering, install the Vulkan SDK and start a fresh terminal with `VULKAN_SDK` set. The sibling `luce-demos` UI and sphere applications exercise Win32/Vulkan presentation. CPU tests run in hosted Windows CI; GPU smoke tests require an interactive desktop and Vulkan hardware.
 
-Typography is shared explicitly: `let font = Font(size = 14.0)`, then
+Typography is shared explicitly: `let font = Font()`, then
 `Button("Save", font = font)` and `TextEditor(source, font = font)`. `Font` loads an
 installed monospace family (`family = "Menlo"`, for example); omitting the family
 selects Menlo on macOS, Consolas on Windows, and the fontconfig monospace family
-on Linux. All text controls use the same 14-point default. Font metrics also drive
-editor hit testing, caret positions and line spacing.
+on Linux. All text controls use the same 12-point default (`ui.default_font_size`).
+Font metrics also drive editor hit testing, caret positions and line spacing;
+leading is one third of the font size.
+Stacks use an 8-point gap (`ui.default_spacing`), and dialogs use that gap with
+12-point padding (`ui.default_padding`). Buttons, fields, menus, tab bars and
+section headings size themselves from the font. Explicit font sizes and layout
+spacing remain logical points.
 
 The UI owns a bounded cache of grayscale text runs. Standard `fonts` owns native
 font resources; standard `gpu` uploads coverage and draws it through the selected
