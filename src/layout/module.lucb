@@ -1,0 +1,150 @@
+#==============================================================================================
+#
+#   layout - Boxes, the widget tree, and input routing
+#
+#   DESCRIPTION:
+#       Every widget owns one Layout box: its size limits, flex, alignment, visibility,
+#       focus and pointer behavior, drop area and theme. The Tree gathers the widgets'
+#       boxes into one flat, parent-linked list each frame, places them (stacks, splits,
+#       custom arrangements), routes input to them (hit testing, capture, focus, popups,
+#       menus, drags) and draws them in order. Fragments, in ORDER:
+#
+#       module.lucb         shared types: geometry, constraints, axes, events, the Widget interface
+#       box.lucb            the Layout box a widget owns
+#       tree.lucb           the Tree: its entries, lifetime and shared lookups
+#       tree_arrange.lucb   gathering the tree, measuring, placing boxes and popups
+#       tree_focus.lucb     keyboard focus, Tab order, focus returning from popups
+#       tree_dispatch.lucb  routing input: pointer, keys, menus, dialogs, hover, cursors
+#       tree_draw.lucb      drawing boxes in order, popups over them with shadows
+#       drops.lucb          drags from other applications: the payload, drop areas
+#       placement.lucb      placing a box's children: stacks, splits and custom arrangements
+#
+#==============================================================================================
+
+from theme import Theme
+from painter import Painter
+import splitting
+import luce_gpu.gpu
+import luce_window.input
+import interop
+import luce_std.math
+import memory
+import ownership
+import thread
+import result
+import geometry
+from arrangement import Arrangement
+from cursor import CursorSource
+
+pub type Rect = gpu.Rect
+
+pub type Point = geometry.Point
+pub type Size = geometry.Size
+
+## The space offered to a measuring widget, in points.
+pub struct Constraints:
+    pub var width: f64 = 16384.0
+    pub var height: f64 = 16384.0
+
+## How a box lays out its children: `overlay` gives each the whole content area,
+## one over another; `horizontal` and `vertical` stack them in a row or column.
+pub enum Axis as u8:
+    overlay = 0
+    horizontal = 1
+    vertical = 2
+
+## Where children sit across a stack's axis; `stretch` fills it.
+pub enum Alignment as u8:
+    start = 0
+    center = 1
+    end = 2
+    stretch = 3
+
+## Where a popup goes: `below` its parent (flipped above when it does not fit),
+## at the `point` given to `set_popup_point`, centered near the `window_top`, or
+## at the `window_center`. Every placement stays inside the window.
+pub enum PopupPlacement as u8:
+    below = 0
+    point = 1
+    window_top = 2
+    window_center = 3
+
+## Coordinates are local to the receiving widget. Cancellation clears any press.
+pub struct Event:
+    pub var kind: input.EventKind
+    pub var key: input.Key
+    pub var x: f64
+    pub var y: f64
+    pub var button: i64
+    pub var repeated: bool
+    pub var shift: bool
+    pub var control: bool
+    pub var alt: bool
+    pub var meta: bool
+    pub var codepoint: i64
+    pub var inside: bool
+    pub var cancelled: bool
+    ## Menu triggers receive this request when an open menu session changes peer.
+    pub var menu_requested: bool
+    pub var scroll_x: f64
+    pub var scroll_y: f64
+    pub var scroll_unit: input.ScrollUnit
+    ## Stylus pressure 0..1 for pointer events; zero from a mouse.
+    pub var pressure: f64
+    ## What sent a pointer event, and a pen's tilt (degrees -90..90, x right,
+    ## y down the screen), azimuth (degrees clockwise from the right), altitude
+    ## (90 upright), barrel rotation (degrees clockwise) and airbrush wheel
+    ## (-1..1), as luce-window reports them (its docs/PEN.md).
+    pub var pointer_kind: input.PointerKind
+    pub var tilt_x: f64
+    pub var tilt_y: f64
+    pub var azimuth: f64
+    pub var altitude: f64
+    pub var rotation: f64
+    pub var tangential: f64
+
+## layout returns one retained reference to the same Layout for this widget's
+## lifetime. A measure/draw/event implementation may fail or reenter application
+## code. The framework invokes it under an active interface guard.
+pub interface Widget:
+    func layout() -> interop.Reference[Layout]
+
+    func measure(available: Constraints) -> interop.Outcome[Size]
+
+    mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]
+
+    mutating func event(event: Event) -> interop.Outcome[unit]
+
+var serial: u64 = 0
+var revision: u64 = 0
+var wake: u64 = 0
+
+## The layout epoch: it moves whenever any box or the tree changes, so a
+## frame loop can tell a redraw is due without asking every widget.
+pub func epoch() -> u64:
+    return revision
+
+## Move the epoch on: something changed that the next frame must show.
+func bump_revision():
+    revision = revision +? 1 else trap("UI revision exhausted")
+
+## Ask for a frame at `deadline` (a `time.now()` moment) even if nothing
+## changes before then: a press waiting to become a hold.
+pub func wake_at(deadline: u64):
+    if wake == 0 or deadline < wake:
+        wake = deadline
+
+## The pending wake-up moment; 0 when none.
+pub func wake_deadline() -> u64:
+    return wake
+
+## Whether the wake-up moment has come, forgetting it if so: the frame that
+## follows draws (a caret's blink, a press becoming a hold).
+pub func take_due_wake(now: u64) -> bool:
+    if wake != 0 and wake <= now:
+        wake = 0
+        return true
+    return false
+
+## Layout owns child interfaces and geometry, never control-specific state.
+## Parent/application membership is weak identity, so trees have no parent cycle.

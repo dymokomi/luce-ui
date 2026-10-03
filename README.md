@@ -9,7 +9,7 @@ portable tests and font backend; native window presentation is still pending.
 A Luce application uses public imports and normal construction:
 
 ```luce
-from ui import Application, Button, Text, VStack
+from luce_ui.ui import Application, Button, Text, VStack
 
 pub func main(arguments: list[str]) -> int!:
     let button = Button("Continue")

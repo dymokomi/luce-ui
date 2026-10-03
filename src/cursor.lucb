@@ -1,0 +1,10 @@
+## The cursor policy a widget can attach to its Layout to choose the pointer
+## shape by position.
+import luce_window.input
+from geometry import Point
+
+## Optional hit-dependent cursor policy. Coordinates are local to the widget;
+## capture keeps a resize/drag cursor active when the pointer crosses its bounds.
+## Queries must not change layout, dispatch events or draw.
+pub interface CursorSource:
+    func cursor(position: Point, captured: bool) -> input.Cursor

@@ -1,14 +1,14 @@
-import gpu
-import input
+import luce_gpu.gpu
+import luce_window.input
 import interop
-import math
+import luce_std.math
 import memory
 import ownership
 import thread
-import window
-import ui
+import luce_window.window
+import luce_ui.ui
 import layout_cycles
-from ui import Widget, Button, Spacer, VStack, HStack, Layout, Size, Application, Painter, Rect, Event, Font, Panel, DStack
+from luce_ui.ui import Widget, Button, Spacer, VStack, HStack, Layout, Size, Application, Painter, Rect, Event, Font, Panel, DStack
 
 struct Tracker: memory.Allocator:
     var upstream: memory.Allocator

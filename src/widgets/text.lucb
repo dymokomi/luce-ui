@@ -1,0 +1,96 @@
+## The Text widget.
+import luce_gpu.gpu
+import interop
+import luce_std.math
+import ownership
+import layout
+import result
+import text.cells as cell_widths
+from layout import Widget, Layout, Size, Constraints, Event
+from painter import Painter
+from font import Font, selected_font
+
+## A one-line text label in the theme's foreground, or muted; it takes no input.
+pub struct Text: Widget:
+    let box: interop.Reference[Layout]
+    var caption: interop.Owned[str]
+    let font: interop.Reference[Font]
+    ## Drawn in the theme's muted color: a label beside a value, metadata.
+    var muted: bool
+
+    pub func init(text: str, font: interop.Reference[Font]? = none, muted: bool = false) -> !:
+        var selected = try selected_font(font)
+        errdefer selected.release()
+        discard(try selected.value().measure(text))
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_shrink(vertical = 0.0)
+        self.caption = try interop.copy_text(text)
+        self.box = box
+        self.font = selected
+        self.muted = muted
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func text() -> interop.Owned[str]:
+        return self.caption.clone()
+
+    pub mutating func set_text(text: str) -> !:
+        discard(try self.font.value().measure(text))
+        let replacement = try interop.copy_text(text)
+        let previous_caption = self.caption
+        self.caption = replacement
+        previous_caption.release()
+        self.box.value().invalidate()
+
+    pub mutating func set_muted(muted: bool):
+        if muted == self.muted:
+            return
+        self.muted = muted
+        self.box.value().invalidate()
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let width = self.font.value().measure(self.caption.value) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        return result.success[Size](Size(width, self.font.value().line_height()))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let y = math.max(0.0, (size.height - self.font.value().height()) * 0.5)
+        let color = self.box.value().theme().muted if self.muted else self.box.value().theme().foreground
+        let caption = self.caption.value
+        if (try self.font.value().measure(caption)) <= size.width + 0.5:
+            try painter.text(caption, 0.0, y, color = color, font = self.font)
+            return
+        # Laid out narrower than it is: as much as fits, then an ellipsis, so
+        # it never runs into what is beside it.
+        let ellipsis = "…"
+        let room = size.width - (try self.font.value().measure(ellipsis))
+        if room <= 0.0:
+            return
+        let kept = cell_widths.prefix(caption, (usize)((room + 0.001) / self.font.value().advance()))
+        try painter.text(kept, 0.0, y, color = color, font = self.font)
+        try painter.text(ellipsis, try self.font.value().measure(kept), y, color = color, font = self.font)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.font.release()
+        self.caption.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+        self.caption.trace(visit, context)
+
+pub let text_type: interop.Type[Text] = interop.Type[Text]("Text", Text.close, Text.trace, closeable = true, main_thread = true)

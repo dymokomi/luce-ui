@@ -1,0 +1,280 @@
+#==============================================================================================
+#
+#   ui - The luce-ui export
+#
+#   DESCRIPTION:
+#       The one module the package exports (package.prisma: export "ui"). It re-exports
+#       the public widget, layout, drawing, docking and application types together with
+#       their interop type descriptors, so Base and Luce consumers import a single name.
+#       The few functions here are thin wrappers over the icon set and HSB conversion.
+#
+#==============================================================================================
+
+import luce_gpu.gpu
+import interop
+import layout
+import luce_window.input
+import platform
+import cursor
+pub type Cursor = input.Cursor
+pub type CursorSource = cursor.CursorSource
+import painter
+import result
+import widgets.text
+import widgets.button
+import widgets.slider
+import widgets.shelf
+import widgets.scroll_view
+import widgets.rule
+import widgets.checkbox
+import widgets.dialog
+import widgets.hsb_field
+import widgets.shortcut_field
+import widgets.shaded_field
+import widgets.color_wheel
+import widgets.accordion
+import widgets.tabs
+import widgets.text_field
+import widgets.number_field
+import widgets.curve_editor
+import widgets.spacer
+import widgets.viewport
+import widgets.vstack
+import widgets.hstack
+
+pub let invalid: ErrorCode = result.invalid
+
+## Whether the program runs on macOS, whose keys and words differ.
+pub func on_macos() -> bool:
+    return platform.macos
+
+## The primary modifier's name as the platform says it: "Cmd" on macOS, "Ctrl" elsewhere.
+pub func primary_key_name() -> str:
+    return "Cmd" if platform.macos else "Ctrl"
+
+## The key that clears a selection: macOS's delete (Backspace), Delete elsewhere.
+pub func clear_key() -> input.Key:
+    return input.Key.backspace if platform.macos else input.Key.delete
+pub type Widget = layout.Widget
+pub type Layout = layout.Layout
+pub type Size = layout.Size
+pub type Point = layout.Point
+pub type Constraints = layout.Constraints
+pub type Event = layout.Event
+pub type Axis = layout.Axis
+pub type Alignment = layout.Alignment
+pub type PopupPlacement = layout.PopupPlacement
+pub type Rect = layout.Rect
+pub type Painter = painter.Painter
+import raster
+pub type Raster = raster.Raster
+pub let raster_type = raster.raster_type
+import image
+pub type Image = image.Image
+pub let image_type = image.image_type
+pub type Text = text.Text
+pub type Button = button.Button
+pub type Slider = slider.Slider
+pub type Shelf = shelf.Shelf
+pub type ScrollView = scroll_view.ScrollView
+pub type Rule = rule.Rule
+pub type Checkbox = checkbox.Checkbox
+pub type Dialog = dialog.Dialog
+pub type HsbField = hsb_field.HsbField
+pub type HueStrip = hsb_field.HueStrip
+pub type ShortcutField = shortcut_field.ShortcutField
+pub type ShadedField = shaded_field.ShadedField
+pub type ColorWheel = color_wheel.ColorWheel
+pub type Accordion = accordion.Accordion
+pub type SectionHeader = accordion.SectionHeader
+pub type Tabs = tabs.Tabs
+pub type TabBar = tabs.TabBar
+pub type TextField = text_field.TextField
+pub type NumberField = number_field.NumberField
+pub type ButtonStyle = button.ButtonStyle
+pub type CurveEditor = curve_editor.CurveEditor
+pub type Spacer = spacer.Spacer
+pub type Viewport = viewport.Viewport
+pub type VStack = vstack.VStack
+pub type HStack = hstack.HStack
+
+import application
+pub type Application = application.Application
+
+import font
+pub type Font = font.Font
+pub let default_font_size = font.default_font_size
+pub let font_type = font.font_type
+pub let busy: ErrorCode = result.busy
+pub let button_type = button.button_type
+pub let slider_type = slider.slider_type
+pub let shelf_type = shelf.shelf_type
+pub let scroll_view_type = scroll_view.scroll_view_type
+pub let rule_type = rule.rule_type
+pub let checkbox_type = checkbox.checkbox_type
+pub let dialog_type = dialog.dialog_type
+pub let hsb_field_type = hsb_field.hsb_field_type
+pub let hue_strip_type = hsb_field.hue_strip_type
+pub let shortcut_field_type = shortcut_field.shortcut_field_type
+pub let shaded_field_type = shaded_field.shaded_field_type
+pub let color_wheel_type = color_wheel.color_wheel_type
+pub let accordion_type = accordion.accordion_type
+pub let section_header_type = accordion.section_header_type
+pub let tabs_type = tabs.tabs_type
+pub let tab_bar_type = tabs.tab_bar_type
+pub let text_field_type = text_field.text_field_type
+pub let number_field_type = number_field.number_field_type
+pub let curve_editor_type = curve_editor.curve_editor_type
+pub let text_type = text.text_type
+pub let spacer_type = spacer.spacer_type
+pub let viewport_type = viewport.viewport_type
+import widgets.scene_view
+pub type SceneView = scene_view.SceneView
+pub let scene_view_type = scene_view.scene_view_type
+pub let vstack_type = vstack.vstack_type
+pub let hstack_type = hstack.hstack_type
+pub let application_type = application.application_type
+pub let painter_type = painter.painter_type
+pub let layout_type = layout.layout_type
+
+import widgets.text_editor
+import text.style
+pub type TextEditor = text_editor.TextEditor
+pub type Highlight = style.Highlight
+pub type EditorTheme = style.EditorTheme
+pub let text_editor_type = text_editor.text_editor_type
+
+import widgets.list_view
+pub type ListView = list_view.ListView
+pub type ListItem = list_view.ListItem
+pub let list_view_type = list_view.list_view_type
+
+import widgets.table_view
+pub type TableView = table_view.TableView
+pub type TableColumn = table_view.TableColumn
+pub type TableCell = table_view.TableCell
+pub type CellAlign = table_view.CellAlign
+pub let table_view_type = table_view.table_view_type
+
+import text.document
+pub type TextChange = document.TextChange
+
+import theme
+pub type Theme = theme.Theme
+pub let default_spacing = theme.default_spacing
+pub let default_padding = theme.default_padding
+
+import command
+pub type Command = command.Command
+pub type Shortcut = command.Shortcut
+pub let command_type = command.command_type
+import widgets.toolbar
+pub type Toolbar = toolbar.Toolbar
+pub let toolbar_type = toolbar.toolbar_type
+
+import widgets.menu
+pub type Menu = menu.Menu
+pub let menu_type = menu.menu_type
+
+import widgets.pane
+pub type Pane = pane.Pane
+pub let pane_type = pane.pane_type
+import widgets.split_view
+pub type SplitView = split_view.SplitView
+pub let split_view_type = split_view.split_view_type
+
+import text.folding
+pub type FoldRange = folding.FoldRange
+
+import widgets.context_menu
+pub type ContextMenu = context_menu.ContextMenu
+pub let context_menu_type = context_menu.context_menu_type
+import widgets.command_palette
+pub type CommandPalette = command_palette.CommandPalette
+pub let command_palette_type = command_palette.command_palette_type
+import widgets.text_prompt
+pub type TextPrompt = text_prompt.TextPrompt
+pub let text_prompt_type = text_prompt.text_prompt_type
+
+import widgets.confirm_dialog
+pub type ConfirmDialog = confirm_dialog.ConfirmDialog
+pub let confirm_dialog_type = confirm_dialog.confirm_dialog_type
+
+import widgets.color_editor
+pub type ColorEditor = color_editor.ColorEditor
+pub let color_editor_type = color_editor.color_editor_type
+
+import widgets.parameters
+import widgets.parameter_text
+pub type ParameterPanel = parameters.ParameterPanel
+pub type ParameterSpec = parameters.ParameterSpec
+pub type ParameterKind = parameters.ParameterKind
+pub let parameter_panel_type = parameters.parameter_panel_type
+pub let parameter_tip_type = parameters.parameter_tip_type
+pub let value_ladder_type = parameters.value_ladder_type
+
+## What `typed` into a numeric field comes to, as a parameter panel
+## reads it: arithmetic, or `+=`/`-=`/`*=`/`/=` applied to `current`; none
+## when it cannot be read.
+pub func evaluate_number(typed: str, current: f64) -> f64?:
+    return parameter_text.evaluate(typed, current)
+
+import icons
+import widgets.icon
+import widgets.pane_header
+pub type IconKind = icons.IconKind
+
+## Draw the luciaos-assets icon called `name` into `bounds` of `target`, in `color`.
+pub func draw_icon(target: interop.View[gpu.RenderTarget], name: str, bounds: gpu.Rect, color: gpu.Color) -> !:
+    try icons.draw_icon(target, name, bounds, color)
+
+## An sRGB color from hue (0..360), saturation and brightness (0..1).
+pub func hsb_to_rgb(hue: f64, saturation: f64, brightness: f64) -> gpu.Color:
+    return hsb_field.hsb_to_rgb(hue, saturation, brightness)
+
+## The hue of an sRGB color, 0..360 (0 for grays).
+pub func hue_of(color: gpu.Color) -> f64:
+    var h = 0.0
+    var s = 0.0
+    var b = 0.0
+    hsb_field.rgb_to_hsb(color, &h, &s, &b)
+    return h
+
+## The saturation of an sRGB color, 0..1.
+pub func saturation_of(color: gpu.Color) -> f64:
+    var h = 0.0
+    var s = 0.0
+    var b = 0.0
+    hsb_field.rgb_to_hsb(color, &h, &s, &b)
+    return s
+
+## The brightness of an sRGB color, 0..1.
+pub func brightness_of(color: gpu.Color) -> f64:
+    var h = 0.0
+    var s = 0.0
+    var b = 0.0
+    hsb_field.rgb_to_hsb(color, &h, &s, &b)
+    return b
+
+## Whether `name` is an icon in the set.
+pub func icon_known(name: str) -> bool:
+    return icons.known(name)
+
+pub type Icon = icon.Icon
+pub let icon_type = icon.icon_type
+pub type PaneHeader = pane_header.PaneHeader
+pub let pane_header_type = pane_header.pane_header_type
+
+import widgets.panel
+import widgets.dstack
+import docking.model as docking_model
+import docking.state as docking_state
+import arrangement
+pub type Panel = panel.Panel
+pub let panel_type = panel.panel_type
+pub type DStack = dstack.DStack
+pub let dstack_type = dstack.dstack_type
+pub type DockPosition = docking_model.DockPosition
+pub type DockRequest = docking_state.DockRequest
+pub let dock_request_type = docking_state.dock_request_type
+pub type Arrangement = arrangement.Arrangement

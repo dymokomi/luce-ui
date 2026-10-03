@@ -1,0 +1,61 @@
+## The Shelf widget: a pane's bottom toolbar strip.
+import luce_gpu.gpu
+import interop
+import luce_std.math
+import ownership
+import layout
+import result
+from layout import Widget, Layout, Size, Constraints, Event
+from painter import Painter
+
+## A pane's bottom toolbar, after eleusis: a compact shelf at least 24 points tall on the
+## sunken surface with a one-point rule of the backdrop above it, its children
+## (plain icon buttons and a Spacer, by convention) in a row two points apart,
+## centered vertically. Below a list a bar reads as acting on it; above, as a header.
+pub struct Shelf: Widget:
+    let box: interop.Reference[Layout]
+
+    pub func init(children: const interop.Interface[Widget][]) -> !:
+        let box = try layout.make_layout(layout.Axis.horizontal, 2.0, 0.0, layout.Alignment.center)
+        errdefer box.release()
+        try box.value().set_shrink(vertical = 0.0)
+        try box.value().set_children(children)
+        self.box = box
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub mutating func set_children(children: const interop.Interface[Widget][]) -> !:
+        try self.box.value().set_children(children)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let size = self.box.value().content_size(available) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        return result.success[Size](Size(size.width, math.max(size.height, shelf_height)))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.sunken)
+        try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.background)
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+
+## The shelf's minimum height in points; taller children expand it.
+pub let shelf_height: f64 = 24.0
+
+pub let shelf_type: interop.Type[Shelf] = interop.Type[Shelf]("Shelf", Shelf.close, Shelf.trace, closeable = true, main_thread = true)

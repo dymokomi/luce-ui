@@ -1,14 +1,14 @@
 ## Actual GPU contracts for flat tab headers and an input-transparent docking
 ## preview drawn above content. Distinct colors avoid dependence on the theme.
-import gpu
-import input
+import luce_gpu.gpu
+import luce_window.input
 import interop
 import memory
 import native
-import window
-import ui
+import luce_window.window
+import luce_ui.ui
 import style_pixels as pixels
-from ui import Application, DStack, Panel, TextEditor, Widget, DockPosition, Event
+from luce_ui.ui import Application, DStack, Panel, TextEditor, Widget, DockPosition, Event
 
 pub func check(host: window.Window, surface: gpu.Surface) -> !:
     try host.resize(505, 240)

@@ -1,10 +1,10 @@
 ## Wide East Asian text in real widgets: the editor's caret column, clicks and
 ## soft wrap, and a text field's click-to-caret, all count two cells for each
 ## wide scalar while the caret still steps one scalar at a time.
-from ui import Application, Font, TextEditor, TextField, VStack, Event
-from input import EventKind, Key
-from gpu import Frame
-import window
+from luce_ui.ui import Application, Font, TextEditor, TextField, VStack, Event
+from luce_window.input import EventKind, Key
+from luce_gpu.gpu import Frame
+import luce_window.window
 
 pub func wide_text() -> unit!:
     editor_columns()

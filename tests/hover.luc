@@ -1,5 +1,5 @@
-from ui import Application, Command, Menu, Toolbar, Button, TextEditor, Pane, VStack, SplitView, CommandPalette, Event, Font
-from input import EventKind, Key
+from luce_ui.ui import Application, Command, Menu, Toolbar, Button, TextEditor, Pane, VStack, SplitView, CommandPalette, Event, Font
+from luce_window.input import EventKind, Key
 
 pub func hover() -> unit!:
     let font = Font()

@@ -1,6 +1,6 @@
-from ui import Application, Widget, Layout, Size, Constraints, Event, HStack
-from gpu import RenderTarget
-from input import EventKind
+from luce_ui.ui import Application, Widget, Layout, Size, Constraints, Event, HStack
+from luce_gpu.gpu import RenderTarget
+from luce_window.input import EventKind
 
 ## A drop area that records what reaches it; with `images_only` it refuses
 ## anything that is not a .png, as an image well would.

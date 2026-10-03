@@ -1,0 +1,398 @@
+## Shared workspace state. The root retains one stable child per panel; selecting
+## a tab changes visibility, and docking changes only value topology. A panel
+## may instead float: it leaves the model and sits in its own window over the
+## panes, a frame child drawn just beneath it, until it is docked again.
+##
+## The State's methods are split by concern across the fragments, each under
+## `extend State:`. In ORDER: module (the types, geometry, placement and
+## children), panels (add, select, move, close), catalog (the add menu),
+## tab_drag (where a drag would dock), input (the stack's chrome: presses, keys,
+## cursors), floating (floating windows), frame (their chrome widget) and layout
+## (the arrangement as text).
+import luce_gpu.gpu
+import luce_window.input
+import interop
+import luce_std.math
+import memory
+import ownership
+import time
+import layout
+import result
+import docking.strip
+import docking.drag
+from arrangement import Arrangement
+from cursor import CursorSource
+from layout import Layout, Widget, Size, Point, Event
+from font import Font
+from theme import Theme
+from widgets.panel import Panel
+from widgets.action_popup import ActionPopup
+from command import Command, command_type
+from docking.model import Model, Geometry, DockPosition
+from painter import Painter
+
+type PanelSlot = interop.Reference[Panel]?
+type ConnectionSlot = interop.Reference[interop.Connection]?
+type FrameSlot = interop.Reference[Frame]?
+
+## The frame around a floating panel's content, and the band of it that
+## resizes the window.
+let float_border: f64 = 4.0
+## Two presses on a title within this many nanoseconds dock the window.
+let double_press: u64 = 400000000
+
+## What a press on a floating window started.
+enum Gesture as u8:
+    idle = 0
+    moving = 1
+    closing = 2
+    resizing = 3
+
+## The application's cue to make a panel, from the add menu: `id` is the
+## catalog entry picked, `panel` the one the menu was opened on (none from the
+## empty stack's button) and `position` where the new panel docks relative to
+## it. A panel of that entry already open is focused instead, with no request.
+pub struct DockRequest:
+    pub let panel: interop.Reference[Panel]?
+    pub let position: DockPosition
+    var name: interop.Owned[str]
+
+    ## Takes `name`, the catalog id.
+    pub func init(panel: interop.Reference[Panel]?, position: DockPosition, name: interop.Owned[str]):
+        var retained: interop.Reference[Panel]? = none
+        if let value = panel: retained = value.clone()
+        self.panel = retained
+        self.position = position
+        self.name = name
+
+    ## The catalog entry to make a panel of.
+    pub func id() -> interop.Owned[str]:
+        return self.name.clone()
+
+    pub mutating func close():
+        self.name.release()
+        release_panel(self.panel)
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.name.trace(visit, context)
+        if let panel = self.panel: panel.trace(visit, context)
+
+pub let dock_request_type: interop.Type[DockRequest] = interop.Type[DockRequest]("Dock request", DockRequest.close, DockRequest.trace, closeable = true, main_thread = true)
+
+## Everything behind a DStack: the panel slots, the committed dock model and a
+## drag's detached copy, the floating windows, the add menu and the signals the
+## DStack exposes. It is also the stack's Arrangement and CursorSource.
+pub struct State: Arrangement, CursorSource:
+    pub let box: interop.WeakReference[Layout]
+    pub let font: interop.Reference[Font]
+    pub var panels: PanelSlot[]
+    pub var model: Model
+    var detached: Model?
+    pub var popup: interop.Reference[ActionPopup]?
+    pub var overlay: interop.Interface[Widget]?
+    pub var connections: ConnectionSlot[]
+    pub let selected: interop.Signal[interop.Reference[Panel]]
+    pub let added: interop.Signal[interop.Reference[DockRequest]]
+    pub let closed: interop.Signal[interop.Reference[Panel]]
+    var close_handler: interop.Callback[interop.Reference[Panel], bool]?
+    ## The panels the add menu offers (catalog.lucb).
+    var catalog: Catalog
+    var menu_target: usize
+    var pressed_tab: usize
+    var pressed_close: usize
+    var pressed_add: usize
+    var resize: usize
+    pub var focused_divider: usize
+    ## Whether the keys have moved the focused divider since it was pressed:
+    ## only then does it keep its accent line, so a mouse resize leaves none.
+    pub var divider_keyed: bool
+    var grab: f64
+    var start: Point
+    pub var drag_pointer: Point
+    pub var dragging: bool
+    var drag_inside: bool
+    ## The state itself, for the frames it makes; set by its owner.
+    var me: interop.WeakReference[State]?
+    ## Floating panel slots, back to front, and each one's window in stack
+    ## coordinates.
+    var stacking: usize[129]
+    var float_count: usize
+    var floats: gpu.Rect[129]
+    var frames: FrameSlot[]
+    var float_pressed: usize
+    var gesture: Gesture
+    ## Resized edges: 1 left, 2 right, 4 top, 8 bottom.
+    var edges: u8
+    var float_origin: gpu.Rect
+    var float_moved: bool
+    var last_press: u64
+    var last_pressed: usize
+
+    pub func init(box: interop.Reference[Layout], font: interop.Reference[Font]) -> !:
+        let selected = try interop.Signal[interop.Reference[Panel]]()
+        errdefer selected.release()
+        let added = try interop.Signal[interop.Reference[DockRequest]]()
+        errdefer added.release()
+        let closed = try interop.Signal[interop.Reference[Panel]]()
+        errdefer closed.release()
+        let panels = try alloc PanelSlot[129] in memory.heap
+        errdefer free(panels) in memory.heap
+        let connections = try alloc ConnectionSlot[3] in memory.heap
+        errdefer free(connections) in memory.heap
+        let frames = try alloc FrameSlot[129] in memory.heap
+        errdefer free(frames) in memory.heap
+        var catalog = try Catalog.make()
+        errdefer catalog.release()
+        for index in 0..<panels.length: panels[index] = none
+        for index in 0..<frames.length: frames[index] = none
+        for index in 0..<connections.length: connections[index] = none
+        self.box = interop.WeakReference[Layout](box)
+        self.font = font.clone()
+        self.panels = panels
+        self.model = Model()
+        self.detached = none
+        self.popup = none
+        self.overlay = none
+        self.connections = connections
+        self.selected = selected
+        self.added = added
+        self.closed = closed
+        self.close_handler = none
+        self.catalog = catalog
+        self.menu_target = 0
+        self.pressed_tab = 0
+        self.pressed_close = 0
+        self.pressed_add = 0
+        self.resize = 0
+        self.focused_divider = 0
+        self.divider_keyed = false
+        self.grab = 0.0
+        self.start = Point()
+        self.drag_pointer = Point()
+        self.dragging = false
+        self.drag_inside = false
+        self.me = none
+        var stacking: usize[129]
+        var floats: gpu.Rect[129]
+        for index in 0..<stacking.length:
+            stacking[index] = 0
+            floats[index] = gpu.Rect()
+        self.stacking = stacking
+        self.floats = floats
+        self.float_count = 0
+        self.frames = frames
+        self.float_pressed = 0
+        self.gesture = Gesture.idle
+        self.edges = 0
+        self.float_origin = gpu.Rect()
+        self.float_moved = false
+        self.last_press = 0
+        self.last_pressed = 0
+
+    pub func theme() -> Theme:
+        let box = self.box.get() else return Theme()
+        defer box.release()
+        return box.value().theme()
+
+    ## The height of a tab header: one control row.
+    pub func height() -> f64:
+        return self.theme().row_height(self.font)
+
+    pub func size() -> Size:
+        let box = self.box.get() else return Size()
+        defer box.release()
+        let bounds = box.value().bounds()
+        return Size(bounds.width, bounds.height)
+
+    ## The committed topology keeps ownership and cancellation stable. Only the
+    ## detached copy participates in placement and hit testing during a drag.
+    pub func visible_model() -> Model:
+        return self.detached else self.model
+
+    ## Panes, dividers and minimums of the visible model laid out in `size`.
+    pub func geometry(size: Size) -> Geometry:
+        return self.geometry_for(self.visible_model(), size)
+
+    func geometry_for(model: Model, size: Size) -> Geometry:
+        var minimums: Size[129]
+        for index in 1..<self.panels.length:
+            if let panel = self.panels[index]:
+                let box = panel.value().layout()
+                defer box.release()
+                minimums[index] = box.value().minimum_size()
+        return model.geometry(size, minimums, self.height(), 5.0)
+
+    ## Arrangement: a floating panel's frame gets its window and the panel the
+    ## window's content area; a docked panel gets its group's pane inside the frame
+    ## and below the header; any other child (the overlay, the menu) the whole stack.
+    pub func place(child: i64, available: Size) -> interop.Outcome[gpu.Rect]:
+        for order in 0..<self.float_count:
+            let index = self.stacking[order]
+            if let frame = self.frames[index]:
+                let box = frame.value().layout()
+                defer box.release()
+                if box.value().id() == child:
+                    return result.success[gpu.Rect](self.floats[index])
+        for index in 1..<self.panels.length:
+            if let panel = self.panels[index]:
+                let box = panel.value().layout()
+                defer box.release()
+                if box.value().id() == child:
+                    if self.floating(index):
+                        return result.success[gpu.Rect](self.float_content(index))
+                    let geometry = self.geometry(available)
+                    let visible = self.visible_model()
+                    let bounds = geometry.panes[visible.tabs[index].group]
+                    return result.success[gpu.Rect](gpu.Rect(bounds.x + 1.0, bounds.y + self.height() + 1.0,
+                        math.max(0.0, bounds.width - 2.0), math.max(0.0, bounds.height - self.height() - 2.0)))
+        return result.success[gpu.Rect](gpu.Rect(width = available.width, height = available.height))
+
+    ## The slot of `panel`, docked or floating; fails for a panel this stack does
+    ## not hold.
+    pub func index(panel: interop.Reference[Panel]) -> usize!:
+        let sought = (try panel.get()).layout()
+        defer sought.release()
+        for index in 1..<self.panels.length:
+            if let current = self.panels[index]:
+                let box = current.value().layout()
+                defer box.release()
+                if box.value().id() == sought.value().id(): return index
+        error(result.invalid, "panel does not belong to this dynamic stack")
+
+    ## A new reference to the panel in slot `index`; fails for an empty slot.
+    pub func panel(index: usize) -> interop.Reference[Panel]!:
+        if index == 0 or index >= self.panels.length: error(result.invalid, "panel does not belong to this dynamic stack")
+        let panel = self.panels[index] else error(result.invalid, "panel slot is empty")
+        return panel.clone()
+
+    ## The slot of the panel containing keyboard focus, docked or floating, else
+    ## the model's active panel; 0 when there is none.
+    pub func active() -> usize:
+        # Content receives its own pointer events. Descendant focus identifies
+        # the active panel without intercepting editor input or polling events.
+        for index in 1..<self.panels.length:
+            if let panel = self.panels[index]:
+                let box = panel.value().layout()
+                defer box.release()
+                if box.value().contains_focus(): return index
+        return self.model.active
+
+    ## The header of `group`, whose pane is `bounds`, laid out: its tabs, the
+    ## scroll arrows and the add button.
+    pub func strip(group: usize, bounds: gpu.Rect) -> strip.Strip:
+        let model = self.visible_model()
+        let selected = model.nodes[group].selected
+        return strip.arrange(gpu.Rect(bounds.x + 1.0, bounds.y + 1.0,
+            math.max(0.0, bounds.width - 2.0), self.height()), model.tab_count(group),
+            model.tabs[selected].order, self.font.value().advance())
+
+    ## Where docked panel `index`'s tab sits now; empty while it is being dragged.
+    pub func tab_bounds(index: usize) -> gpu.Rect!:
+        discard(try self.model.require(index))
+        let model = self.visible_model()
+        let group = model.tabs[index].group
+        if group == 0: return gpu.Rect()
+        let geometry = self.geometry(self.size())
+        return self.strip(group, geometry.panes[group]).tab(model.tabs[index].order)
+
+    pub func invalidate():
+        if let box = self.box.get():
+            defer box.release()
+            box.value().invalidate()
+
+    mutating func publish(model: Model):
+        self.model = model
+        self.show_visible()
+
+    mutating func show_visible():
+        let model = self.visible_model()
+        for index in 1..<self.panels.length:
+            if let panel = self.panels[index]:
+                let box = panel.value().layout()
+                defer box.release()
+                let group = model.tabs[index].group
+                box.value().set_visible((group != 0 and model.nodes[group].selected == index) or self.floating(index))
+        self.invalidate()
+
+    ## Layout allocates its replacement edges before detaching anything. The
+    ## model and retained slots are published only after that operation succeeds.
+    func children(add: usize = 0, candidate: interop.Reference[Panel]? = none, remove: usize = 0) -> !:
+        let box = self.box.get() else error(result.invalid, "dynamic stack is closed")
+        defer box.release()
+        let children = try alloc interop.Interface[Widget][260] in memory.heap
+        defer free(children) in memory.heap
+        var count: usize = 0
+        defer release_children(children, count)
+        for index in 1..<self.panels.length:
+            if index == remove or self.floating(index): continue
+            let selected = candidate if index == add else self.panels[index]
+            if let panel = selected:
+                children[count] = panel.as_interface[Widget](panel.value())
+                count += 1
+        for order in 0..<self.float_count:
+            let index = self.stacking[order]
+            if index == remove: continue
+            let frame = self.frames[index] else trap("a floating panel without a frame")
+            children[count] = frame.as_interface[Widget](frame.value())
+            count += 1
+            let selected = candidate if index == add else self.panels[index]
+            if let panel = selected:
+                children[count] = panel.as_interface[Widget](panel.value())
+                count += 1
+        if let overlay = self.overlay:
+            children[count] = overlay.clone()
+            count += 1
+        if let popup = self.popup:
+            children[count] = popup.as_interface[Widget](popup.value())
+            count += 1
+        try box.value().set_children(children[..<count])
+
+    pub mutating func close():
+        for retained in self.connections:
+            if let connection = retained:
+                # Connection disposal disconnects. Collector finalizers may
+                # already have closed an alias, so cleanup only releases it.
+                connection.release()
+        if let callback = self.close_handler: callback.release()
+        self.catalog.release()
+        self.selected.close()
+        self.selected.release()
+        self.added.close()
+        self.added.release()
+        self.closed.close()
+        self.closed.release()
+        if let popup = self.popup: popup.release()
+        if let overlay = self.overlay: overlay.release()
+        for panel in self.panels: release_panel(panel)
+        for retained in self.frames:
+            if let frame = retained: frame.release()
+        free(self.frames) in memory.heap
+        if let me = self.me: me.release()
+        free(self.panels) in memory.heap
+        free(self.connections) in memory.heap
+        self.font.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        for retained in self.connections:
+            if let connection = retained: connection.trace(visit, context)
+        if let callback = self.close_handler: callback.trace(visit, context)
+        self.catalog.trace(visit, context)
+        self.selected.trace(visit, context)
+        self.added.trace(visit, context)
+        self.closed.trace(visit, context)
+        if let popup = self.popup: popup.trace(visit, context)
+        if let overlay = self.overlay: overlay.trace(visit, context)
+        for retained in self.panels:
+            if let panel = retained: panel.trace(visit, context)
+        for retained in self.frames:
+            if let frame = retained: frame.trace(visit, context)
+        self.font.trace(visit, context)
+
+func release_panel(retained: interop.Reference[Panel]?):
+    if let panel = retained: panel.release()
+
+func release_children(children: interop.Interface[Widget][], count: usize):
+    for child in children[..<count]: child.release()
+
+pub let state_type: interop.Type[State] = interop.Type[State]("Dynamic stack state", State.close, State.trace, closeable = true, main_thread = true)

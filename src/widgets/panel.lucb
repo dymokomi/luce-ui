@@ -1,0 +1,116 @@
+## A panel is one persistent piece of content in a dynamic workspace. Docking
+## changes its position, never its content owner or document state. A panel
+## made from a DStack's catalog carries that entry's `id`, so the stack's add
+## menu knows it is open.
+import luce_gpu.gpu
+import interop
+import ownership
+import layout
+import result
+from layout import Widget, Layout, Constraints, Size, Event
+from icons import IconKind
+
+pub struct Panel: Widget:
+    let box: interop.Reference[Layout]
+    var caption: interop.Owned[str]
+    var description: interop.Owned[str]
+    var name: interop.Owned[str]
+    var symbol: IconKind
+    let closable: bool
+    ## A bar under the content, kept when the content changes: the pane's toolbar.
+    var footer: interop.Interface[Widget]?
+
+    pub func init(text: str, content: interop.Interface[Widget], icon: IconKind = IconKind.blank,
+                  minimum: Size = Size(120.0, 60.0), closable: bool = true, footer: interop.Interface[Widget]? = none, id: str = "") -> !:
+        let caption = try interop.copy_text(text)
+        errdefer caption.release()
+        let name = try interop.copy_text(id)
+        errdefer name.release()
+        let description = try interop.copy_text("")
+        errdefer description.release()
+        let box = try layout.make_layout(layout.Axis.vertical)
+        errdefer box.release()
+        try box.value().set_limits(minimum, Size(16384.0, 16384.0))
+        try box.value().set_flex()
+        if let bar = footer:
+            try box.value().set_children([content, bar])
+        else:
+            try box.value().set_children([content])
+        self.footer = footer
+        self.box = box
+        self.caption = caption
+        self.description = description
+        self.name = name
+        self.symbol = icon
+        self.closable = closable
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func text() -> interop.Owned[str]:
+        return self.caption.clone()
+
+    pub func detail() -> interop.Owned[str]:
+        return self.description.clone()
+
+    ## The catalog entry the panel was made from; "" for one outside the catalog.
+    pub func id() -> interop.Owned[str]:
+        return self.name.clone()
+
+    pub func icon() -> IconKind:
+        return self.symbol
+
+    pub func is_closable() -> bool:
+        return self.closable
+
+    pub mutating func set_text(text: str) -> !:
+        if text == self.caption.value: return
+        let replacement = try interop.copy_text(text)
+        let previous_caption = self.caption
+        self.caption = replacement
+        previous_caption.release()
+        self.box.value().invalidate()
+
+    pub mutating func set_detail(detail: str) -> !:
+        if detail == self.description.value: return
+        let replacement = try interop.copy_text(detail)
+        let previous_description = self.description
+        self.description = replacement
+        previous_description.release()
+        self.box.value().invalidate()
+
+    pub mutating func set_icon(icon: IconKind):
+        if icon == self.symbol: return
+        self.symbol = icon
+        self.box.value().invalidate()
+
+    pub mutating func set_content(content: interop.Interface[Widget]) -> !:
+        if let bar = self.footer:
+            try self.box.value().set_children([content, bar])
+        else:
+            try self.box.value().set_children([content])
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let size = self.box.value().content_size(available) catch failure:
+            return result.failure[Size](failure.code, failure.message)
+        return result.success[Size](size)
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.name.release()
+        self.description.release()
+        self.caption.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.name.trace(visit, context)
+        self.description.trace(visit, context)
+        self.caption.trace(visit, context)
+        self.box.trace(visit, context)
+
+pub let panel_type: interop.Type[Panel] = interop.Type[Panel]("Panel", Panel.close, Panel.trace, closeable = true, main_thread = true)

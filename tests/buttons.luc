@@ -1,6 +1,6 @@
-from ui import Application, Widget, Layout, Size, Constraints, Event, Button, VStack, Font
-from gpu import RenderTarget
-from input import EventKind
+from luce_ui.ui import Application, Widget, Layout, Size, Constraints, Event, Button, VStack, Font
+from luce_gpu.gpu import RenderTarget
+from luce_window.input import EventKind
 
 ## Records the pointer buttons it is sent, as a canvas that pans with the middle button would.
 class Pad: Widget:

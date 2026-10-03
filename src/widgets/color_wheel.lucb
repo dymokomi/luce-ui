@@ -1,0 +1,470 @@
+## The ColorWheel widget: GIMP's and Krita's color selector, drawn by one fragment shader.
+import luce_gpu.gpu
+import interop
+import luce_std.math
+import ownership
+import layout
+import result
+from layout import Widget, Layout, Size, Constraints, Event
+from painter import Painter
+from geometry import Point
+from shaders import color_wheel_frag_words, color_wheel_frag_msl
+import luce_window.input
+
+## The wheel's shapes: a hue ring around a saturation/brightness triangle that
+## turns with the hue, the same ring around an upright square, or a disc with
+## hue around it and saturation outwards (brightness is then the host's).
+pub let wheel_triangle: i64 = 0
+pub let wheel_square: i64 = 1
+pub let wheel_disc: i64 = 2
+
+## Which part a press grabbed; a drag keeps it to the end.
+let part_none: i64 = 0
+let part_ring: i64 = 1
+let part_field: i64 = 2
+
+## A square color selector after GIMP's and Krita's. Hue is 0..360 and
+## clockwise from the right, as GIMP's and Krita's; saturation and brightness are 0..1 of
+## encoded sRGB, as Photoshop's HSB. The widget keeps its own HSB, so a grey
+## or black keeps the hue and saturation it was reached with: the host sets
+## them with `set_hsb` and reads them back after `on_change`. A press on the
+## ring changes only the hue, on the triangle, square or disc only what that
+## shows, for the whole drag; Shift makes a drag fine; the wheel and the
+## arrow keys turn the hue. The field is one client-shader quad: no per-pixel
+## CPU work, anti-aliased at any size; the markers are painted over it.
+pub struct ColorWheel: Widget:
+    let box: interop.Reference[Layout]
+    var shape: i64
+    var hue: f64
+    var saturation: f64
+    var brightness: f64
+    var part: i64
+    ## The pointer a drag follows (slowed while Shift is down) and the last real one.
+    var aim_x: f64
+    var aim_y: f64
+    var last_x: f64
+    var last_y: f64
+    let changed: interop.Signal[unit]
+    ## The width last drawn at, to square up after a resize.
+    var drawn_width: f64
+    var device: gpu.Device?
+    var shader: gpu.Shader?
+    var pipeline: gpu.Pipeline?
+
+    pub func init(shape: i64 = 0) -> !:
+        if shape < wheel_triangle or shape > wheel_disc:
+            error(result.invalid, "a color wheel's shape is 0 (triangle), 1 (square) or 2 (disc)")
+        let box = try layout.make_layout()
+        errdefer box.release()
+        box.value().set_focusable(true)
+        box.value().set_cursor(input.Cursor.crosshair)
+        # clickable: a box receives pointer events only once it says so
+        box.value().set_interactive(true)
+        let changed = try interop.Signal[unit]()
+        errdefer changed.release()
+        self.box = box
+        self.shape = shape
+        self.hue = 0.0
+        self.saturation = 0.0
+        self.brightness = 0.0
+        self.part = part_none
+        self.aim_x = 0.0
+        self.aim_y = 0.0
+        self.last_x = 0.0
+        self.last_y = 0.0
+        self.changed = changed
+        self.drawn_width = 0.0
+        self.device = none
+        self.shader = none
+        self.pipeline = none
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    ## Fires on each press, drag step, wheel turn and arrow key that changes
+    ## the color; `set_hsb` does not fire it.
+    pub func on_change(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.changed.connect(callback)
+
+    pub func hue_value() -> f64:
+        return self.hue
+
+    pub func saturation_value() -> f64:
+        return self.saturation
+
+    pub func brightness_value() -> f64:
+        return self.brightness
+
+    pub func shape_value() -> i64:
+        return self.shape
+
+    ## Show `shape` (wheel_triangle, wheel_square or wheel_disc).
+    pub mutating func set_shape(shape: i64) -> !:
+        if shape < wheel_triangle or shape > wheel_disc:
+            error(result.invalid, "a color wheel's shape is 0 (triangle), 1 (square) or 2 (disc)")
+        self.shape = shape
+        self.part = part_none
+        self.box.value().invalidate()
+
+    ## Set the shown color from code; no signal.
+    pub mutating func set_hsb(hue: f64, saturation: f64, brightness: f64) -> !:
+        if not math.is_finite(hue) or not math.is_finite(saturation) or not math.is_finite(brightness):
+            error(result.invalid, "HSB components must be finite")
+        self.hue = wrap_degrees(hue)
+        self.saturation = math.clamp(saturation, 0.0, 1.0)
+        self.brightness = math.clamp(brightness, 0.0, 1.0)
+        self.box.value().invalidate()
+
+    ## Where to press, in the box's points, for a host or test driving the
+    ## wheel: the ring's middle at `hue` degrees, or the field's point for
+    ## `saturation` and `brightness` at the hue shown.
+    pub func ring_point_x(hue: f64) -> f64:
+        let wheel = self.geometry()
+        return wheel.x + math.cos(radians(hue)) * (wheel.outer + wheel.inner) * 0.5
+
+    pub func ring_point_y(hue: f64) -> f64:
+        let wheel = self.geometry()
+        return wheel.y + math.sin(radians(hue)) * (wheel.outer + wheel.inner) * 0.5
+
+    pub func field_point_x(saturation: f64, brightness: f64) -> f64:
+        return self.field_point(saturation, brightness).x
+
+    pub func field_point_y(saturation: f64, brightness: f64) -> f64:
+        return self.field_point(saturation, brightness).y
+
+    ## Square, as tall as the width its stack gave it last (a stack stretches
+    ## it across; measuring only knows the window): a new width is seen when
+    ## drawn, and the next arrangement makes it square again.
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let given = self.box.value().bounds().width
+        let side = math.clamp(given if given >= 64.0 else math.min(available.width, 240.0), 64.0, 2048.0)
+        return result.success[Size](Size(side, side))
+
+    # mark: Geometry ===============================================================================
+
+    func geometry() -> Wheel:
+        let bounds = self.box.value().bounds()
+        return wheel_in(bounds.width, bounds.height, self.shape)
+
+    ## The field's point for `saturation` and `brightness` at the current hue.
+    func field_point(saturation: f64, brightness: f64) -> Point:
+        let wheel = self.geometry()
+        if self.shape == wheel_disc:
+            let a = radians(self.hue)
+            return Point(wheel.x + math.cos(a) * saturation * wheel.outer, wheel.y + math.sin(a) * saturation * wheel.outer)
+        if self.shape == wheel_square:
+            return Point(wheel.x - wheel.field + saturation * wheel.field * 2.0, wheel.y + wheel.field - brightness * wheel.field * 2.0)
+        # The triangle's point is its corners weighted: tip s·v, white v·(1−s), black 1−v.
+        let corners = triangle(wheel, self.hue)
+        let tip = saturation * brightness
+        let white = brightness * (1.0 - saturation)
+        let black = 1.0 - brightness
+        return Point(corners[0].x * tip + corners[1].x * white + corners[2].x * black,
+                     corners[0].y * tip + corners[1].y * white + corners[2].y * black)
+
+    ## The part a press at (x, y) grabs, or none outside the wheel.
+    func part_at(x: f64, y: f64) -> i64:
+        return part_in(self.geometry(), self.shape, self.hue, x, y)
+
+    ## Take the color at (x, y) for the grabbed part.
+    mutating func pick(x: f64, y: f64) -> !:
+        let wheel = self.geometry()
+        let dx = x - wheel.x
+        let dy = y - wheel.y
+        if self.part == part_ring:
+            # At the very centre the angle is no angle: keep the hue.
+            if dx * dx + dy * dy > 1e-9:
+                self.hue = wrap_degrees(math.atan2(dy, dx) * 180.0 / math.pi)
+            return
+        if self.shape == wheel_disc:
+            let d = math.sqrt(dx * dx + dy * dy)
+            if d > 1e-9:
+                self.hue = wrap_degrees(math.atan2(dy, dx) * 180.0 / math.pi)
+            self.saturation = math.clamp(d / math.max(1.0, wheel.outer), 0.0, 1.0)
+            return
+        if self.shape == wheel_square:
+            let span = math.max(1.0, wheel.field * 2.0)
+            self.saturation = math.clamp((dx + wheel.field) / span, 0.0, 1.0)
+            self.brightness = math.clamp((wheel.field - dy) / span, 0.0, 1.0)
+            return
+        let corners = triangle(wheel, self.hue)
+        let weights = barycentric(closest_in_triangle(Point(x, y), corners), corners)
+        let brightness = math.clamp(weights[0] + weights[1], 0.0, 1.0)
+        # On the black corner saturation means nothing: keep it.
+        if brightness > 1e-6:
+            self.saturation = math.clamp(weights[0] / brightness, 0.0, 1.0)
+        self.brightness = brightness
+
+    # mark: Drawing ================================================================================
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    mutating func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        let checked = try target.get()
+        let size = try checked.size()
+        if size.width != self.drawn_width:
+            self.drawn_width = size.width
+            self.box.value().invalidate()
+        let wheel = wheel_in(size.width, size.height, self.shape)
+        if wheel.outer < 4.0:
+            return
+        let made = try self.pipeline_for(checked)
+        if let pipeline = made:
+            let scale = size.pixel_width / size.width if size.width > 0.0 else 1.0
+            # gl_FragCoord counts from the frame's corner, not this target's.
+            let placement = try checked.placement()
+            var params: f32[8] = [(f32)((placement.x + wheel.x) * scale), (f32)((placement.y + wheel.y) * scale), (f32)(wheel.outer * scale),
+                                  (f32)(wheel.inner * scale), (f32)(wheel.field * scale), (f32)(self.hue / 360.0), (f32)self.shape, (f32)self.brightness]
+            let reach = wheel.outer + 1.0
+            try gpu.shade(checked, pipeline, gpu.Rect(wheel.x - reach, wheel.y - reach, reach * 2.0, reach * 2.0), u8[]((u8*)&params[0], 32))
+        var painter = try Painter(target)
+        defer painter.close()
+        if self.shape != wheel_disc:
+            let a = radians(self.hue)
+            let middle = (wheel.outer + wheel.inner) * 0.5
+            let side = math.max(7.0, (wheel.outer - wheel.inner) * 0.7)
+            try marker(&painter, wheel.x + math.cos(a) * middle, wheel.y + math.sin(a) * middle, side)
+        let spot = self.field_point(self.saturation, self.brightness)
+        try marker(&painter, spot.x, spot.y, 9.0)
+
+    ## The wheel's pipeline on the target's device, made on the first draw; none
+    ## on a standalone frame, which has no device.
+    mutating func pipeline_for(target: const gpu.RenderTarget*) -> gpu.Pipeline?!:
+        if let existing = self.pipeline:
+            return existing
+        let device = gpu.device_of(target) catch failure:
+            if failure.code == gpu.unavailable:
+                return none
+            error(failure.code, failure.message)
+        var owned_device = device
+        errdefer owned_device.destroy()
+        var shader = try gpu.Shader.create(device, color_wheel_frag_words, color_wheel_frag_msl)
+        errdefer shader.destroy()
+        let pipeline = try gpu.Pipeline.create(device, shader, gpu.Blend.over)
+        self.device = device
+        self.shader = shader
+        self.pipeline = pipeline
+        return pipeline
+
+    # mark: Input ==================================================================================
+
+    mutating func changed_now() -> interop.Outcome[unit]:
+        self.box.value().invalidate()
+        return self.changed.emit(())
+
+    mutating func nudge(degrees: f64) -> interop.Outcome[unit]:
+        self.hue = wrap_degrees(self.hue + degrees)
+        return self.changed_now()
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        if event.cancelled:
+            self.part = part_none
+            return result.success[unit](())
+        if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
+            let part = self.part_at(event.x, event.y)
+            if part == part_none:
+                return result.success[unit](())
+            self.box.value().request_focus()
+            self.part = part
+            self.aim_x = event.x
+            self.aim_y = event.y
+            self.last_x = event.x
+            self.last_y = event.y
+            self.pick(event.x, event.y) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            return self.changed_now()
+        if event.kind == input.EventKind.pointer_moved and self.part != part_none:
+            # Shift slows the drag to a quarter from where it is, for fine steps.
+            if event.shift:
+                self.aim_x += (event.x - self.last_x) * 0.25
+                self.aim_y += (event.y - self.last_y) * 0.25
+            else:
+                self.aim_x = event.x
+                self.aim_y = event.y
+            self.last_x = event.x
+            self.last_y = event.y
+            self.pick(self.aim_x, self.aim_y) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            return self.changed_now()
+        if event.kind == input.EventKind.pointer_up and event.button == 0:
+            self.part = part_none
+            return result.success[unit](())
+        if event.kind == input.EventKind.scroll and event.inside and event.scroll_y != 0.0:
+            # A notch turns the hue by two degrees, a touchpad a fifth of one a point.
+            let step = 2.0 if event.scroll_unit == input.ScrollUnit.lines else 0.2
+            return self.nudge(event.scroll_y * step)
+        if event.kind == input.EventKind.key_down:
+            let step = 10.0 if event.shift else 1.0
+            if event.key == input.Key.right or event.key == input.Key.up:
+                return self.nudge(step)
+            if event.key == input.Key.left or event.key == input.Key.down:
+                return self.nudge(-step)
+        return result.success[unit](())
+
+    pub mutating func close():
+        if let pipeline = self.pipeline:
+            var owned = pipeline
+            owned.destroy()
+            self.pipeline = none
+        if let shader = self.shader:
+            var owned = shader
+            owned.destroy()
+            self.shader = none
+        if let device = self.device:
+            var owned = device
+            owned.destroy()
+            self.device = none
+        self.changed.close()
+        self.changed.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+        self.changed.trace(visit, context)
+
+pub let color_wheel_type: interop.Type[ColorWheel] = interop.Type[ColorWheel]("ColorWheel", ColorWheel.close, ColorWheel.trace, closeable = true, main_thread = true)
+
+## A wheel's layout in its box: the centre, the ring's (or disc's) outer and
+## inner radii, and the field's size (the triangle's circumradius or the
+## square's half side). The ring is an eighth of the radius thick.
+struct Wheel:
+    var x: f64
+    var y: f64
+    var outer: f64
+    var inner: f64
+    var field: f64
+
+func wheel_in(width: f64, height: f64, shape: i64) -> Wheel:
+    # Room around the ring for its marker and the anti-aliased edge.
+    let outer = math.max(0.0, math.min(width, height) * 0.5 - 3.0)
+    let inner = outer * 0.88
+    let gap = math.max(2.0, outer * 0.03)
+    let field = (inner - gap) * (0.7071067811865476 if shape == wheel_square else 1.0)
+    return Wheel(width * 0.5, height * 0.5, outer, 0.0 if shape == wheel_disc else inner, field)
+
+## The triangle's corners for `hue`: the pure hue at the tip, white a third of
+## a turn back, black a third on (with the tip right: white top-left, black
+## bottom-left), as the shader draws them.
+func triangle(wheel: Wheel, hue: f64) -> Point[3]:
+    var corners: Point[3]
+    let turns: f64[3] = [0.0, -120.0, 120.0]
+    for index in 0..<3:
+        let a = radians(hue + turns[index])
+        corners[index] = Point(wheel.x + math.cos(a) * wheel.field, wheel.y + math.sin(a) * wheel.field)
+    return corners
+
+## The weights of `p` against the corners (tip, white, black).
+func barycentric(p: Point, corners: Point[3]) -> f64[3]:
+    let a = corners[0]
+    let b = corners[1]
+    let c = corners[2]
+    let area = cross(b.x - a.x, b.y - a.y, c.x - a.x, c.y - a.y)
+    if math.abs(area) < 1e-12:
+        return [1.0, 0.0, 0.0]
+    let white = cross(p.x - a.x, p.y - a.y, c.x - a.x, c.y - a.y) / area
+    let black = cross(b.x - a.x, b.y - a.y, p.x - a.x, p.y - a.y) / area
+    return [1.0 - white - black, white, black]
+
+## `p` itself inside the triangle, else the nearest point of its edges, so a
+## drag past an edge slides along it.
+func closest_in_triangle(p: Point, corners: Point[3]) -> Point:
+    let weights = barycentric(p, corners)
+    if weights[0] >= 0.0 and weights[1] >= 0.0 and weights[2] >= 0.0:
+        return p
+    var best = corners[0]
+    var best_distance = 1e300
+    for index in 0..<3:
+        let a = corners[index]
+        let b = corners[(index + 1) % 3]
+        let ex = b.x - a.x
+        let ey = b.y - a.y
+        let length = ex * ex + ey * ey
+        let t = 0.0 if length <= 0.0 else math.clamp(((p.x - a.x) * ex + (p.y - a.y) * ey) / length, 0.0, 1.0)
+        let q = Point(a.x + ex * t, a.y + ey * t)
+        let distance = (p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y)
+        if distance < best_distance:
+            best = q
+            best_distance = distance
+    return best
+
+## The part of `wheel` (of `shape`, at `hue`) a press at (x, y) grabs. The
+## ring reaches a little inside its drawn edge, where a pointer aimed at it
+## lands; only a press truly in the triangle or square is the field's.
+func part_in(wheel: Wheel, shape: i64, hue: f64, x: f64, y: f64) -> i64:
+    let d = math.sqrt((x - wheel.x) * (x - wheel.x) + (y - wheel.y) * (y - wheel.y))
+    if d > wheel.outer + 4.0:
+        return part_none
+    if shape == wheel_disc:
+        return part_field
+    let reach = math.max(4.0, (wheel.outer - wheel.inner) * 0.5)
+    if d < wheel.inner - reach:
+        return part_field
+    if shape == wheel_square:
+        return part_field if math.abs(x - wheel.x) <= wheel.field and math.abs(y - wheel.y) <= wheel.field else part_ring
+    let weights = barycentric(Point(x, y), triangle(wheel, hue))
+    return part_field if weights[0] >= 0.0 and weights[1] >= 0.0 and weights[2] >= 0.0 else part_ring
+
+func cross(ax: f64, ay: f64, bx: f64, by: f64) -> f64:
+    return ax * by - ay * bx
+
+func radians(degrees: f64) -> f64:
+    return degrees * math.pi / 180.0
+
+func wrap_degrees(degrees: f64) -> f64:
+    let wrapped = degrees - math.floor(degrees / 360.0) * 360.0
+    return 0.0 if wrapped >= 360.0 else wrapped
+
+## A hollow square marker, black outside white, so it shows on any color.
+func marker(painter: Painter*, x: f64, y: f64, side: f64) -> !:
+    try frame(painter, x - side * 0.5 - 1.0, y - side * 0.5 - 1.0, side + 2.0, 1.0, gpu.Color(0.0, 0.0, 0.0))
+    try frame(painter, x - side * 0.5, y - side * 0.5, side, 1.5, gpu.Color(1.0, 1.0, 1.0))
+    try frame(painter, x - side * 0.5 + 1.5, y - side * 0.5 + 1.5, side - 3.0, 0.75, gpu.Color(0.0, 0.0, 0.0))
+
+## A square outline `width` thick, its outer corner at (x, y).
+func frame(painter: Painter*, x: f64, y: f64, side: f64, width: f64, color: gpu.Color) -> !:
+    try painter.rectangle(gpu.Rect(x, y, side, width), color)
+    try painter.rectangle(gpu.Rect(x, y + side - width, side, width), color)
+    try painter.rectangle(gpu.Rect(x, y + width, width, side - width * 2.0), color)
+    try painter.rectangle(gpu.Rect(x + side - width, y + width, width, side - width * 2.0), color)
+
+test "the triangle's corners and weights agree with the shader's HSB":
+    let wheel = wheel_in(200.0, 200.0, wheel_triangle)
+    assert(wheel.x == 100.0 and wheel.outer == 97.0 and math.abs(wheel.inner - 85.36) < 1e-9)
+    let corners = triangle(wheel, 0.0)
+    # Red points right; white is above-left, black below-left.
+    assert(corners[0].x > 100.0 and math.abs(corners[0].y - 100.0) < 1e-9)
+    assert(corners[1].y < 100.0 and corners[2].y > 100.0 and corners[1].x < 100.0)
+    let weights = barycentric(corners[1], corners)
+    assert(math.abs(weights[1] - 1.0) < 1e-9 and math.abs(weights[0]) < 1e-9)
+    # Outside past the white corner lands on it.
+    let far = closest_in_triangle(Point(corners[1].x - 50.0, corners[1].y - 50.0), corners)
+    assert(math.abs(far.x - corners[1].x) < 1e-9 and math.abs(far.y - corners[1].y) < 1e-9)
+    assert(wrap_degrees(-30.0) == 330.0 and wrap_degrees(720.0) == 0.0)
+
+test "a wheel keeps its HSB and shape":
+    var wheel = try ColorWheel(wheel_square)
+    defer wheel.close()
+    try wheel.set_hsb(400.0, 2.0, -1.0)
+    assert(wheel.hue_value() == 40.0 and wheel.saturation_value() == 1.0 and wheel.brightness_value() == 0.0)
+    try wheel.set_shape(wheel_disc)
+    assert(wheel.shape_value() == wheel_disc)
+    var rejected = false
+    wheel.set_shape(3) catch failure:
+        assert(failure.code == result.invalid)
+        rejected = true
+    assert(rejected)
+
+test "a press just inside the ring's edge takes the ring, one in the triangle's tip the field":
+    let wheel = wheel_in(200.0, 200.0, wheel_triangle)
+    # Beside the tip (hue 0 points right), a pixel inside the ring's drawn edge.
+    let angle = radians(20.0)
+    let near = wheel.inner - 2.0
+    assert(part_in(wheel, wheel_triangle, 0.0, wheel.x + math.cos(angle) * near, wheel.y + math.sin(angle) * near) == part_ring)
+    # In the tip itself, as close to the ring: the field.
+    assert(part_in(wheel, wheel_triangle, 0.0, wheel.x + wheel.field - 1.0, wheel.y) == part_field)
+    assert(part_in(wheel, wheel_triangle, 0.0, wheel.x, wheel.y) == part_field)
+    assert(part_in(wheel, wheel_triangle, 0.0, wheel.x + wheel.outer + 10.0, wheel.y) == part_none)
+

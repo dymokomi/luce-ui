@@ -1,6 +1,6 @@
-from ui import Application, DStack, Panel, DockPosition, DockRequest, TextEditor, Text, Size, Event
-from input import EventKind, Key
-from gpu import Rect
+from luce_ui.ui import Application, DStack, Panel, DockPosition, DockRequest, TextEditor, Text, Size, Event
+from luce_window.input import EventKind, Key
+from luce_gpu.gpu import Rect
 
 func click(app: Application, x: float, y: float) -> unit!:
     app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y))

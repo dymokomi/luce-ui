@@ -1,0 +1,377 @@
+## The text a parameter panel reads: arithmetic typed into a numeric field,
+## the hide and disable conditions of a parameter, and a menu's items. Pure
+## functions over borrowed text, so they are tested on their own.
+import luce_std.math
+import strings
+
+# -- Arithmetic.
+
+## A recursive-descent reader of `+ - * / % ^`, parentheses, unary signs,
+## numbers with exponents and `pi`. `failed` is set at the first thing it
+## cannot read; the value is then meaningless.
+struct Reader:
+    let bytes: const u8[]
+    var at: usize
+    var failed: bool
+
+    mutating func peek() -> u8:
+        while self.at < self.bytes.length and self.bytes[self.at] == ' ':
+            self.at += 1
+        return self.bytes[self.at] if self.at < self.bytes.length else 0
+
+    mutating func sum() -> f64:
+        var total = self.product()
+        while not self.failed:
+            let sign = self.peek()
+            if sign == '+':
+                self.at += 1
+                total += self.product()
+            elif sign == '-':
+                self.at += 1
+                total -= self.product()
+            else:
+                break
+        return total
+
+    mutating func product() -> f64:
+        var total = self.unary()
+        while not self.failed:
+            let sign = self.peek()
+            if sign == '*':
+                self.at += 1
+                total *= self.unary()
+            elif sign == '/':
+                self.at += 1
+                total /= self.unary()
+            elif sign == '%':
+                self.at += 1
+                let divisor = self.unary()
+                total = total - math.floor(total / divisor) * divisor
+            else:
+                break
+        return total
+
+    ## A sign applies after `^`, which binds right to left: -2^2 is -4.
+    mutating func unary() -> f64:
+        let sign = self.peek()
+        if sign == '-':
+            self.at += 1
+            return -self.unary()
+        if sign == '+':
+            self.at += 1
+            return self.unary()
+        return self.power()
+
+    mutating func power() -> f64:
+        let base = self.primary()
+        if not self.failed and self.peek() == '^':
+            self.at += 1
+            return math.pow(base, self.unary())
+        return base
+
+    mutating func primary() -> f64:
+        let first = self.peek()
+        if first == '(':
+            self.at += 1
+            let inner = self.sum()
+            if self.peek() != ')':
+                self.failed = true
+                return 0.0
+            self.at += 1
+            return inner
+        if first == 'p' and self.at + 1 < self.bytes.length and self.bytes[self.at + 1] == 'i':
+            self.at += 2
+            return math.pi
+        let start = self.at
+        while self.at < self.bytes.length and (is_digit(self.bytes[self.at]) or self.bytes[self.at] == '.'):
+            self.at += 1
+        if self.at < self.bytes.length and (self.bytes[self.at] == 'e' or self.bytes[self.at] == 'E') and self.at > start:
+            var exponent = self.at + 1
+            if exponent < self.bytes.length and (self.bytes[exponent] == '-' or self.bytes[exponent] == '+'):
+                exponent += 1
+            if exponent < self.bytes.length and is_digit(self.bytes[exponent]):
+                self.at = exponent
+                while self.at < self.bytes.length and is_digit(self.bytes[self.at]):
+                    self.at += 1
+        if self.at == start:
+            self.failed = true
+            return 0.0
+        let parsed = strings.parse_f64((str)self.bytes[start..<self.at]) catch _:
+            self.failed = true
+            recover 0.0
+        return parsed
+
+func is_digit(byte: u8) -> bool:
+    return byte >= '0' and byte <= '9'
+
+func is_name(byte: u8) -> bool:
+    return is_digit(byte) or (byte >= 'a' and byte <= 'z') or (byte >= 'A' and byte <= 'Z') or byte == '_' or byte == '.'
+
+## `text` without spaces at either end.
+pub func trimmed(text: str) -> str:
+    var start: usize = 0
+    var end = text.length
+    while start < end and text.bytes[start] == ' ':
+        start += 1
+    while end > start and text.bytes[end - 1] == ' ':
+        end -= 1
+    return (str)text.bytes[start..<end]
+
+## `text` without a unit typed or left after the number ("12 px", "40°", "5%").
+func without_unit(text: str) -> str:
+    var end = text.length
+    while end > 0:
+        let byte = text.bytes[end - 1]
+        let trailing = byte == ' ' or byte == '%' or byte >= 128 or (byte >= 'a' and byte <= 'z' and byte != 'i') or (byte >= 'A' and byte <= 'Z' and byte != 'E')
+        if not trailing:
+            break
+        end -= 1
+    # "pi" keeps its i; a trailing "e" of an exponent is not a unit either.
+    return trimmed((str)text.bytes[..<end])
+
+## What `text` typed into a numeric field comes to: arithmetic (`2*3`,
+## `(1+2)/4`, `2^3`, `pi/2`), or, after Maya, a change to `current` written
+## `+=0.5`, `-=1`, `*=2` or `/=4`. A unit after the number is ignored. None
+## when it cannot be read or is not finite.
+pub func evaluate(text: str, current: f64) -> f64?:
+    var body = without_unit(trimmed(text))
+    var relative: u8 = 0
+    if body.length >= 2 and body.bytes[1] == '=' and (body.bytes[0] == '+' or body.bytes[0] == '-' or body.bytes[0] == '*' or body.bytes[0] == '/'):
+        relative = body.bytes[0]
+        body = trimmed((str)body.bytes[2..])
+    if body.length == 0:
+        return none
+    var reader = Reader(bytes = body.bytes, at = 0, failed = false)
+    var value = reader.sum()
+    if reader.failed or reader.peek() != 0:
+        return none
+    if relative == '+':
+        value = current + value
+    elif relative == '-':
+        value = current - value
+    elif relative == '*':
+        value = current * value
+    elif relative == '/':
+        value = current / value
+    if not math.is_finite(value):
+        return none
+    return value
+
+# -- Conditions.
+
+## One test of a condition, after Houdini's `{ shape == 2 }`: the parameter
+## `name`, the comparison and the `value` compared with, views of the
+## condition's text; clauses of one `group` must all hold.
+pub struct Clause:
+    pub var name: str
+    ## 0 ==, 1 !=, 2 <, 3 <=, 4 >, 5 >=.
+    pub var comparison: u8
+    pub var value: str
+    pub var group: i64
+
+## Read `text`, Houdini's `{ a == 1 b != 2 } { c > 0 }` (the braces optional
+## for one group), into `into`: how many clauses it holds. Clauses in braces
+## must all hold; one group holding is enough. Anything unreadable ends it.
+pub func clauses(text: str, into: Clause[]) -> usize:
+    let bytes = text.bytes
+    var at: usize = 0
+    var count: usize = 0
+    var group: i64 = 0
+    var opened = false
+    while at < bytes.length and count < into.length:
+        let byte = bytes[at]
+        if byte == ' ':
+            at += 1
+            continue
+        if byte == '{':
+            if opened or count > 0:
+                group += 1
+            opened = false
+            at += 1
+            continue
+        if byte == '}':
+            opened = true
+            at += 1
+            continue
+        let start = at
+        while at < bytes.length and is_name(bytes[at]):
+            at += 1
+        if at == start:
+            return count
+        let name = (str)bytes[start..<at]
+        while at < bytes.length and bytes[at] == ' ':
+            at += 1
+        let operator_start = at
+        while at < bytes.length and (bytes[at] == '=' or bytes[at] == '!' or bytes[at] == '<' or bytes[at] == '>'):
+            at += 1
+        let comparison = comparison_of((str)bytes[operator_start..<at]) else return count
+        while at < bytes.length and bytes[at] == ' ':
+            at += 1
+        var value_start = at
+        var value_end = at
+        if at < bytes.length and bytes[at] == '"':
+            value_start = at + 1
+            at += 1
+            while at < bytes.length and bytes[at] != '"':
+                at += 1
+            value_end = at
+            if at < bytes.length:
+                at += 1
+        else:
+            while at < bytes.length and bytes[at] != ' ' and bytes[at] != '}' and bytes[at] != '{':
+                at += 1
+            value_end = at
+        if opened:
+            group += 1
+            opened = false
+        into[count] = Clause(name = name, comparison = comparison, value = (str)bytes[value_start..<value_end], group = group)
+        count += 1
+    return count
+
+func comparison_of(text: str) -> u8?:
+    if text == "==" or text == "=":
+        return 0
+    if text == "!=":
+        return 1
+    if text == "<":
+        return 2
+    if text == "<=":
+        return 3
+    if text == ">":
+        return 4
+    if text == ">=":
+        return 5
+    return none
+
+## Whether `left` compares with `right` as `comparison` says.
+pub func compare(left: f64, comparison: u8, right: f64) -> bool:
+    if comparison == 0:
+        return left == right
+    if comparison == 1:
+        return left != right
+    if comparison == 2:
+        return left < right
+    if comparison == 3:
+        return left <= right
+    if comparison == 4:
+        return left > right
+    return left >= right
+
+# -- Menu items.
+
+## How many items `items` lists: labels between `|`, each optionally
+## `label=value` (a menu whose values are not 0, 1, 2 …).
+pub func item_count(items: str) -> usize:
+    if items.length == 0:
+        return 0
+    var count: usize = 1
+    for byte in items.bytes:
+        if byte == '|':
+            count += 1
+    return count
+
+## Item `index` as written: `label` or `label=value`.
+func item(items: str, index: usize) -> str:
+    var at: usize = 0
+    var seen: usize = 0
+    var start: usize = 0
+    while at <= items.length:
+        if at == items.length or items.bytes[at] == '|':
+            if seen == index:
+                return (str)items.bytes[start..<at]
+            seen += 1
+            start = at + 1
+        at += 1
+    return ""
+
+## Item `index`'s label.
+pub func item_label(items: str, index: usize) -> str:
+    let whole = item(items, index)
+    var at: usize = 0
+    while at < whole.length and whole.bytes[at] != '=':
+        at += 1
+    return trimmed((str)whole.bytes[..<at])
+
+## Item `index`'s value: the number after `=`, or else its index.
+pub func item_value(items: str, index: usize) -> f64:
+    let whole = item(items, index)
+    var at: usize = 0
+    while at < whole.length and whole.bytes[at] != '=':
+        at += 1
+    if at < whole.length:
+        let parsed = strings.parse_f64(trimmed((str)whole.bytes[at + 1..])) catch _:
+            recover (f64)index
+        return parsed
+    return (f64)index
+
+## The item whose value is `value`, or the nearest; -1 for no items.
+pub func item_of(items: str, value: f64) -> i64:
+    var best: i64 = -1
+    var distance = 1.0e300
+    for index in 0..<item_count(items):
+        let gap = math.abs(item_value(items, index) - value)
+        if gap < distance:
+            distance = gap
+            best = (i64)index
+    return best
+
+## The item labelled `label`, ignoring case; -1 when none is.
+pub func item_named(items: str, label: str) -> i64:
+    for index in 0..<item_count(items):
+        if same_letters(item_label(items, index), label):
+            return (i64)index
+    return -1
+
+func same_letters(a: str, b: str) -> bool:
+    if a.length != b.length:
+        return false
+    for index in 0..<a.length:
+        if lower(a.bytes[index]) != lower(b.bytes[index]):
+            return false
+    return true
+
+func lower(byte: u8) -> u8:
+    return byte + 32 if byte >= 'A' and byte <= 'Z' else byte
+
+test "typed arithmetic and relative changes":
+    assert((evaluate("2*3", 0.0) else -1.0) == 6.0)
+    assert((evaluate(" (1 + 2) / 4 ", 0.0) else -1.0) == 0.75)
+    assert((evaluate("2^3^2", 0.0) else -1.0) == 512.0)
+    assert((evaluate("-2^2", 0.0) else 0.0) == -4.0)
+    assert((evaluate("1.5e2", 0.0) else -1.0) == 150.0)
+    assert((evaluate("+=0.5", 2.0) else -1.0) == 2.5)
+    assert((evaluate("-= 1", 2.0) else -1.0) == 1.0)
+    assert((evaluate("*=3", 2.0) else -1.0) == 6.0)
+    assert((evaluate("/=4", 2.0) else -1.0) == 0.5)
+    assert((evaluate("7 % 4", 0.0) else -1.0) == 3.0)
+    assert(math.abs((evaluate("pi/2", 0.0) else 0.0) - math.pi * 0.5) < 1.0e-12)
+    assert((evaluate("40°", 0.0) else -1.0) == 40.0)
+    assert((evaluate("12 px", 0.0) else -1.0) == 12.0)
+    assert((evaluate("-3", 0.0) else 0.0) == -3.0)
+    assert(evaluate("", 1.0) == none)
+    assert(evaluate("2*", 1.0) == none)
+    assert(evaluate("1/0", 1.0) == none)
+    assert(evaluate("(1", 1.0) == none)
+
+test "conditions read as Houdini writes them":
+    var into: Clause[8]
+    let count = clauses("{ shape == 2 size > 0.5 } { mode != custom }", into)
+    assert(count == 3)
+    assert(into[0].name == "shape" and into[0].comparison == 0 and into[0].value == "2" and into[0].group == 0)
+    assert(into[1].name == "size" and into[1].comparison == 4 and into[1].value == "0.5" and into[1].group == 0)
+    assert(into[2].name == "mode" and into[2].comparison == 1 and into[2].value == "custom" and into[2].group == 1)
+    let bare = clauses("copies<=1", into)
+    assert(bare == 1 and into[0].name == "copies" and into[0].comparison == 3 and into[0].value == "1")
+    let quoted = clauses("{ name == \"a b\" }", into)
+    assert(quoted == 1 and into[0].value == "a b")
+    assert(clauses("", into) == 0)
+    assert(compare(1.0, 5, 1.0) and not compare(1.0, 2, 1.0))
+
+test "menu items with and without values":
+    let items = "Points=0|Vertices|Faces=2"
+    assert(item_count(items) == 3 and item_count("") == 0)
+    assert(item_label(items, 0) == "Points" and item_label(items, 1) == "Vertices")
+    assert(item_value(items, 0) == 0.0 and item_value(items, 1) == 1.0 and item_value(items, 2) == 2.0)
+    assert(item_value("A=5|B=7", 1) == 7.0)
+    assert(item_of("A=5|B=7", 7.0) == 1 and item_of("", 1.0) == -1)
+    assert(item_named(items, "faces") == 2 and item_named(items, "Edges") == -1)

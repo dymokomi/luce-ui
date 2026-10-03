@@ -1,5 +1,5 @@
-from ui import Application, Pane, SplitView, Text, Size, Event, Axis
-from input import EventKind, Key
+from luce_ui.ui import Application, Pane, SplitView, Text, Size, Event, Axis
+from luce_window.input import EventKind, Key
 
 pub func panes() -> unit!:
     let left = Pane(Text("Explorer"), minimum = Size(100.0, 80.0))

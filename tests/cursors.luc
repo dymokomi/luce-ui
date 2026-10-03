@@ -1,5 +1,5 @@
-from ui import Application, Command, Button, Cursor, CursorSource, DStack, Panel, Point, Size, TextEditor, Event, DockPosition
-from input import EventKind, Key
+from luce_ui.ui import Application, Command, Button, Cursor, CursorSource, DStack, Panel, Point, Size, TextEditor, Event, DockPosition
+from luce_window.input import EventKind, Key
 
 class Regions: CursorSource:
     pub func cursor(self, position: Point, captured: bool) -> Cursor:

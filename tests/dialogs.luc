@@ -1,7 +1,7 @@
-from ui import Application, Font, Button, TextField, TextPrompt, VStack, Dialog, Command, Shortcut, Event, NumberField, TextEditor
-from gpu import Frame
-from input import EventKind, Key
-import window
+from luce_ui.ui import Application, Font, Button, TextField, TextPrompt, VStack, Dialog, Command, Shortcut, Event, NumberField, TextEditor
+from luce_gpu.gpu import Frame
+from luce_window.input import EventKind, Key
+import luce_window.window
 import platform
 
 class Count:

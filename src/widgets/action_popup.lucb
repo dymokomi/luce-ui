@@ -1,0 +1,458 @@
+## The popup action list shared by menus, context menus and the command
+## palette. Layout owns popup placement, clipping, modal dispatch and focus
+## restoration; this module owns row selection, keyboard and pointer choice,
+## the palette's search filter, and presenting each command with its shortcut.
+import luce_gpu.gpu
+import luce_window.input
+import interop
+import luce_std.math
+import memory
+import ownership
+import layout
+import result
+from layout import Widget, Layout, Size, Constraints, Event
+from font import Font, selected_font
+from command import Command, Commands
+from painter import Painter
+from geometry import Point
+from text.line_input import LineInput
+
+## Room after a checked command's caption for its tick.
+let tick_room: f64 = 18.0
+
+## A hidden popup listing commands, with dividers as slim rules. Opening it
+## selects the first enabled row; arrows, Tab, the wheel and the pointer move the
+## selection, Enter (or Space, or a click released on the pressed row) triggers
+## it and closes the list, and Escape or a press outside closes it. A
+## `searchable` popup is the palette: a query line at the window's top that
+## lists nothing until something is typed, then the commands whose text contains
+## every typed word.
+pub struct ActionPopup: Widget:
+    let box: interop.Reference[Layout]
+    let font: interop.Reference[Font]
+    var commands: Commands
+    var selected: i64
+    var first: i64
+    ## Wheel travel not yet enough for a whole row.
+    var wheel: f64
+    ## The row to scroll into the middle (-1: none) once the popup's height is
+    ## known, at its first draw or event: it opens on its checked command,
+    ## even when the pointer hovers another row before it is drawn.
+    var reveal: i64
+    var pressed: i64
+    ## The command the last choice triggered, as its place in the presented
+    ## commands; -1 before any. One handler serving many rows reads it.
+    var picked: i64
+    ## Opened by a press still held (a tool group's flyout): letting go over
+    ## an item chooses it.
+    var held: bool
+    let searchable: bool
+    var query: LineInput
+    var matches: usize[4096]
+    var count: usize
+
+    pub func init(commands: const interop.Reference[Command][], font: interop.Reference[Font], searchable: bool = false) -> !:
+        if commands.length == 0 or commands.length > 4096:
+            error(result.invalid, "a menu takes 1..4096 actions")
+        var copied = Commands()
+        errdefer copied.close()
+        try copied.set(commands)
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_shrink(vertical = 0.0)
+        box.value().set_focusable(true)
+        box.value().set_cursor(input.Cursor.pointer)
+        box.value().set_popup(true)
+        box.value().set_visible(false)
+        var query = try LineInput()
+        self.searchable = searchable
+        self.query = query
+        var matches: usize[4096]
+        self.count = commands.length
+        for index in 0..<commands.length:
+            matches[index] = index
+        self.matches = matches
+        if searchable:
+            box.value().set_text_input(true)
+            box.value().set_popup_placement(layout.PopupPlacement.window_top)
+            box.value().set_animate_open(true)
+        self.box = box
+        self.font = font.clone()
+        self.commands = copied
+        self.selected = -1
+        self.wheel = 0.0
+        self.reveal = -1
+        self.first = 0
+        self.pressed = -1
+        self.picked = -1
+        self.held = false
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    ## Replace the presented commands, for a context menu whose entries depend on
+    ## what was clicked. Any open filtering and selection reset with the new set.
+    pub mutating func set_commands(commands: const interop.Reference[Command][]) -> !:
+        if commands.length == 0 or commands.length > 4096:
+            error(result.invalid, "a menu takes 1..4096 actions")
+        try self.commands.set(commands)
+        self.count = commands.length
+        for index in 0..<commands.length:
+            self.matches[index] = index
+        self.selected = -1
+        self.first = 0
+        self.pressed = -1
+        self.box.value().invalidate()
+
+    pub func is_open() -> bool:
+        return self.box.value().is_visible()
+
+    ## The place, among the presented commands, of the one the last choice
+    ## triggered; -1 before any choice.
+    pub func chosen() -> i64:
+        return self.picked
+
+    ## The last choice's place, forgetting it: a host that polls the popup
+    ## (a parameter panel's menus) tells a new choice from none.
+    pub mutating func take_chosen() -> i64:
+        let picked = self.picked
+        self.picked = -1
+        return picked
+
+    ## Show the list with an empty query and the first enabled row selected.
+    pub mutating func open(held: bool = false) -> !:
+        self.held = held
+        if held:
+            self.box.value().claim_press()
+        try self.query.set_text("")
+        try self.filter()
+        self.selected = -1
+        self.first = 0
+        self.wheel = 0.0
+        self.pressed = -1
+        self.move(1)
+        # The initial popup has not been placed yet. Its previous (or zero)
+        # height must not scroll leading disabled entries out of the new menu.
+        self.first = 0
+        for index in 0..<(i64)self.count:
+            let command = self.commands.values()[self.matches[(usize)index]].value()
+            if command.is_checked() and command.is_enabled() and not command.is_divider():
+                self.selected = index
+                self.reveal = index
+                break
+        self.box.value().begin_open()
+        self.box.value().set_visible(true)
+
+    pub func query_text() -> interop.Owned[str]!:
+        return try self.query.text()
+
+    ## How many rows the current query lists.
+    pub func result_count() -> i64:
+        return (i64)self.count
+
+    mutating func filter() -> !:
+        let query = try self.query.text()
+        defer query.release()
+        self.count = 0
+        # A searchable palette lists nothing until a character is typed, then narrows
+        # to the matches; an ordinary menu always lists all of its commands.
+        if not self.searchable or query.value.length > 0:
+            for index in 0..<self.commands.values().length:
+                let text = self.commands.values()[index].value().text()
+                defer text.release()
+                if matches_query(text.value, query.value):
+                    self.matches[self.count] = index
+                    self.count += 1
+        self.selected = -1
+        self.first = 0
+        self.pressed = -1
+        self.move(1)
+        self.first = 0
+
+    func header_height() -> f64:
+        return (self.pad_y() + self.row_height()) if self.searchable else 0.0
+
+    func row_height() -> f64:
+        return self.box.value().theme().row_height(self.font)
+
+    ## Interior padding so captions do not crowd the popup's border. The vertical
+    ## margin lifts the first and last rows off the frame; the horizontal margin
+    ## insets every caption evenly on both sides.
+    func pad_x() -> f64:
+        return math.ceil(self.font.value().advance() * 1.5)
+
+    func pad_y() -> f64:
+        return math.ceil(self.font.value().advance() * 0.6)
+
+    ## The y of the first item row, below any search header and the top margin.
+    func top() -> f64:
+        return self.header_height() + self.pad_y()
+
+    ## A divider is a slim row — just a line with a little breathing room — rather than
+    ## a full item's height, so grouped menus read as tight clusters, not a sparse list.
+    func separator_height() -> f64:
+        return math.ceil(self.row_height() * 0.5)
+
+    ## The height of display row `index`: slim for a divider, a full row otherwise.
+    func extent(index: i64) -> f64:
+        return self.separator_height() if self.commands.values()[self.matches[(usize)index]].value().is_divider() else self.row_height()
+
+    ## The display row whose band contains `y`, or -1 when `y` falls on no row. Walks
+    ## the visible rows since divider rows are shorter, so a fixed stride would be wrong.
+    func index_at(y: f64) -> i64:
+        var band = self.top()
+        var index = self.first
+        while index < (i64)self.count:
+            let height = self.extent(index)
+            if y >= band and y < band + height:
+                return index
+            band += height
+            index += 1
+        return -1
+
+    ## Total height of the listed rows plus their top and bottom margin.
+    func stack_height() -> f64:
+        if self.count == 0:
+            return 0.0
+        var total = self.pad_y() * 2.0
+        if self.searchable:
+            total += self.row_height() * math.clamp((f64)self.count, 0.0, 10.0)
+        else:
+            for index in 0..<(i64)self.count:
+                total += self.extent(index)
+        return total
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        var width: f64 = 0.0
+        for action in self.commands.values():
+            if action.value().is_divider():
+                continue
+            let text = action.value().text()
+            defer text.release()
+            var measured = self.font.value().measure(text.value) catch failure:
+                return result.failure[Size](failure.code, failure.message)
+            var chord: u8[32]
+            let chord_len = action.value().write_shortcut(chord)
+            if chord_len > 0:
+                let chord_width = self.font.value().measure((str)chord[..<chord_len]) catch failure:
+                    return result.failure[Size](failure.code, failure.message)
+                measured += self.font.value().advance() * 2.0 + chord_width
+            if action.value().is_checked():
+                measured += tick_room
+            width = math.max(width, measured)
+        return result.success[Size](Size(600.0 if self.searchable else width + self.pad_x() * 2.0, self.header_height() + self.stack_height()))
+
+    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.show_revealed()
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.menu)
+        if self.searchable:
+            let center = math.max(0.0, (self.header_height() - self.font.value().height()) * 0.5)
+            try self.query.paint(&painter, self.font, theme, self.pad_x(), center, size.width - self.pad_x() * 2.0)
+            if self.count > 0:
+                try painter.rectangle(gpu.Rect(y = self.header_height() - 1.0, width = size.width, height = 1.0), theme.border)
+        var y = self.top()
+        var index = self.first
+        while index < (i64)self.count:
+            if y >= size.height:
+                break
+            let action = self.commands.values()[self.matches[(usize)index]]
+            let height = self.extent(index)
+            if action.value().is_divider():
+                let divider_y = math.ceil(y + height * 0.5)
+                try painter.rectangle(gpu.Rect(self.pad_x(), divider_y, math.max(0.0, size.width - self.pad_x() * 2.0), 1.0), theme.border)
+                y += height
+                index += 1
+                continue
+            if index == self.selected:
+                try painter.rectangle(gpu.Rect(y = y, width = size.width, height = height), theme.menu_selection)
+            let caption = action.value().text()
+            defer caption.release()
+            let text_y = y + (height - self.font.value().height()) * 0.5
+            let ink = theme.foreground if action.value().is_enabled() else theme.muted
+            try painter.text(caption.value, self.pad_x(), text_y, ink, self.font)
+            if action.value().is_checked():
+                # A tick drawn, not a glyph: every UI font has the lines.
+                let x = self.pad_x() + (try self.font.value().measure(caption.value)) + 8.0
+                let middle = y + height * 0.5
+                try painter.line(Point(x, middle), Point(x + 3.5, middle + 3.5), 1.6, ink)
+                try painter.line(Point(x + 3.5, middle + 3.5), Point(x + 10.0, middle - 4.0), 1.6, ink)
+            var chord: u8[32]
+            let chord_len = action.value().write_shortcut(chord)
+            if chord_len > 0:
+                let label = (str)chord[..<chord_len]
+                let chord_width = try self.font.value().measure(label)
+                try painter.text(label, math.max(self.pad_x(), size.width - self.pad_x() - chord_width), text_y, theme.muted, self.font)
+            y += height
+            index += 1
+        try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.border)
+        try painter.rectangle(gpu.Rect(y = math.max(0.0, size.height - 1.0), width = size.width, height = 1.0), theme.border)
+        try painter.rectangle(gpu.Rect(width = 1.0, height = size.height), theme.border)
+        try painter.rectangle(gpu.Rect(x = math.max(0.0, size.width - 1.0), width = 1.0, height = size.height), theme.border)
+
+    mutating func move(direction: i64):
+        let count = (i64)self.count
+        if count == 0:
+            return
+        var index = self.selected
+        for visited in 0..<count:
+            index = (index + direction + count) % count
+            if self.commands.values()[self.matches[(usize)index]].value().is_enabled():
+                self.selected = index
+                let rows = (i64)math.max(1.0, (self.box.value().bounds().height - self.top() - self.pad_y()) / self.row_height())
+                if index < self.first:
+                    self.first = index
+                elif index >= self.first + rows:
+                    self.first = index - rows + 1
+                self.box.value().invalidate()
+                return
+
+    ## The wheel scrolls the rows, three to a notch (a trackpad's points by the
+    ## row), and the row now under the pointer is the one selected.
+    mutating func scroll(event: Event):
+        self.wheel += event.scroll_y if event.scroll_unit == input.ScrollUnit.points else event.scroll_y * 3.0 * self.row_height()
+        let rows = (i64)(self.wheel / self.row_height())
+        if rows == 0:
+            return
+        self.wheel -= (f64)rows * self.row_height()
+        self.first = (i64)math.clamp((f64)(self.first - rows), 0.0, (f64)self.last_first())
+        let index = self.index_at(event.y)
+        let over = event.inside and index >= 0 and not self.commands.values()[self.matches[(usize)index]].value().is_divider() and self.commands.values()[self.matches[(usize)index]].value().is_enabled()
+        self.selected = index if over else -1
+        self.box.value().invalidate()
+
+    ## Scroll the row to reveal into the middle, now the popup is placed.
+    mutating func show_revealed():
+        if self.reveal < 0 or self.box.value().bounds().height <= 0.0:
+            return
+        let rows = (i64)math.max(1.0, (self.box.value().bounds().height - self.top() - self.pad_y()) / self.row_height())
+        self.first = (i64)math.clamp((f64)(self.reveal - rows // 2), 0.0, (f64)self.last_first())
+        self.selected = self.reveal
+        self.reveal = -1
+
+    ## The furthest the list scrolls: the first row that still fills the popup to its last.
+    func last_first() -> i64:
+        let room = self.box.value().bounds().height - self.top() - self.pad_y()
+        var used: f64 = 0.0
+        var index = (i64)self.count
+        while index > 0:
+            used += self.extent(index - 1)
+            if used > room:
+                return index
+            index -= 1
+        return 0
+
+    mutating func activate() -> interop.Outcome[unit]:
+        if self.selected < 0:
+            return result.success[unit](())
+        let action = self.commands.values()[self.matches[(usize)self.selected]].clone()
+        defer action.release()
+        if not action.value().is_enabled():
+            return result.success[unit](())
+        # Close before invoking application code, including callbacks which
+        # replace the containing view or fail while saving a document.
+        self.box.value().set_visible(false)
+        self.pressed = -1
+        self.picked = (i64)self.matches[(usize)self.selected]
+        return action.value().trigger()
+
+    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+        self.show_revealed()
+        if self.searchable:
+            let inset = self.pad_x()
+            self.query.pointer(event, self.font, inset, 0.0, self.box.value().bounds().width - inset * 2.0, self.header_height()) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            let changed = self.query.event(event) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            if changed:
+                self.filter() catch failure:
+                    return result.failure[unit](failure.code, failure.message)
+            self.box.value().invalidate()
+        if event.cancelled:
+            self.box.value().set_visible(false)
+            self.pressed = -1
+        elif event.kind == input.EventKind.key_down:
+            if event.key == input.Key.escape:
+                self.box.value().set_visible(false)
+            elif event.key == input.Key.down or (event.key == input.Key.tab and not event.shift):
+                self.move(1)
+            elif event.key == input.Key.up or (event.key == input.Key.tab and event.shift):
+                self.move(-1)
+            elif (event.key == input.Key.enter or (event.key == input.Key.space and not self.searchable)) and not event.repeated:
+                return self.activate()
+        elif event.kind == input.EventKind.scroll:
+            self.scroll(event)
+        elif event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_down:
+            let index = self.index_at(event.y)
+            let over = event.inside and index >= 0 and not self.commands.values()[self.matches[(usize)index]].value().is_divider() and self.commands.values()[self.matches[(usize)index]].value().is_enabled()
+            if over:
+                self.selected = index
+                if event.kind == input.EventKind.pointer_down and event.button == 0:
+                    self.pressed = index
+            elif event.kind == input.EventKind.pointer_moved:
+                # Hovering a divider or a gap between rows highlights nothing, so the
+                # last item does not linger as if still under the pointer.
+                self.selected = -1
+            self.box.value().invalidate()
+        elif event.kind == input.EventKind.pointer_up and event.button == 0:
+            let index = self.index_at(event.y)
+            let over = event.inside and index >= 0 and not self.commands.values()[self.matches[(usize)index]].value().is_divider()
+            let activate = over and ((self.pressed >= 0 and index == self.pressed) or self.held)
+            self.pressed = -1
+            # Let go elsewhere, it stays open for a click, as a menu does.
+            self.held = false
+            if activate:
+                return self.activate()
+        return result.success[unit](())
+
+    pub mutating func close():
+        self.query.close()
+        self.commands.close()
+        self.font.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.commands.trace(visit, context)
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+
+pub let action_popup_type: interop.Type[ActionPopup] = interop.Type[ActionPopup]("Menu popup", ActionPopup.close, ActionPopup.trace, closeable = true, main_thread = true)
+
+
+## Match query words case-insensitively in the caption. ASCII case folding keeps
+## UTF-8 bytes intact; literal Unicode words still match without reinterpretation.
+func matches_query(text: str, query: str) -> bool:
+    var start: usize = 0
+    while start < query.length:
+        while start < query.length and query.bytes[start] == 32:
+            start += 1
+        var end = start
+        while end < query.length and query.bytes[end] != 32:
+            end += 1
+        if end == start:
+            break
+        var found = false
+        var position: usize = 0
+        while position + end - start <= text.length:
+            var offset: usize = 0
+            while offset < end - start and folded(text.bytes[position + offset]) == folded(query.bytes[start + offset]):
+                offset += 1
+            if offset == end - start:
+                found = true
+                break
+            position += 1
+        if not found:
+            return false
+        start = end
+    return true
+
+func folded(byte: u8) -> u8:
+    return byte + 32 if byte >= 65 and byte <= 90 else byte

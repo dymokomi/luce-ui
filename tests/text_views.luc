@@ -1,7 +1,7 @@
-from ui import Application, TextEditor, Font, Event, FoldRange
-from input import EventKind, Key, ScrollUnit
-from gpu import Frame
-import window
+from luce_ui.ui import Application, TextEditor, Font, Event, FoldRange
+from luce_window.input import EventKind, Key, ScrollUnit
+from luce_gpu.gpu import Frame
+import luce_window.window
 
 pub func text_views() -> unit!:
     scrolling()

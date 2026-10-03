@@ -2,10 +2,10 @@
 ## scrubbing (one undo step per drag), resets, conditions, Tab between
 ## fields, folders remembered across specs, buttons, the context menu, the
 ## value ladder, and a long list inside a scroll view.
-from ui import Application, Font, VStack, ScrollView, Event, ParameterPanel, ParameterSpec, ParameterKind
-from gpu import Frame, Rect
-from input import EventKind, Key
-import window
+from luce_ui.ui import Application, Font, VStack, ScrollView, Event, ParameterPanel, ParameterSpec, ParameterKind
+from luce_gpu.gpu import Frame, Rect
+from luce_window.input import EventKind, Key
+import luce_window.window
 
 class Log:
     pub var begins: int = 0

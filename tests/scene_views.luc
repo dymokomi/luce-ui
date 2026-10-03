@@ -1,9 +1,9 @@
 ## The SceneView widget: composition inside a luce-ui tree, and a renderer
 ## closed from inside its own render while the widget draws it.
-from three import Geometry, Vertex, Bounds, Vector3, Color, Mesh, Scene, Renderer, PerspectiveCamera, SphereGeometry, MeshLambertMaterial, AmbientLight, DirectionalLight
-from ui import Application, SceneView
-from gpu import Frame
-import window
+from luce_3d.graphics import Geometry, Vertex, Bounds, Vector3, Color, Mesh, Scene, Renderer, PerspectiveCamera, SphereGeometry, MeshLambertMaterial, AmbientLight, DirectionalLight
+from luce_ui.ui import Application, SceneView
+from luce_gpu.gpu import Frame
+import luce_window.window
 
 ## A triangle that closes its renderer the next time it is visited.
 class Closing: Geometry:

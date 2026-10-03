@@ -1,0 +1,442 @@
+## Application intent shared by toolbars, menus and window shortcuts. A command
+## knows nothing about files or editors; the connected callback supplies behavior.
+## An optional id lets a registry find and invoke a command by name, so shortcuts,
+## scripts and other tools can drive the same commands the UI does.
+import luce_window.input
+import platform
+import interop
+import ownership
+import memory
+import result
+
+## A key chord: `key` with or without the primary modifier (Command or Control;
+## either one matches), Shift and Alt, compared exactly. An unknown key binds
+## nothing.
+pub struct Shortcut:
+    pub let key: input.Key = input.Key.unknown
+    pub let primary: bool = false
+    pub let shift: bool = false
+    pub let alt: bool = false
+
+    func matches(event: input.Event) -> bool:
+        return self.key != input.Key.unknown and event.kind == input.EventKind.key_down and event.key == self.key and (event.modifiers.control or event.modifiers.super) == self.primary and event.modifiers.shift == self.shift and event.modifiers.alt == self.alt
+
+    ## Parse a chord like "cmd+shift+s", "f5" or "cmd+alt+[" into a shortcut. The
+    ## `+`-separated tokens are case-insensitive: `cmd`/`ctrl`/`super` map to the
+    ## primary modifier, plus `shift` and `alt`; the final token names the key.
+    ## An empty chord (or "none") is unbound.
+    pub static func parse(text: str) -> Shortcut!:
+        var primary = false
+        var shift = false
+        var alt = false
+        var key = input.Key.unknown
+        var start: usize = 0
+        for index in 0..<text.length + 1:
+            if index == text.length or text.bytes[index] == 43:
+                if index > start:
+                    let token = (str)text.bytes[start..<index]
+                    if fold_equal(token, "cmd") or fold_equal(token, "ctrl") or fold_equal(token, "control") or fold_equal(token, "super") or fold_equal(token, "meta") or fold_equal(token, "primary"):
+                        primary = true
+                    elif fold_equal(token, "shift"):
+                        shift = true
+                    elif fold_equal(token, "alt") or fold_equal(token, "option") or fold_equal(token, "opt"):
+                        alt = true
+                    elif not (fold_equal(token, "none") or fold_equal(token, "unbound")):
+                        key = key_from_name(token)
+                start = index + 1
+        if key == input.Key.unknown and not (fold_equal(text, "") or fold_equal(text, "none") or fold_equal(text, "unbound")):
+            error(result.invalid, "a shortcut chord names an unknown key")
+        return Shortcut(key = key, primary = primary, shift = shift, alt = alt)
+
+    ## Whether the shortcut binds a key at all.
+    pub func is_bound() -> bool:
+        return self.key != input.Key.unknown
+
+    ## The chord as a menu shows it ("⌘⇧S" on macOS, "Ctrl+Shift+S" elsewhere),
+    ## or "" when unbound.
+    pub func text() -> interop.Owned[str]!:
+        var buffer: u8[32]
+        let length = write_chord(self, buffer)
+        return try interop.copy_text((str)buffer[..<length])
+
+    ## The chord as a settings file stores it and `parse` reads it back:
+    ## "cmd+shift+s", "f5", "alt+[", or "none" when unbound.
+    pub func chord() -> interop.Owned[str]!:
+        var buffer: u8[48]
+        let length = write_storable(self, buffer)
+        return try interop.copy_text((str)buffer[..<length])
+
+## A named action: its caption, shortcut, optional registry id, enabled state
+## and the callbacks that triggering it runs.
+pub struct Command:
+    let name: interop.Owned[str]
+    var caption: interop.Owned[str]
+    let triggered: interop.Signal[unit]
+    var binding: Shortcut
+    var enabled: bool
+    var divider: bool
+    var checked: bool
+
+    ## `divider` makes a non-selectable separator that groups the items around it in a
+    ## menu: it carries no caption or action, draws as a line, and is skipped for
+    ## selection and search. Build one with `Command("", divider = true)`.
+    pub func init(text: str, shortcut: Shortcut = Shortcut(), id: str = "", divider: bool = false) -> !:
+        let name = try interop.copy_text(id)
+        errdefer name.release()
+        let caption = try interop.copy_text(text)
+        errdefer caption.release()
+        let triggered = try interop.Signal[unit]()
+        self.name = name
+        self.caption = caption
+        self.triggered = triggered
+        self.binding = shortcut
+        self.enabled = not divider
+        self.divider = divider
+        self.checked = false
+
+    pub func is_divider() -> bool:
+        return self.divider
+
+    ## The registry name, empty for an anonymous command.
+    pub func id() -> str:
+        return self.name.value
+
+    pub func text() -> interop.Owned[str]:
+        return self.caption.clone()
+
+    ## Relabel a live command, for one whose caption reflects its state.
+    pub mutating func set_text(text: str) -> !:
+        let replacement = try interop.copy_text(text)
+        let previous_caption = self.caption
+        self.caption = replacement
+        previous_caption.release()
+
+    pub func shortcut() -> Shortcut:
+        return self.binding
+
+    ## Rebind this command, for a keymap loaded from settings.
+    pub mutating func set_shortcut(shortcut: Shortcut):
+        self.binding = shortcut
+
+    ## Write a display label for the shortcut into `buffer` (macOS modifier glyphs then
+    ## the key), returning the byte count; zero when the command has no binding.
+    pub func write_shortcut(buffer: u8[]) -> usize:
+        return write_chord(self.binding, buffer)
+
+    pub func is_enabled() -> bool:
+        return self.enabled
+
+    ## A command that is a setting on or off: a menu draws a tick after it when on.
+    pub func is_checked() -> bool:
+        return self.checked
+
+    pub mutating func set_checked(checked: bool):
+        self.checked = checked
+
+    ## A disabled command ignores `trigger`; its shortcut still consumes the key.
+    pub mutating func set_enabled(enabled: bool):
+        self.enabled = enabled
+
+    pub func on_trigger(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.triggered.connect(callback)
+
+    ## Run the connected callbacks; nothing while disabled.
+    pub func trigger() -> interop.Outcome[unit]:
+        return self.triggered.emit(()) if self.enabled else result.success[unit](())
+
+    pub mutating func close():
+        self.triggered.close()
+        self.triggered.release()
+        self.caption.release()
+        self.name.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.name.trace(visit, context)
+        self.caption.trace(visit, context)
+        self.triggered.trace(visit, context)
+
+pub let command_type: interop.Type[Command] = interop.Type[Command]("Command", Command.close, Command.trace, closeable = true, main_thread = true)
+
+## An owning command registry used by applications and menus. Replacement is
+## atomic and callbacks retain their selected command across reentrant changes.
+## `find` resolves a command by id so a keymap or script can invoke it.
+pub struct Commands:
+    var items: interop.Reference[Command][]
+
+    pub func init():
+        var empty: interop.Reference[Command][]
+        self.items = empty
+
+    pub func values() -> const interop.Reference[Command][]:
+        return self.items
+
+    ## The command with this id, or none. An empty id never matches.
+    pub func find(id: str) -> interop.Reference[Command]?:
+        if id == "":
+            return none
+        for item in self.items:
+            if item.value().id() == id:
+                return item.clone()
+        return none
+
+    ## Replace the registry with `items`, at most 4096, retaining each.
+    pub mutating func set(items: const interop.Reference[Command][]) -> !:
+        if items.length > 4096:
+            error(result.invalid, "a command registry supports at most 4096 entries")
+        for item in items:
+            discard(try item.get())
+        var copied: interop.Reference[Command][]
+        if items.length > 0:
+            copied = try alloc interop.Reference[Command][items.length] in memory.heap
+            for index in 0..<items.length:
+                copied[index] = items[index].clone()
+        # The new list in place before the old one is released: a release can
+        # run the cycle collector, which traces `items`.
+        let previous = self.items
+        self.items = copied
+        release_commands(previous)
+
+    ## Match a key press against the shortcuts in registry order. The first match
+    ## consumes the event and triggers its command, unless the press is a key
+    ## repeat or the command is disabled. Returns whether a shortcut consumed it.
+    pub func dispatch(event: input.Event) -> interop.Outcome[bool]:
+        for item in self.items:
+            if item.value().shortcut().matches(event):
+                let selected = item.clone()
+                defer selected.release()
+                if not event.repeated:
+                    let invoked = selected.value().trigger()
+                    defer invoked.release()
+                    discard(invoked.get() catch failure:
+                        return result.failure[bool](failure.code, failure.message))
+                return result.success[bool](true)
+        return result.success[bool](false)
+
+    pub mutating func close():
+        let previous = self.items
+        var empty: interop.Reference[Command][]
+        self.items = empty
+        release_commands(previous)
+
+    pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        for item in self.items:
+            item.trace(visit, context)
+
+func release_commands(items: interop.Reference[Command][]):
+    for item in items:
+        item.release()
+    if items.length > 0:
+        free(items) in memory.heap
+
+## macOS modifier glyphs (⌥⇧⌘) then the key. Key names stay ASCII so the label reads
+## correctly even when the UI font lacks the fancier dedicated key glyphs.
+func write_chord(shortcut: Shortcut, buffer: u8[]) -> usize:
+    if shortcut.key == input.Key.unknown:
+        return 0
+    var pos: usize = 0
+    if not platform.macos:
+        # Windows and Linux spell modifiers out, and their UI fonts lack the Mac glyphs.
+        if shortcut.primary:
+            pos = put_bytes(buffer, pos, b"Ctrl+")
+        if shortcut.shift:
+            pos = put_bytes(buffer, pos, b"Shift+")
+        if shortcut.alt:
+            pos = put_bytes(buffer, pos, b"Alt+")
+        return write_key(shortcut.key, buffer, pos)
+    if shortcut.alt:
+        pos = put_bytes(buffer, pos, b"\xe2\x8c\xa5")
+    if shortcut.shift:
+        pos = put_bytes(buffer, pos, b"\xe2\x87\xa7")
+    if shortcut.primary:
+        pos = put_bytes(buffer, pos, b"\xe2\x8c\x98")
+    return write_key(shortcut.key, buffer, pos)
+
+## The storable, parseable form of a chord: lowercase tokens joined by `+`.
+func write_storable(shortcut: Shortcut, buffer: u8[]) -> usize:
+    if shortcut.key == input.Key.unknown:
+        return put_bytes(buffer, 0, b"none")
+    var pos: usize = 0
+    if shortcut.primary:
+        pos = put_bytes(buffer, pos, b"cmd+")
+    if shortcut.shift:
+        pos = put_bytes(buffer, pos, b"shift+")
+    if shortcut.alt:
+        pos = put_bytes(buffer, pos, b"alt+")
+    let code = (u16)shortcut.key
+    if code >= (u16)input.Key.a and code <= (u16)input.Key.z:
+        let letter: u8[1] = [(u8)((u16)'a' + code - (u16)input.Key.a)]
+        return put_bytes(buffer, pos, letter)
+    if shortcut.key == input.Key.digit_0:
+        return put_bytes(buffer, pos, b"0")
+    if code >= (u16)input.Key.digit_1 and code <= (u16)input.Key.digit_9:
+        let digit: u8[1] = [(u8)((u16)'1' + code - (u16)input.Key.digit_1)]
+        return put_bytes(buffer, pos, digit)
+    if code >= (u16)input.Key.f1 and code <= (u16)input.Key.f12:
+        var p = put_bytes(buffer, pos, b"f")
+        let number = code - (u16)input.Key.f1 + 1
+        if number >= 10:
+            let tens: u8[1] = [(u8)((u16)'0' + number // 10)]
+            p = put_bytes(buffer, p, tens)
+        let ones: u8[1] = [(u8)((u16)'0' + number % 10)]
+        return put_bytes(buffer, p, ones)
+    return put_bytes(buffer, pos, storable_word(shortcut.key))
+
+## The name `parse` accepts for a named or symbol key.
+func storable_word(key: input.Key) -> const u8[]:
+    if key == input.Key.enter: return b"enter"
+    if key == input.Key.escape: return b"escape"
+    if key == input.Key.tab: return b"tab"
+    if key == input.Key.space: return b"space"
+    if key == input.Key.backspace: return b"backspace"
+    if key == input.Key.delete: return b"delete"
+    if key == input.Key.left: return b"left"
+    if key == input.Key.right: return b"right"
+    if key == input.Key.up: return b"up"
+    if key == input.Key.down: return b"down"
+    if key == input.Key.home: return b"home"
+    if key == input.Key.end: return b"end"
+    if key == input.Key.page_up: return b"page_up"
+    if key == input.Key.page_down: return b"page_down"
+    return key_word(key)
+
+func put_bytes(buffer: u8[], pos: usize, bytes: const u8[]) -> usize:
+    var p = pos
+    for index in 0..<bytes.length:
+        if p < buffer.length:
+            buffer[p] = bytes[index]
+            p += 1
+    return p
+
+func write_key(key: input.Key, buffer: u8[], pos: usize) -> usize:
+    let code = (u16)key
+    if code >= (u16)input.Key.a and code <= (u16)input.Key.z:
+        let letter: u8[1] = [(u8)((u16)'A' + code - (u16)input.Key.a)]
+        return put_bytes(buffer, pos, letter)
+    if key == input.Key.digit_0:
+        return put_bytes(buffer, pos, b"0")
+    if code >= (u16)input.Key.digit_1 and code <= (u16)input.Key.digit_9:
+        let digit: u8[1] = [(u8)((u16)'1' + code - (u16)input.Key.digit_1)]
+        return put_bytes(buffer, pos, digit)
+    if code >= (u16)input.Key.f1 and code <= (u16)input.Key.f12:
+        var p = put_bytes(buffer, pos, b"F")
+        let number = code - (u16)input.Key.f1 + 1
+        if number >= 10:
+            let tens: u8[1] = [(u8)((u16)'0' + number // 10)]
+            p = put_bytes(buffer, p, tens)
+        let ones: u8[1] = [(u8)((u16)'0' + number % 10)]
+        return put_bytes(buffer, p, ones)
+    return put_bytes(buffer, pos, key_word(key))
+
+func key_word(key: input.Key) -> const u8[]:
+    if key == input.Key.enter: return b"Enter"
+    if key == input.Key.escape: return b"Esc"
+    if key == input.Key.tab: return b"Tab"
+    if key == input.Key.space: return b"Space"
+    if key == input.Key.backspace or key == input.Key.delete: return b"Del"
+    if key == input.Key.left: return b"Left"
+    if key == input.Key.right: return b"Right"
+    if key == input.Key.up: return b"Up"
+    if key == input.Key.down: return b"Down"
+    if key == input.Key.home: return b"Home"
+    if key == input.Key.end: return b"End"
+    if key == input.Key.page_up: return b"PgUp"
+    if key == input.Key.page_down: return b"PgDn"
+    if key == input.Key.left_bracket: return b"["
+    if key == input.Key.right_bracket: return b"]"
+    if key == input.Key.minus: return b"-"
+    if key == input.Key.equal: return b"="
+    if key == input.Key.comma: return b","
+    if key == input.Key.period: return b"."
+    if key == input.Key.slash: return b"/"
+    if key == input.Key.semicolon: return b";"
+    if key == input.Key.apostrophe: return b"'"
+    if key == input.Key.grave: return b"`"
+    if key == input.Key.backslash: return b"\\"
+    return b"?"
+
+## Case-insensitive ASCII compare of a chord token against a lowercase literal.
+func fold_equal(text: str, lower: str) -> bool:
+    if text.length != lower.length:
+        return false
+    for index in 0..<text.length:
+        var byte = text.bytes[index]
+        if byte >= 65 and byte <= 90:
+            byte += 32
+        if byte != lower.bytes[index]:
+            return false
+    return true
+
+## Map a key name to a physical key: a letter, a digit, a punctuation symbol, a
+## function key `f1`..`f12`, or a named editing key. Unknown names are rejected.
+func key_from_name(name: str) -> input.Key:
+    if name.length == 1:
+        var byte = name.bytes[0]
+        if byte >= 65 and byte <= 90:
+            byte += 32
+        if byte >= 97 and byte <= 122:
+            return (input.Key)((u16)input.Key.a + (u16)byte - 97)
+        if byte >= 49 and byte <= 57:
+            return (input.Key)((u16)input.Key.digit_1 + (u16)byte - 49)
+        if byte == 48: return input.Key.digit_0
+        if byte == 91: return input.Key.left_bracket
+        if byte == 93: return input.Key.right_bracket
+        if byte == 45: return input.Key.minus
+        if byte == 61: return input.Key.equal
+        if byte == 44: return input.Key.comma
+        if byte == 46: return input.Key.period
+        if byte == 47: return input.Key.slash
+        if byte == 59: return input.Key.semicolon
+        if byte == 39: return input.Key.apostrophe
+        if byte == 96: return input.Key.grave
+        if byte == 92: return input.Key.backslash
+        return input.Key.unknown
+    if fold_equal(name, "enter") or fold_equal(name, "return"): return input.Key.enter
+    if fold_equal(name, "escape") or fold_equal(name, "esc"): return input.Key.escape
+    if fold_equal(name, "tab"): return input.Key.tab
+    if fold_equal(name, "space"): return input.Key.space
+    if fold_equal(name, "backspace"): return input.Key.backspace
+    if fold_equal(name, "delete") or fold_equal(name, "del"): return input.Key.delete
+    if fold_equal(name, "left"): return input.Key.left
+    if fold_equal(name, "right"): return input.Key.right
+    if fold_equal(name, "up"): return input.Key.up
+    if fold_equal(name, "down"): return input.Key.down
+    if fold_equal(name, "home"): return input.Key.home
+    if fold_equal(name, "end"): return input.Key.end
+    if fold_equal(name, "page_up") or fold_equal(name, "pageup"): return input.Key.page_up
+    if fold_equal(name, "page_down") or fold_equal(name, "pagedown"): return input.Key.page_down
+    if name.length >= 2 and (name.bytes[0] == 102 or name.bytes[0] == 70):
+        var number: u16 = 0
+        for index in 1..<name.length:
+            let digit = name.bytes[index]
+            if digit < 48 or digit > 57:
+                return input.Key.unknown
+            number = number * 10 + (u16)digit - 48
+        if number >= 1 and number <= 12:
+            return (input.Key)((u16)input.Key.f1 + number - 1)
+    return input.Key.unknown
+
+test "Shortcut.parse reads modifiers, letters, digits, symbols and function keys":
+    let save = try Shortcut.parse("cmd+s")
+    assert(save.key == input.Key.s and save.primary and not save.shift and not save.alt)
+    let all_mods = try Shortcut.parse("Cmd+Shift+Alt+[")
+    assert(all_mods.key == input.Key.left_bracket and all_mods.primary and all_mods.shift and all_mods.alt)
+    assert((try Shortcut.parse("f5")).key == input.Key.f5)
+    assert((try Shortcut.parse("shift+f12")).key == input.Key.f12)
+    assert((try Shortcut.parse("cmd+1")).key == input.Key.digit_1)
+    assert((try Shortcut.parse("none")).key == input.Key.unknown)
+    var rejected = false
+    discard(Shortcut.parse("cmd+nope") catch failure:
+        rejected = true
+        recover Shortcut())
+    assert(rejected)
+
+test "a shortcut round-trips through its storable chord":
+    for chord in ["cmd+shift+s", "f5", "alt+[", "cmd+alt+left", "shift+f12", "none", "cmd+0", "cmd+,", "page_down"]:
+        let parsed = try Shortcut.parse(chord)
+        let stored = try parsed.chord()
+        defer stored.release()
+        assert(stored.value == chord)
+    let shown = try (try Shortcut.parse("cmd+shift+s")).text()
+    defer shown.release()
+    assert(shown.value == "⇧⌘S")
+    assert(not Shortcut().is_bound() and (try Shortcut.parse("b")).is_bound())

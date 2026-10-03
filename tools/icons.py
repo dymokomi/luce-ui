@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Embed every luciaos-assets rounded SVG into src/luce_ui/icon_assets.lucb.
+"""Embed every luciaos-assets rounded SVG into src/icon_assets.lucb.
 
 Icons are looked up by their file name ("brush-tool", "layer-mask", ...); the
 SVG source is inlined (whitespace collapsed, quotes escaped) so applications have
@@ -45,6 +45,6 @@ lines.append("")
 lines.append("## Every icon name, for pickers and tests.")
 lines.append(f"pub let names: str[{len(icons)}] = [{', '.join(chr(34) + n + chr(34) for n in icons)}]")
 
-out = ROOT / "src/luce_ui/icon_assets.lucb"
+out = ROOT / "src/icon_assets.lucb"
 out.write_text("\n".join(lines) + "\n")
 print("wrote", out, "with", len(icons), "icons")

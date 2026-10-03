@@ -30,6 +30,6 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True, prefix="luce-ui-tes
     for module in ["text/cells", "text/editing", "text/line_input", "text/projection_tests", "text/diff", "docking/model_tests", "raster", "widgets/table_view", "widgets/table_selection", "widgets/color_wheel", "widgets/number_field", "widgets/parameter_text"]:
         for flags in [["--native"], ["--backend=c"]]:
             subprocess.run([str(args.base.resolve()), "test",
-                            str(ROOT / "src/luce_ui" / (module + ".lucb")), *flags],
+                            str(ROOT / "src" / (module + ".lucb")), *flags],
                            check=True, env=env, timeout=120)
 print("PASS UI Base and Luce consumers, native and comparison modes")

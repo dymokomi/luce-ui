@@ -1,5 +1,5 @@
-from ui import Application, Pane, PaneHeader, Icon, IconKind, ListItem, ListView, Font, Size, Event
-from input import EventKind
+from luce_ui.ui import Application, Pane, PaneHeader, Icon, IconKind, ListItem, ListView, Font, Size, Event
+from luce_window.input import EventKind
 
 pub func headers() -> unit!:
     let font = Font()

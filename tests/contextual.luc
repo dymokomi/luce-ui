@@ -1,6 +1,6 @@
-from ui import Application, Button, Command, CommandPalette, ContextMenu, TextPrompt, TextEditor, ListView, VStack, Pane, Event, Font, Theme
-from input import EventKind, Key
-from ui import ListItem
+from luce_ui.ui import Application, Button, Command, CommandPalette, ContextMenu, TextPrompt, TextEditor, ListView, VStack, Pane, Event, Font, Theme
+from luce_window.input import EventKind, Key
+from luce_ui.ui import ListItem
 import time
 
 pub func contextual() -> unit!:

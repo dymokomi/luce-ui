@@ -1,14 +1,14 @@
 ## Wide text on real pixels: in "田a" the ideograph takes two cells, so selecting
 ## the 'a' paints the third cell of the line, not the second. Sampled below the
 ## glyphs, where only the selection and background show.
-import gpu
+import luce_gpu.gpu
 import interop
 import memory
-import ui
-import window
+import luce_ui.ui
+import luce_window.window
 import native
 import style_pixels
-from ui import Application, TextEditor, Widget
+from luce_ui.ui import Application, TextEditor, Widget
 
 pub func check(host: window.Window, surface: gpu.Surface) -> !:
     try host.resize(205, 120)

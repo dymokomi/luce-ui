@@ -1,16 +1,16 @@
 ## Read back real Metal pixels through the standard library's test observer.
 ## The UI package itself contains no platform calls or native framework settings.
-import gpu
+import luce_gpu.gpu
 import interop
 import memory
 import ownership
-import window
+import luce_window.window
 import native
-import ui
+import luce_ui.ui
 import style_pixels
 import docking_pixels
 import text_pixels
-from ui import Application, Button, Viewport, HStack, Widget, Painter, Rect, Size, Alignment
+from luce_ui.ui import Application, Button, Viewport, HStack, Widget, Painter, Rect, Size, Alignment
 
 struct Paint:
     var saved: interop.View[gpu.RenderTarget]?

@@ -1,0 +1,49 @@
+## The text editor's styling inputs: syntax highlight spans, color swatches
+## and the editor theme's colors.
+import luce_gpu.gpu
+
+## Half-open scalar ranges. Ordered, non-overlapping spans can come from any
+## language service; the UI library has no Luce-specific lexer dependency.
+pub struct Highlight:
+    pub let start: i64
+    pub let end: i64
+    pub let color: gpu.Color
+
+## The number of character cells a color chip reserves before its scalar when the
+## editor is not soft-wrapping: the chip is a square about a line tall, so two
+## monospace cells sit closest to that width.
+pub let swatch_span: usize = 2
+
+## A color chip drawn immediately before the scalar at `offset` — used to show a
+## literal color (e.g. a `#rrggbb` hex) beside its text. Point decorations, ordered
+## by ascending offset; published by the same language service that emits highlights.
+pub struct Swatch:
+    pub let offset: i64
+    pub let color: gpu.Color
+
+pub struct EditorTheme:
+    pub var background: gpu.Color = gpu.Color(0.012, 0.017, 0.027)
+    pub var foreground: gpu.Color = gpu.Color(0.68, 0.73, 0.82)
+    pub var gutter: gpu.Color = gpu.Color(0.018, 0.024, 0.035)
+    pub var line_number: gpu.Color = gpu.Color(0.16, 0.22, 0.31)
+    pub var current_line: gpu.Color = gpu.Color(0.022, 0.034, 0.052)
+    pub var gutter_active: gpu.Color = gpu.Color(0.055, 0.10, 0.16)
+    pub var gutter_hover: gpu.Color = gpu.Color(0.045, 0.065, 0.09)
+    pub var active_line_number: gpu.Color = gpu.Color(0.68, 0.73, 0.82)
+    pub var selection: gpu.Color = gpu.Color(0.035, 0.11, 0.22)
+    pub var caret: gpu.Color = gpu.Color(0.2, 0.66, 0.92)
+    pub var caret_width: f64 = 1.0
+    pub var scrollbar: gpu.Color = gpu.Color(0.09, 0.15, 0.23)
+    pub var diff_added: gpu.Color = gpu.Color(0.24, 0.63, 0.35)
+    pub var diff_modified: gpu.Color = gpu.Color(0.20, 0.55, 0.86)
+    pub var diff_deleted: gpu.Color = gpu.Color(0.82, 0.32, 0.32)
+
+## The value 0..15 of a hex-digit scalar, or -1 when it is not one.
+pub func hex_digit(scalar: u32) -> i64:
+    if scalar >= (u32)'0' and scalar <= (u32)'9':
+        return (i64)(scalar - (u32)'0')
+    if scalar >= (u32)'a' and scalar <= (u32)'f':
+        return (i64)(scalar - (u32)'a') + 10
+    if scalar >= (u32)'A' and scalar <= (u32)'F':
+        return (i64)(scalar - (u32)'A') + 10
+    return -1

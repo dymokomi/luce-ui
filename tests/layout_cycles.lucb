@@ -1,11 +1,11 @@
 ## A callback-like retained parent edge makes layout owners part of a cycle.
 ## The collector may finalize a child's layout before detaching its widget.
-import gpu
+import luce_gpu.gpu
 import interop
 import memory
 import ownership
-import ui
-from ui import Layout, Widget, Size, Constraints, Event, Spacer, HStack, Application
+import luce_ui.ui
+from luce_ui.ui import Layout, Widget, Size, Constraints, Event, Spacer, HStack, Application
 
 struct Child: Widget:
     let box: interop.Reference[Layout]
