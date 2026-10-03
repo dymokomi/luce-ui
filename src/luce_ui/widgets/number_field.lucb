@@ -241,9 +241,8 @@ pub struct NumberField: Widget:
             return
         var digits: u8[48]
         let shown = try format_number(digits, self.current, self.decimals)
-        let advance = self.font.value().advance()
         # Right-aligned value, then the suffix in the muted color.
-        let suffix_width = (f64)self.suffix.value.length * advance
+        let suffix_width = try self.font.value().measure(self.suffix.value)
         let value_width = try self.font.value().measure(shown)
         var x = size.width - inset - suffix_width - value_width
         if x < inset:

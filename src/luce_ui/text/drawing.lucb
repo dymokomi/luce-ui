@@ -7,6 +7,7 @@ import utf8
 from luce_ui.font import Font
 from luce_ui.painter import Painter
 from luce_ui.geometry import Point
+from luce_ui.text.cells import grid
 from luce_ui.text.document import Document
 from luce_ui.text.projection import Projection
 from luce_ui.text.folding import Folding
@@ -141,7 +142,7 @@ func paint_line(document: const Document*, painter: Painter*, start: usize, end:
                 column += swatch_span
                 *swatch += 1
         let scalar = document.scalar(index)
-        let cells = 4 - column % 4 if scalar == 9 else 1
+        let cells = grid(scalar, column)
         let x = origin + (f64)column * advance
         let visible = x + (f64)cells * advance > gutter and x < width - 8.0
         if index == document.caret():

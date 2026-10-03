@@ -1,0 +1,38 @@
+## Wide text on real pixels: in "田a" the ideograph takes two cells, so selecting
+## the 'a' paints the third cell of the line, not the second. Sampled below the
+## glyphs, where only the selection and background show.
+import gpu
+import interop
+import memory
+import ui
+import window
+import native
+import style_pixels
+from ui import Application, TextEditor, Widget
+
+pub func check(host: window.Window, surface: gpu.Surface) -> !:
+    try host.resize(205, 120)
+    let font = try interop.Reference[ui.Font].adopt(new ui.Font() in memory.heap, ui.font_type, memory.heap)
+    defer font.release()
+    let white = gpu.Color(1.0, 1.0, 1.0)
+    let theme = ui.EditorTheme(background = white, foreground = gpu.Color(), gutter = white,
+        current_line = white, selection = gpu.Color(0.0, 1.0, 0.0))
+    let editor = try interop.Reference[TextEditor].adopt(new TextEditor("田a", line_numbers = false, font = font, theme = theme) in memory.heap, ui.text_editor_type, memory.heap)
+    defer editor.release()
+    try editor.value().set_selection(1, 2)
+    let root = editor.as_interface[Widget](editor.value())
+    defer root.release()
+    let app = try interop.Reference[Application].adopt(new Application(root) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    let scale = (try host.size()).scale
+    native.begin("UI pixel contracts")
+    defer native.end()
+    try style_pixels.render(app, host, surface)
+    # Text starts one cell in (no gutter); the selection rectangle runs from two
+    # points above the glyph top to a line height below that.
+    let advance = font.value().advance()
+    let top = (font.value().line_height() - font.value().height()) * 0.5 - 2.0
+    let y = top + font.value().line_height() - 1.0
+    style_pixels.pixel(scale, advance * 2.5, y, 255, 255, 255)
+    style_pixels.pixel(scale, advance * 3.5, y, 0, 255, 0)
+    style_pixels.pixel(scale, advance * 4.5, y, 255, 255, 255)

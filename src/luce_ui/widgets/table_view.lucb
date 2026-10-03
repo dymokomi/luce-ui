@@ -9,9 +9,9 @@ import interop
 import math
 import memory
 import ownership
-import utf8
 import luce_ui.layout as layout
 import luce_ui.result as result
+import luce_ui.text.cells as cell_widths
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 from luce_ui.font import Font, selected_font
@@ -387,38 +387,30 @@ pub struct TableView: Widget:
             column.title.trace(visit, context)
 
 ## Fit `text` into `max_width`, appending an ellipsis (U+2026) when it must be cut.
-## The font is monospace, so one scalar is one cell of `advance`; truncation keeps
-## whole scalars and reserves a cell for the ellipsis. Returns the original text when
-## it fits, otherwise a view into `buffer`, which the caller owns for the draw.
+## Returns the original text when it fits, otherwise a view into `buffer`, which the
+## caller owns for the draw.
 func elide(font: interop.Reference[Font], text: str, max_width: f64, buffer: u8[]) -> str:
     if max_width <= 0.0:
         return ""
-    let advance = font.value().advance()
-    let bytes = text.bytes
-    var count: usize = 0
-    var index: usize = 0
-    while index < bytes.length:
-        let decoded = utf8.decode(bytes, index) else break
-        index += decoded.width
-        count += 1
-    if (f64)count * advance <= max_width:
+    return fit(text, (usize)(max_width / font.value().advance()), buffer)
+
+## `text` cut to `room` monospace cells. Wide scalars take two cells and marks none;
+## when the text is wider, whole scalars are kept in `room - 1` cells and the ellipsis
+## takes the last one. A wide scalar that would straddle the cut is left out, so its
+## cell stays empty before the ellipsis.
+func fit(text: str, room: usize, buffer: u8[]) -> str:
+    if cell_widths.width(text) <= room:
         return text
-    let cells = (usize)(max_width / advance)
-    if cells < 1:
+    if room < 1 or buffer.length < 3:
         return ""
-    let keep = cells - 1
-    var written: usize = 0
-    var scalars: usize = 0
-    index = 0
-    while index < bytes.length and scalars < keep:
-        let decoded = utf8.decode(bytes, index) else break
-        if written + decoded.width + 3 > buffer.length:
-            break
-        for source in index..<index + decoded.width:
-            buffer[written] = bytes[source]
-            written += 1
-        index += decoded.width
-        scalars += 1
+    let kept = cell_widths.prefix(text, room - 1)
+    # A very wide column keeps what the buffer holds, ending on a scalar boundary.
+    var written = kept.length
+    if written + 3 > buffer.length:
+        written = buffer.length - 3
+        while written > 0 and (kept.bytes[written] & 0xC0) == 0x80:
+            written -= 1
+    memory.copy(buffer, kept.bytes, written)
     buffer[written] = (u8)226
     buffer[written + 1] = (u8)128
     buffer[written + 2] = (u8)166
@@ -465,3 +457,18 @@ func release_cells(cells: StoredCell[]):
     release_cells_partial(cells, cells.length)
 
 pub let table_view_type: interop.Type[TableView] = interop.Type[TableView]("TableView", TableView.close, TableView.trace, closeable = true, main_thread = true)
+
+test "elision counts cells: wide scalars are never cut and the ellipsis takes a cell":
+    var buffer: u8[64]
+    assert(fit("abc", 3, buffer) == "abc")
+    assert(fit("abcd", 3, buffer) == "ab…")
+    assert(fit("田中", 4, buffer) == "田中")
+    assert(fit("田中a", 4, buffer) == "田…")
+    assert(fit("会議の件", 7, buffer) == "会議の…")
+    # Three cells: 'a', then 田 would straddle the cut, so its cell stays empty.
+    assert(fit("a田中", 3, buffer) == "a…")
+    assert(fit("e\u{301}tc", 2, buffer) == "e\u{301}…")
+    assert(fit("田中", 1, buffer) == "…")
+    assert(fit("田中", 0, buffer) == "")
+    var small: u8[8]
+    assert(fit("田中会議の件", 11, small) == "田…")

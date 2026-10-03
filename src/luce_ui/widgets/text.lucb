@@ -5,6 +5,7 @@ import math
 import ownership
 import luce_ui.layout as layout
 import luce_ui.result as result
+import luce_ui.text.cells as cell_widths
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event
 from luce_ui.painter import Painter
 from luce_ui.font import Font, selected_font
@@ -75,21 +76,9 @@ pub struct Text: Widget:
         let room = size.width - (try self.font.value().measure(ellipsis))
         if room <= 0.0:
             return
-        let bytes = caption.bytes
-        var fits: usize = 0
-        var low: usize = 0
-        var high = bytes.length
-        while low < high:
-            let middle = boundary(bytes, (low + high + 1) // 2)
-            if middle <= low:
-                break
-            if (try self.font.value().measure((str)bytes[..<middle])) <= room:
-                fits = middle
-                low = middle
-            else:
-                high = middle - 1
-        try painter.text((str)bytes[..<fits], 0.0, y, color = color, font = self.font)
-        try painter.text(ellipsis, try self.font.value().measure((str)bytes[..<fits]), y, color = color, font = self.font)
+        let kept = cell_widths.prefix(caption, (usize)((room + 0.001) / self.font.value().advance()))
+        try painter.text(kept, 0.0, y, color = color, font = self.font)
+        try painter.text(ellipsis, try self.font.value().measure(kept), y, color = color, font = self.font)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
@@ -105,10 +94,3 @@ pub struct Text: Widget:
         self.caption.trace(visit, context)
 
 pub let text_type: interop.Type[Text] = interop.Type[Text]("Text", Text.close, Text.trace, closeable = true, main_thread = true)
-
-## `at`, moved back to the start of the UTF-8 sequence it falls in.
-func boundary(bytes: const u8[], at: usize) -> usize:
-    var index = at
-    while index > 0 and index < bytes.length and (bytes[index] & 0xc0) == 0x80:
-        index -= 1
-    return index

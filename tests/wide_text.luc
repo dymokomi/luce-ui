@@ -1,0 +1,85 @@
+## Wide East Asian text in real widgets: the editor's caret column, clicks and
+## soft wrap, and a text field's click-to-caret, all count two cells for each
+## wide scalar while the caret still steps one scalar at a time.
+from ui import Application, Font, TextEditor, TextField, VStack, Event
+from input import EventKind, Key
+from gpu import Frame
+import window
+
+pub func wide_text() -> unit!:
+    editor_columns()
+    editor_wrap()
+    field_caret()
+
+func click(app: Application, x: float, y: float) -> unit!:
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x, y = y))
+
+func render(app: Application, width: float, height: float) -> unit!:
+    let frame = Frame(window.Size(width, height, width, height, 1.0))
+    app.layout(width, height)
+    app.render(frame.target())
+    frame.close()
+
+func editor_columns() -> unit!:
+    let font = Font()
+    let editor = TextEditor("田中ab\n会議の件", line_numbers = false, font = font)
+    let app = Application(editor)
+    render(app, 400.0, 200.0)
+    app.focus(editor.layout())
+    editor.set_selection(2, 2)
+    assert(editor.column() == 5)
+    # Without a gutter the text starts one cell in. A click 2.6 cells along is
+    # past 田's middle and short of 中's, so the caret goes between them.
+    let left = font.advance()
+    let y = font.line_height() * 0.5
+    click(app, left + font.advance() * 2.6, y)
+    assert(editor.caret() == 1 and editor.column() == 3)
+    click(app, left + font.advance() * 3.4, y)
+    assert(editor.caret() == 2)
+    click(app, left + font.advance() * 0.9, y)
+    assert(editor.caret() == 0)
+    # Arrows still step one scalar; only the column jumps by two.
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.right))
+    assert(editor.caret() == 1 and editor.column() == 3)
+    # Down keeps the column: column 3 on "会議の件" falls inside 議, so the caret
+    # stays before it.
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.down))
+    assert(editor.line() == 2 and editor.caret() == 6 and editor.column() == 3)
+    click(app, left + font.advance() * 5.2, font.line_height() * 1.5)
+    assert(editor.caret() == 8 and editor.column() == 7)
+    app.close()
+
+func editor_wrap() -> unit!:
+    let font = Font()
+    let editor = TextEditor("aaa田中田", line_numbers = false, font = font, wrap = true)
+    let app = Application(editor)
+    # Seven columns of text: "aaa田中" fills them and the last 田 wraps; counted
+    # one cell a scalar the whole line would have fit.
+    let width = float(int(font.advance() * 8.0 + 8.0) + 1)
+    render(app, width, 200.0)
+    assert(editor.wrapping() and editor.visible_line_count() == 2)
+    app.focus(editor.layout())
+    editor.set_selection(1, 1)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.down))
+    assert(editor.line() == 1 and editor.caret() == 5)
+    app.close()
+
+func field_caret() -> unit!:
+    let font = Font()
+    let field = TextField("田中ab", font = font, cells = 16.0)
+    let app = Application(VStack([field], spacing = 0.0))
+    render(app, 400.0, 100.0)
+    let bounds = field.layout().bounds()
+    let inset = font.advance() * 0.75
+    let y = bounds.y + bounds.height * 0.5
+    # The first click focuses and selects all; the second places the caret.
+    click(app, bounds.x + inset + font.advance() * 2.6, y)
+    click(app, bounds.x + inset + font.advance() * 2.6, y)
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 88))
+    assert(field.text() == "田X中ab")
+    click(app, bounds.x + inset + font.advance() * 5.6, y)
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 89))
+    assert(field.text() == "田X中aYb")
+    render(app, 400.0, 100.0)
+    app.close()

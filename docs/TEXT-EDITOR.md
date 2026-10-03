@@ -28,7 +28,10 @@ a Boolean callback that can keep unsaved work open. `set_error_handler` reports
 recoverable input failures inside the app. These retained callbacks participate
 in the same cycle collection as other native and Luce objects.
 
-`Font` renders native antialiased text. Shaping, bidirectional layout,
+`Font` renders native antialiased text. Columns count monospace cells: a wide
+East Asian scalar takes two, a combining mark none, a tab runs to the next stop of
+four. `column()` reports cells, clicks land on the nearest scalar boundary, and soft
+wrap moves a wide scalar that would cross the edge to the next row. Shaping, bidirectional layout,
 grapheme-aware caret movement, accessibility, inline IME preedit and candidate
 positioning need separate work. History is limited to 128 edits and 16 MiB of
 changed ranges; documents support up to 1,048,576 scalars.

@@ -183,8 +183,8 @@ extend TextEditor:
         let rows = self.projection.visible_count()
         let raw = (usize)(math.max(0.0, y - drawing.vertical_padding(self.font) + self.scroll_y) / self.font.value().line_height())
         let segment = self.projection.row(raw if raw < rows else (rows - 1 if rows > 0 else 0))
-        let cells = (usize)(math.max(0.0, x - self.gutter_width() - self.font.value().advance() + self.scroll_x) / self.font.value().advance() + 0.5)
-        var offset = editing.at_column(&self.document, segment.physical, segment.column + cells, self.active_swatches())
+        let cells = math.max(0.0, x - self.gutter_width() - self.font.value().advance() + self.scroll_x) / self.font.value().advance()
+        var offset = editing.at_x(&self.document, segment.physical, (f64)segment.column + cells, self.active_swatches())
         if offset > segment.end:
             offset = segment.end
         if offset < segment.start:

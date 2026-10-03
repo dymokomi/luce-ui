@@ -120,6 +120,11 @@ pub struct Font:
     pub func measure(text: str) -> f64!:
         return try self.state.value().face.measure(text)
 
+    ## The monospace cells `text` takes: two per wide East Asian scalar, none per
+    ## combining mark, one for the rest. Fails when `text` is not UTF-8.
+    pub func cells(text: str) -> i64!:
+        return (i64)(try fonts.text_cells(text))
+
     ## Internal rendering entry: cache-owned pixels are copied into the frame.
     ## The application never sees native fonts, raster storage or backend objects.
     pub func draw(target: interop.View[gpu.RenderTarget], text: str, x: f64, y: f64, color: gpu.Color) -> !:

@@ -7,6 +7,7 @@ from interop import Connection
 from input import EventKind, Key, ScrollUnit
 from ui import Command, Shortcut, Toolbar, Menu, Theme
 from text_views import text_views
+from wide_text import wide_text
 from panes import panes
 from contextual import contextual
 from hover import hover
@@ -161,6 +162,7 @@ pub func main(arguments: list[str]) -> int!:
     app.render(target)
     frame.close()
     text_views()
+    wide_text()
     panes()
     scene_views()
     commands_and_themes()

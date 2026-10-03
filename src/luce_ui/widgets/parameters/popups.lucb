@@ -45,8 +45,8 @@ pub struct ParameterTip: Widget:
 
     ## Characters to a line: at most 44, fewer for a short doc.
     func columns() -> usize:
-        let doc = (usize)between((i64)scalars(self.doc.value), 0, 44)
-        let name = scalars(self.name.value)
+        let doc = (usize)between((i64)cell_widths.width(self.doc.value), 0, 44)
+        let name = cell_widths.width(self.name.value)
         return doc if doc > name else name
 
     func lines() -> usize:
@@ -105,19 +105,20 @@ pub struct ParameterTip: Widget:
 
 pub let parameter_tip_type: interop.Type[ParameterTip] = interop.Type[ParameterTip]("ParameterTip", ParameterTip.close, ParameterTip.trace, closeable = true, main_thread = true)
 
-## The line of `text` from `start` that fits `columns` scalars, broken at a
-## space when it can be: where it ends, and where the next begins.
+## The line of `text` from `start` that fits `columns` cells, broken at a space
+## when it can be: where it ends, and where the next begins. A line always takes at
+## least one scalar, and a wide one that would cross the edge starts the next.
 func wrap(text: str, start: usize, columns: usize) -> (usize, usize):
-    var at = start
-    var seen: usize = 0
-    var space: usize? = none
-    while at < text.length and seen < columns:
-        if text.bytes[at] == ' ':
-            space = at
+    let line = cell_widths.prefix((str)text.bytes[start..], columns)
+    var at = start + line.length
+    if at == start and at < text.length:
         at += 1
         while at < text.length and text.bytes[at] & 0xC0 == 0x80:
             at += 1
-        seen += 1
+    var space: usize? = none
+    for index in start..<at:
+        if text.bytes[index] == ' ':
+            space = index
     if at >= text.length:
         return (text.length, text.length)
     if let broken = space:

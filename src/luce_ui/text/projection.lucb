@@ -5,6 +5,7 @@
 ## more visual rows, split at word boundaries to the wrap width. Wrapping is off
 ## by default, and the unwrapped path is unchanged.
 import memory
+from luce_ui.text.cells import grid
 from luce_ui.text.document import Document
 from luce_ui.text.folding import Folding
 
@@ -235,7 +236,7 @@ pub struct Projection:
                 offset = index + 1
                 columns = 0
             else:
-                columns += 4 - columns % 4 if scalar == 9 else 1
+                columns += grid(scalar, columns)
         if suffix == self.lines.length:
             lines[row] = Line(offset, end, columns)
             row += 1
@@ -275,7 +276,9 @@ pub struct Projection:
 
 ## Find where a segment beginning at `start`/`start_column` should end so it is at
 ## most `wrap` columns wide, preferring the last space inside it and otherwise
-## breaking hard. Always makes progress: a segment holds at least one scalar.
+## breaking hard. Always makes progress: a segment holds at least one scalar. A wide
+## scalar that would cross the edge starts the next segment; zero-width marks stay
+## with their base.
 func wrap_break(document: const Document*, start: usize, end: usize, start_column: usize, wrap: usize) -> Break:
     var index = start
     var column = start_column
@@ -284,7 +287,7 @@ func wrap_break(document: const Document*, start: usize, end: usize, start_colum
     var has_break = false
     while index < end:
         let scalar = document.scalar(index)
-        let cells = 4 - column % 4 if scalar == 9 else 1
+        let cells = grid(scalar, column)
         if index > start and column + cells - start_column > wrap:
             break
         column += cells

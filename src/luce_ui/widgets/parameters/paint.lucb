@@ -107,12 +107,12 @@ extend ParameterPanel:
     func paint_fitted(painter: Painter*, text: str, x: f64, y: f64, room: f64, ink: gpu.Color) -> !:
         let advance = self.font.value().advance()
         let fits = (usize)math.max(0.0, math.floor(room / advance))
-        if scalars(text) <= fits:
+        if cell_widths.width(text) <= fits:
             try painter.text(text, x, y, ink, self.font)
             return
         if fits < 2:
             return
-        let kept = first_scalars(text, fits - 1)
+        let kept = cell_widths.prefix(text, fits - 1)
         try painter.text(kept, x, y, ink, self.font)
         try painter.text("…", x + (f64)(fits - 1) * advance, y, ink, self.font)
 

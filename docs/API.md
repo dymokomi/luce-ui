@@ -23,7 +23,7 @@ All objects and callbacks belong to the main thread.
 | `Application` | Content, title, dimensions, optional `game`/`fps`/`fullscreen`; `run`, `stop`, `close`, `on_frame`, `set_game`, `set_fps`, `set_fullscreen`, `set_commands`, `command`, `layout`, `dispatch`, `render` |
 | `Raster` | Mutable RGBA surface; `set_pixel`, `put`, `fill`, `fill_rect`, `dab`, `draw`, `color_at` |
 | `Painter` | Checked GPU target; `rectangle(rect, color, opacity=1.0)`, `triangle(a, b, c, color)`, `line(a, b, width, color)`, `text`, `target` |
-| `Font` | Installed monospace family and size; `measure`, `advance`, `height`, `line_height` |
+| `Font` | Installed monospace family and size; `measure`, `cells`, `advance`, `height`, `line_height` |
 | `Command` | Optional registry `id`, label and `Shortcut`; `id`, `on_trigger`, `trigger`, `set_enabled`, `set_text` |
 | `Toolbar` | Heterogeneous children and shared font; compact row, `set_children` |
 | `Menu` | Label, actions and shared font; `open`, `is_open`, `layout` |
@@ -94,6 +94,10 @@ content repaints at each intermediate size instead of stretching the last frame.
 `Font` uses installed native monospace faces and caches antialiased coverage at
 backing scale. The default is 14 points on every control. Share a Font explicitly
 for consistent typography; logical metrics drive drawing and hit testing.
+Text sits on a grid of `advance`-wide cells, counted as a terminal does: a wide
+East Asian scalar takes two cells, a combining mark none (`Font.cells(text)`).
+Editor columns, carets, clicks, wrapping and truncation all count cells, so
+Japanese, Chinese and Korean text lines up; the caret still steps one scalar.
 Single-line labels are limited to 4096 bytes and 1024 Unicode scalars. Font shaping,
 bidi, grapheme navigation and arbitrary font-file loading are not yet provided.
 

@@ -8,6 +8,7 @@ import math
 import memory
 import utf8
 import window
+import luce_ui.text.cells as cell_widths
 import luce_ui.text.editing as editing
 import luce_ui.result as result
 from luce_ui.text.document import Document
@@ -19,12 +20,12 @@ from luce_ui.theme import Theme
 pub struct LineInput:
     var document: Document
     var dragging: bool
-    var first_column: usize
+    var first: usize
 
     pub func init() -> !:
         self.document = try Document()
         self.dragging = false
-        self.first_column = 0
+        self.first = 0
 
     pub func text() -> interop.Owned[str]!:
         return try self.document.text()
@@ -99,35 +100,63 @@ pub struct LineInput:
             self.dragging = false
             return
         if event.kind == input.EventKind.pointer_down and event.button == 0 and event.x >= x and event.x < x + width and event.y >= y and event.y < y + height:
-            let columns = (usize)math.max(1.0, width / font.value().advance() - 1.0)
-            let caret = self.document.caret()
-            self.first_column = caret - columns if caret > columns else 0
-            let column = (usize)math.max(0.0, (event.x - x) / font.value().advance() + 0.5) + self.first_column
-            let offset = column if column < self.document.length() else self.document.length()
+            self.first = self.window_start(visible_cells(font, width))
+            let offset = self.offset_at(font.value().advance(), event.x - x)
             try self.document.select(self.document.anchor() if event.shift else offset, offset)
             self.dragging = true
         elif event.kind == input.EventKind.pointer_moved and self.dragging:
-            let column = (usize)math.max(0.0, (event.x - x) / font.value().advance() + 0.5) + self.first_column
-            try self.document.select(self.document.anchor(), column if column < self.document.length() else self.document.length())
+            try self.document.select(self.document.anchor(), self.offset_at(font.value().advance(), event.x - x))
+
+    ## The caret boundary nearest a point `x` points right of the shown text's left
+    ## edge, in cells of `advance` points from the first shown scalar.
+    func offset_at(advance: f64, x: f64) -> usize:
+        return cell_widths.nearest(&self.document, self.first, self.document.length(), math.max(0.0, x) / advance)
+
+    ## The first scalar shown in a window `columns` cells wide: the start, unless the
+    ## caret would fall past the window, when the caret is kept at its right edge.
+    func window_start(columns: usize) -> usize:
+        let caret = self.document.caret()
+        var start = caret
+        var used: usize = 0
+        while start > 0:
+            let span = cell_widths.grid(self.document.scalar(start - 1), 0)
+            if used + span > columns:
+                break
+            used += span
+            start -= 1
+        return start
 
     pub func paint(painter: Painter*, font: interop.Reference[Font], theme: Theme,
                    x: f64, y: f64, width: f64) -> !:
         let advance = font.value().advance()
-        let columns = (usize)math.max(1.0, width / advance - 1.0)
+        let room = visible_cells(font, width)
         let caret = self.document.caret()
-        let start = caret - columns if caret > columns else 0
-        let end = self.document.length() if self.document.length() < start + columns else start + columns
+        let start = self.window_start(room)
+        # Whole scalars that fit the window from `start`; a wide one at the edge waits.
+        var end = start
+        var used: usize = 0
+        while end < self.document.length():
+            let span = cell_widths.grid(self.document.scalar(end), 0)
+            if used + span > room:
+                break
+            used += span
+            end += 1
         let first = start if start > self.document.first() else self.document.first()
         let last = end if end < self.document.last() else self.document.last()
         if last > first:
-            try painter.rectangle(gpu.Rect(x + (f64)(first - start) * advance, y, (f64)(last - first) * advance, font.value().height()), theme.selection)
+            let left = (f64)cell_widths.span(&self.document, start, first) * advance
+            try painter.rectangle(gpu.Rect(x + left, y, (f64)cell_widths.span(&self.document, first, last) * advance, font.value().height()), theme.selection)
         let text = try self.document.text(start, end)
         defer text.release()
         try painter.text(text.value, x, y, theme.foreground, font)
-        try painter.rectangle(gpu.Rect(x + (f64)(caret - start) * advance, y, 1.0, font.value().height()), theme.accent)
+        try painter.rectangle(gpu.Rect(x + (f64)cell_widths.span(&self.document, start, caret) * advance, y, 1.0, font.value().height()), theme.accent)
 
     pub mutating func close():
         self.document.close()
+
+## How many cells a field `width` points wide shows, keeping one for the caret.
+func visible_cells(font: interop.Reference[Font], width: f64) -> usize:
+    return (usize)math.max(1.0, width / font.value().advance() - 1.0)
 
 ## `text` as one line into `into` (as long as `text`); how many bytes it holds.
 ## Line breaks and tabs inside become one space each, other control characters
@@ -179,3 +208,20 @@ test "pasted text becomes one line: breaks at the ends go, inner ones become spa
     let bell = "a\u{7}b"
     assert((str)into[..<single_line(bell, into)] == "ab")
     assert(single_line("\r\n", into) == 0)
+
+test "the shown window and clicks count cells: wide scalars take two":
+    var line = try LineInput()
+    defer line.close()
+    try line.set_text("田中abc")
+    try line.document.select(5, 5)
+    # Four cells keep the caret at the right edge: "abc" fits, 中 would not.
+    assert(line.window_start(4) == 2 and line.window_start(5) == 1 and line.window_start(10) == 0)
+    line.first = 0
+    assert(line.offset_at(10.0, 9.0) == 0)
+    assert(line.offset_at(10.0, 15.0) == 1)
+    assert(line.offset_at(10.0, 29.0) == 1)
+    assert(line.offset_at(10.0, 31.0) == 2)
+    assert(line.offset_at(10.0, 46.0) == 3)
+    assert(line.offset_at(10.0, 500.0) == 5)
+    line.first = 2
+    assert(line.offset_at(10.0, 6.0) == 3)

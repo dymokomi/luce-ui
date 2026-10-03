@@ -3,6 +3,7 @@
 import interop
 import memory
 import strings
+from luce_ui.text.cells import grid
 from luce_ui.text.document import Document
 from luce_ui.text.style import Swatch, swatch_span
 
@@ -141,23 +142,40 @@ pub func column(document: const Document*, position: usize, swatches: const Swat
     for index in document.line_start(position)..<position:
         if has_swatch(swatches, index):
             width += swatch_span
-        width += 4 - width % 4 if document.scalar(index) == 9 else 1
+        width += grid(document.scalar(index), width)
     if has_swatch(swatches, position):
         width += swatch_span
     return width
 
+## The offset on line `row` whose caret sits at or before display column `requested`:
+## a wide scalar the column falls inside keeps the caret before it, and zero-width
+## marks are passed over with their base. Vertical moves keep their column this way.
 pub func at_column(document: const Document*, row: usize, requested: usize, swatches: const Swatch[]) -> usize:
+    return locate(document, row, (f64)requested, false, swatches)
+
+## The offset on line `row` whose caret boundary is nearest the fractional display
+## column `x`: a click past a scalar's middle (a wide one's included) lands after it.
+pub func at_x(document: const Document*, row: usize, x: f64, swatches: const Swatch[]) -> usize:
+    return locate(document, row, x, true, swatches)
+
+## Walk line `row` to `requested` columns: with `nearest`, to the closest boundary,
+## otherwise to the last one not past it. Shared so both agree with `column`.
+func locate(document: const Document*, row: usize, requested: f64, nearest: bool, swatches: const Swatch[]) -> usize:
     var index = document.line_offset(row)
     var width: usize = 0
     while index < document.length() and document.scalar(index) != 10:
+        var before = width
         if has_swatch(swatches, index):
-            if width + swatch_span > requested:
+            before += swatch_span
+            if not nearest and (f64)before > requested:
                 break
-            width += swatch_span
-        let next = width + (4 - width % 4 if document.scalar(index) == 9 else 1)
-        if next > requested:
+        let cells = grid(document.scalar(index), before)
+        if nearest:
+            if cells > 0 and requested < (f64)before + (f64)cells * 0.5:
+                break
+        elif (f64)(before + cells) > requested:
             break
-        width = next
+        width = before + cells
         index += 1
     return index
 

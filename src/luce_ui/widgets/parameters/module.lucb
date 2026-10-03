@@ -35,6 +35,7 @@ import time
 import transfer
 import luce_ui.layout as layout
 import luce_ui.result as result
+import luce_ui.text.cells as cell_widths
 import luce_ui.widgets.parameter_text as parameter_text
 from luce_ui.layout import Widget, Layout, Size, Constraints, Event, Rect
 from luce_ui.painter import Painter

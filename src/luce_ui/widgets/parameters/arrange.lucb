@@ -309,26 +309,6 @@ let tick_room: f64 = 5.0
 ## A toggle's box, the weight of a capital beside the label.
 let toggle_side: f64 = 14.0
 
-## How wide `text` is in `font`: its scalars at the font's advance.
+## How wide `text` is in `font`: its monospace cells at the font's advance.
 func text_width(font: interop.Reference[Font], text: str) -> f64:
-    return (f64)scalars(text) * font.value().advance()
-
-## How many Unicode scalars `text` holds.
-func scalars(text: str) -> usize:
-    var count: usize = 0
-    for byte in text.bytes:
-        if byte & 0xC0 != 0x80:
-            count += 1
-    return count
-
-## The first `count` scalars of `text`.
-func first_scalars(text: str, count: usize) -> str:
-    var seen: usize = 0
-    var at: usize = 0
-    while at < text.length:
-        if text.bytes[at] & 0xC0 != 0x80:
-            if seen == count:
-                break
-            seen += 1
-        at += 1
-    return (str)text.bytes[..<at]
+    return (f64)cell_widths.width(text) * font.value().advance()
