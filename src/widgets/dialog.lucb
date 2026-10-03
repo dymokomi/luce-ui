@@ -1,15 +1,15 @@
 ## The Dialog widget: a centered, non-modal floating card of rows that the host opens and hides.
-import luce_gpu.gpu
+from luce_gpu import gpu
 from theme import default_spacing, default_padding
 import interop
-import luce_std.math
+from luce_std import math
 import ownership
 import layout
 import result
 from layout import Widget, Layout, Size, Constraints, Event
 from painter import Painter
 from geometry import Point
-import luce_window.input
+from luce_window import input
 
 ## A floating card after Compositor's live-previewing panels: a raised face with
 ## a one-point border and the surface radius, centered in the window over the

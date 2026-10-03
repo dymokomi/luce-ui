@@ -1,7 +1,7 @@
 ## The ScrollView widget: one child taller than the room given, scrolled.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 import layout
@@ -9,7 +9,7 @@ import result
 from layout import Widget, Layout, Size, Constraints, Event
 from arrangement import Arrangement
 from painter import Painter
-import luce_window.input
+from luce_window import input
 
 ## Where the child goes, and how far it is scrolled: the arrangement the
 ## view's box asks for its one child's rectangle.

@@ -1,6 +1,6 @@
 ## Pure drop geometry. The header accepts tabs; outer content quarters split.
 ## A pane's middle, like the outside, is no target: a panel let go there floats.
-import luce_std.math
+from luce_std import math
 from luce_gpu.gpu import Rect
 from docking.model import Model, Geometry, DockPosition
 from docking.strip import contains

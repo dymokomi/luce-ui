@@ -1,5 +1,5 @@
 ## The Icon widget.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
 import ownership
 import icons

@@ -1,8 +1,8 @@
 from luce_ui.ui import Application, Font, Button, Text, TextEditor, ListView, Highlight, VStack, Spacer, Widget, Layout, Size, Constraints, Event, Painter
 from luce_gpu.gpu import Frame, RenderTarget, Rect, Color
-import luce_window.window
-import luce_std.math
-import luce_ui.ui
+from luce_window import window
+from luce_std import math
+from luce_ui import ui
 from interop import Connection
 from luce_window.input import EventKind, Key, ScrollUnit
 from luce_ui.ui import Command, Shortcut, Toolbar, Menu, Theme

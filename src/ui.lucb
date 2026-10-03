@@ -10,10 +10,10 @@
 #
 #==============================================================================================
 
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
 import layout
-import luce_window.input
+from luce_window import input
 import platform
 import cursor
 pub type Cursor = input.Cursor

@@ -1,7 +1,7 @@
 from luce_ui.ui import Application, Font, TableView, TableColumn, TableCell, Event
 from luce_gpu.gpu import Frame
 from luce_window.input import EventKind, Key
-import luce_window.window
+from luce_window import window
 
 ## Rows and the header are this tall.
 let row_height: float = 24.0

@@ -2,14 +2,14 @@
 ## Unicode selection and history; popup widgets supply focus and submission. A
 ## `masked` input (a password) shows each character as a bullet in one cell and
 ## never copies its text out.
-import luce_clipboard.clipboard
-import luce_gpu.gpu
-import luce_window.input
+from luce_clipboard import clipboard
+from luce_gpu import gpu
+from luce_window import input
 import interop
-import luce_std.math
+from luce_std import math
 import memory
-import luce_std.utf8
-import luce_window.window
+from luce_std import utf8
+from luce_window import window
 import text.cells as cell_widths
 import text.editing
 import result

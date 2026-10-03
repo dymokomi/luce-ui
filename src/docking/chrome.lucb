@@ -1,8 +1,8 @@
 ## Workspace chrome uses standard GPU regions. Every tab label is clipped away
 ## from its close button and neighbors; overlay previews do not receive input.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
-import luce_std.math
+from luce_std import math
 import icons
 import docking.strip
 from docking.state import State

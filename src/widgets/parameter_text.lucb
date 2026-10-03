@@ -1,7 +1,7 @@
 ## The text a parameter panel reads: arithmetic typed into a numeric field,
 ## the hide and disable conditions of a parameter, and a menu's items. Pure
 ## functions over borrowed text, so they are tested on their own.
-import luce_std.math
+from luce_std import math
 import strings
 
 # -- Arithmetic.

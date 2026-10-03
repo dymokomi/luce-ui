@@ -1,6 +1,6 @@
 ## Docking topology contains only values. Callers edit a copy and publish it
 ## after fallible ownership work succeeds; dragging never mutates this model.
-import luce_std.math
+from luce_std import math
 import result
 import splitting
 from geometry import Size

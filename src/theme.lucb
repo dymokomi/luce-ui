@@ -1,10 +1,9 @@
 ## Semantic colors and font-relative metrics. Themes are values, inherited by
 ## layouts; a subtree may override one without mutating another application.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
-import luce_std.math
-import luce_color.color
-import luce_color.transfer
+from luce_std import math
+from luce_color import color, transfer
 from font import Font
 from text.style import EditorTheme
 import result

@@ -1,15 +1,15 @@
 ## Buttons: the Button widget, its resting styles, and the cursor policy that
 ## follows an action's enabled state.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
-import luce_std.math
+from luce_std import math
 import ownership
 import memory
 import layout
 import result
 from layout import Widget, Layout, Size, Constraints, Event
 from painter import Painter
-import luce_window.input
+from luce_window import input
 from font import Font, selected_font
 from command import Command
 from cursor import CursorSource

@@ -1,9 +1,9 @@
 ## A CPU paint surface for simple drawing programs and tests: round brush dabs,
 ## fills, compositing and pixel reads, drawn to the screen as a texture.
-import luce_gpu.gpu
-import luce_window.window
+from luce_gpu import gpu
+from luce_window import window
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 import result

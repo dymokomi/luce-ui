@@ -1,7 +1,7 @@
 ## The ShadedField widget: a host-shaded color field or strip with a draggable marker.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 import layout
@@ -9,7 +9,7 @@ import result
 from layout import Widget, Layout, Size, Constraints, Event
 from painter import Painter
 from geometry import Point
-import luce_window.input
+from luce_window import input
 
 ## A picker field whose colors the host supplies: a square shaded from a grid
 ## of `columns` × `rows` linear colors (the host computes them in whatever

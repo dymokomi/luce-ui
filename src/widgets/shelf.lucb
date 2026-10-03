@@ -1,7 +1,7 @@
 ## The Shelf widget: a pane's bottom toolbar strip.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
-import luce_std.math
+from luce_std import math
 import ownership
 import layout
 import result

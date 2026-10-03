@@ -1,5 +1,5 @@
 ## The Rule widget: a one-point divider line.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
 import ownership
 import layout

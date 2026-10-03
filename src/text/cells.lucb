@@ -2,8 +2,8 @@
 ## (luce-fonts' `cells`: wide East Asian scalars take two, combining marks none),
 ## so columns, carets, hit tests, wrapping and truncation all count with these
 ## helpers rather than one cell per scalar.
-import luce_fonts.fonts
-import luce_std.utf8
+from luce_fonts import fonts
+from luce_std import utf8
 from text.document import Document
 
 ## The cells `scalar` takes at display `column` of the editor grid: a tab runs to

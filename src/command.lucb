@@ -2,7 +2,7 @@
 ## knows nothing about files or editors; the connected callback supplies behavior.
 ## An optional id lets a registry find and invoke a command by name, so shortcuts,
 ## scripts and other tools can drive the same commands the UI does.
-import luce_window.input
+from luce_window import input
 import platform
 import interop
 import ownership

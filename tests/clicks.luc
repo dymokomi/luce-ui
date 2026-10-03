@@ -1,7 +1,7 @@
 from luce_ui.ui import Application, Font, Text, VStack, Accordion, ShadedField, HsbField, HueStrip, Tabs, Event
 from luce_gpu.gpu import Frame
 from luce_window.input import EventKind
-import luce_window.window
+from luce_window import window
 
 func click(app: Application, x: float, y: float) -> unit!:
     app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y))

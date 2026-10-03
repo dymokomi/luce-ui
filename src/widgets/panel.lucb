@@ -2,7 +2,7 @@
 ## changes its position, never its content owner or document state. A panel
 ## made from a DStack's catalog carries that entry's `id`, so the stack's add
 ## menu knows it is open.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
 import ownership
 import layout

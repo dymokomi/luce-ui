@@ -1,12 +1,12 @@
 ## Read back real Metal pixels through the standard library's test observer.
 ## The UI package itself contains no platform calls or native framework settings.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
 import memory
 import ownership
-import luce_window.window
+from luce_window import window
 import native
-import luce_ui.ui
+from luce_ui import ui
 import style_pixels
 import docking_pixels
 import text_pixels

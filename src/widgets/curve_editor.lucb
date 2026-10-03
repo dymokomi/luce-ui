@@ -1,14 +1,14 @@
 ## The CurveEditor widget: a tone curve edited through draggable control points.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
-import luce_std.math
+from luce_std import math
 import ownership
 import layout
 import result
 from layout import Widget, Layout, Size, Constraints, Event
 from painter import Painter
 from geometry import Point
-import luce_window.input
+from luce_window import input
 
 ## The most control points a curve takes.
 pub let curve_editor_points: usize = 16

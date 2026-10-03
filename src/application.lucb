@@ -2,17 +2,17 @@
 ## frame callbacks, and the run loop that polls input, services timers, lays out
 ## and presents a frame only when something changed.
 import core
-import luce_std.crash
-import luce_dialogs.dialogs
-import luce_gpu.gpu
-import luce_window.input
+from luce_std import crash
+from luce_dialogs import dialogs
+from luce_gpu import gpu
+from luce_window import input
 import interop
-import luce_std.math
+from luce_std import math
 import ownership
 import thread
 import time
-import luce_std.utf8
-import luce_window.window
+from luce_std import utf8
+from luce_window import window
 import result
 import layout
 import scheduler

@@ -1,8 +1,8 @@
 ## The HSB color picker parts (HsbField, HueStrip) and the sRGB/HSB conversions
 ## they and the rest of the library use.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 import layout
@@ -11,7 +11,7 @@ from layout import Widget, Layout, Size, Constraints, Event
 from painter import Painter
 from theme import srgb_decoded
 from geometry import Point
-import luce_window.input
+from luce_window import input
 
 ## The color picker's parts, after Photoshop's and Compositor's: a square
 ## whose x is saturation and y brightness for one hue (`HsbField`), and a

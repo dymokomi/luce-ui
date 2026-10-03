@@ -1,7 +1,7 @@
 ## The GPU side of a CPU picture (an Image, a Raster): its texture is made on the
 ## device of the first target it is drawn on and re-uploaded only when the
 ## picture's pixels changed since the last upload.
-import luce_gpu.gpu
+from luce_gpu import gpu
 
 ## A picture's texture and the device holding it, and the revision last uploaded.
 ## The picture bumps its own revision on every pixel change.

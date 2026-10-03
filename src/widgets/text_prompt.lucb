@@ -1,7 +1,7 @@
 ## A modal prompt owns temporary text, never application state. Submission hides
 ## the popup before invoking the retained callback, allowing another view to open.
-import luce_gpu.gpu
-import luce_window.input
+from luce_gpu import gpu
+from luce_window import input
 import interop
 import memory
 import ownership

@@ -1,6 +1,6 @@
 ## The text editor's styling inputs: syntax highlight spans, color swatches
 ## and the editor theme's colors.
-import luce_gpu.gpu
+from luce_gpu import gpu
 
 ## Half-open scalar ranges. Ordered, non-overlapping spans can come from any
 ## language service; the UI library has no Luce-specific lexer dependency.

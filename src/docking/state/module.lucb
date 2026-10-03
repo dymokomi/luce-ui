@@ -9,10 +9,10 @@
 ## tab_drag (where a drag would dock), input (the stack's chrome: presses, keys,
 ## cursors), floating (floating windows), frame (their chrome widget) and layout
 ## (the arrangement as text).
-import luce_gpu.gpu
-import luce_window.input
+from luce_gpu import gpu
+from luce_window import input
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 import time

@@ -1,6 +1,6 @@
 ## Custom containers supply local rectangles while the tree retains ownership,
 ## clipping, input routing and focus. Placement must not change the widget tree.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
 from geometry import Size
 

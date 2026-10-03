@@ -1,9 +1,9 @@
 ## UI typography owns a native face and a bounded cache of grayscale text runs.
 ## Font copies borrow; widgets clone the shared reference and release it on close.
-import luce_fonts.fonts
-import luce_gpu.gpu
+from luce_fonts import fonts
+from luce_gpu import gpu
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 

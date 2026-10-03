@@ -2,10 +2,10 @@
 ## a secondary action and cancel. It owns no application state; choosing hides the
 ## dialog and emits the chosen role (0 primary, 1 secondary, 2 cancel) so a caller can
 ## save, drop the changes or do nothing. Enter picks the primary, Escape cancels.
-import luce_gpu.gpu
-import luce_window.input
+from luce_gpu import gpu
+from luce_window import input
 import interop
-import luce_std.math
+from luce_std import math
 import ownership
 import layout
 import result

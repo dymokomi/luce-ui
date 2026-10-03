@@ -1,6 +1,6 @@
 ## Pure splitter sizing. When minima cannot fit, preserve them and let ancestor
 ## clipping handle overflow; adjacent panes never overlap or become negative.
-import luce_std.math
+from luce_std import math
 
 pub struct SplitSizes:
     pub let first: f64

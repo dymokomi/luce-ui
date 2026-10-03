@@ -1,8 +1,8 @@
 ## The VStack container widget.
-import luce_gpu.gpu
+from luce_gpu import gpu
 from theme import default_spacing
 import interop
-import luce_std.math
+from luce_std import math
 import ownership
 import layout
 import result

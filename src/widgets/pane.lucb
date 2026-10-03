@@ -1,7 +1,7 @@
 ## The optional header shares the frame's focus and hover color. A one-point
 ## inset keeps header and content drawing inside the border.
-import luce_std.math
-import luce_gpu.gpu
+from luce_std import math
+from luce_gpu import gpu
 import interop
 import ownership
 import layout

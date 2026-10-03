@@ -17,17 +17,17 @@
 #
 #==============================================================================================
 
-import luce_clipboard.clipboard
-import luce_gpu.gpu
-import luce_window.input
+from luce_clipboard import clipboard
+from luce_gpu import gpu
+from luce_window import input
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 import time
-import luce_color.transfer
-import luce_std.utf8
-import luce_window.window
+from luce_color import transfer
+from luce_std import utf8
+from luce_window import window
 import layout
 import result
 import text.drawing

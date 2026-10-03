@@ -4,10 +4,10 @@
 ## owns scrolling, whole-row selection (one row, or several with `multiple`),
 ## keyboard navigation, activation, an optional sticky header and drag-to-resize
 ## column dividers.
-import luce_gpu.gpu
-import luce_window.input
+from luce_gpu import gpu
+from luce_window import input
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 import layout

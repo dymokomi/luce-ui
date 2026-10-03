@@ -1,12 +1,12 @@
-import luce_gpu.gpu
-import luce_window.input
+from luce_gpu import gpu
+from luce_window import input
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 import thread
-import luce_window.window
-import luce_ui.ui
+from luce_window import window
+from luce_ui import ui
 import layout_cycles
 from luce_ui.ui import Widget, Button, Spacer, VStack, HStack, Layout, Size, Application, Painter, Rect, Event, Font, Panel, DStack
 

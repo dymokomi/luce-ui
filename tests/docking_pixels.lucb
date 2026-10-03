@@ -1,12 +1,12 @@
 ## Actual GPU contracts for flat tab headers and an input-transparent docking
 ## preview drawn above content. Distinct colors avoid dependence on the theme.
-import luce_gpu.gpu
-import luce_window.input
+from luce_gpu import gpu
+from luce_window import input
 import interop
 import memory
 import native
-import luce_window.window
-import luce_ui.ui
+from luce_window import window
+from luce_ui import ui
 import style_pixels as pixels
 from luce_ui.ui import Application, DStack, Panel, TextEditor, Widget, DockPosition, Event
 

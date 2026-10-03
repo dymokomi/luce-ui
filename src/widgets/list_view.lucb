@@ -1,9 +1,9 @@
 ## A virtualized, single-selection text list. Applications own entry meaning;
 ## this control owns scrolling, selection, keyboard navigation and activation.
-import luce_gpu.gpu
-import luce_window.input
+from luce_gpu import gpu
+from luce_window import input
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 import layout

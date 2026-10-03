@@ -24,15 +24,15 @@
 #
 #==============================================================================================
 
-import luce_gpu.gpu
-import luce_window.input
+from luce_gpu import gpu
+from luce_window import input
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 import strings
 import time
-import luce_color.transfer
+from luce_color import transfer
 import layout
 import result
 import text.cells as cell_widths

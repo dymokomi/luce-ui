@@ -1,7 +1,7 @@
 ## The ColorWheel widget: GIMP's and Krita's color selector, drawn by one fragment shader.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
-import luce_std.math
+from luce_std import math
 import ownership
 import layout
 import result
@@ -9,7 +9,7 @@ from layout import Widget, Layout, Size, Constraints, Event
 from painter import Painter
 from geometry import Point
 from shaders import color_wheel_frag_words, color_wheel_frag_msl
-import luce_window.input
+from luce_window import input
 
 ## The wheel's shapes: a hue ring around a saturation/brightness triangle that
 ## turns with the hue, the same ring around an upright square, or a disc with

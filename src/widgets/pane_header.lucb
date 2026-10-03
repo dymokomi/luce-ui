@@ -1,8 +1,8 @@
 ## A compact pane title with an optional vector icon. Pane paints the
 ## shared frame background; this widget owns text, font metrics and presentation.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
-import luce_std.math
+from luce_std import math
 import ownership
 import icons
 import layout

@@ -24,10 +24,10 @@
 from theme import Theme
 from painter import Painter
 import splitting
-import luce_gpu.gpu
-import luce_window.input
+from luce_gpu import gpu
+from luce_window import input
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 import thread

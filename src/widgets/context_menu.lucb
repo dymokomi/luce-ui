@@ -1,10 +1,10 @@
 ## A context menu decorates any widget. The tree routes requests to the nearest
 ## provider after the clicked control has updated its selection.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
 import memory
 import ownership
-import luce_window.input
+from luce_window import input
 import layout
 import result
 from layout import Widget, Layout, Size, Constraints, Event

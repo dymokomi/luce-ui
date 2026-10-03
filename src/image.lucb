@@ -1,11 +1,11 @@
 ## CPU-side pictures that widgets and painters draw as GPU textures, uploaded
 ## lazily and re-uploaded only after their pixels change.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
-import luce_color.transfer
+from luce_color import transfer
 import result
 from texture_cache import TextureCache
 

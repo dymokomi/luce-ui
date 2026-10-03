@@ -4,7 +4,7 @@
 from luce_ui.ui import Application, Font, TextEditor, TextField, VStack, Event
 from luce_window.input import EventKind, Key
 from luce_gpu.gpu import Frame
-import luce_window.window
+from luce_window import window
 
 pub func wide_text() -> unit!:
     editor_columns()

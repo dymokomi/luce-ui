@@ -1,9 +1,9 @@
 ## A two-pane splitter nests to build larger workspaces. Its divider participates
 ## in normal pointer capture and keyboard focus, and holds only a weak parent.
-import luce_gpu.gpu
-import luce_window.input
+from luce_gpu import gpu
+from luce_window import input
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 import layout

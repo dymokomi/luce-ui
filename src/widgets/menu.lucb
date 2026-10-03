@@ -1,10 +1,10 @@
 ## A menu composes a compact trigger and a popup action list. Layout owns popup
 ## placement, clipping, modal dispatch and focus restoration; this module owns
 ## only menu selection and command presentation.
-import luce_gpu.gpu
-import luce_window.input
+from luce_gpu import gpu
+from luce_window import input
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 import layout

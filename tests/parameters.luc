@@ -5,7 +5,7 @@
 from luce_ui.ui import Application, Font, VStack, ScrollView, Event, ParameterPanel, ParameterSpec, ParameterKind
 from luce_gpu.gpu import Frame, Rect
 from luce_window.input import EventKind, Key
-import luce_window.window
+from luce_window import window
 
 class Log:
     pub var begins: int = 0

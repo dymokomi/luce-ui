@@ -1,10 +1,10 @@
 ## Immediate-mode drawing for widgets and applications: filled and rounded
 ## rectangles, triangles, meshes, lines, images and text on a render target,
 ## in the target's logical points.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
 import ownership
-import luce_std.math
+from luce_std import math
 import memory
 import result
 from font import Font, selected_font

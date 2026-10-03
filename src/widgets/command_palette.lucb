@@ -1,6 +1,6 @@
 ## A searchable command surface uses the same action list as ordinary menus.
 ## Attach it as a popup child of the application content, then call open().
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
 import memory
 import ownership

@@ -2,7 +2,7 @@
 ## viewport's render callback hands its clipped region to the Renderer, which
 ## fits the projection to that region without changing the camera. luce-3d has no UI
 ## dependency; this adapter is the one place the two packages meet.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
 import memory
 import ownership

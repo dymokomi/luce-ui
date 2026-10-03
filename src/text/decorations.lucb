@@ -1,7 +1,7 @@
 ## Range storage is independent of the language service and renderer. Edits
 ## transform the old set without allocation; publication replaces one interval
 ## transactionally, preserving decorations outside it.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import memory
 import result
 from text.document import TextChange

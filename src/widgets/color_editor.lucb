@@ -2,12 +2,12 @@
 ## preview, and an editable hex field (select, copy, paste, type). It emits the hex
 ## string on every change, so a host can write it straight back to the source. The
 ## host opens it under the swatch that was clicked and connects on_change.
-import luce_gpu.gpu
-import luce_window.input
+from luce_gpu import gpu
+from luce_window import input
 import interop
 import memory
 import ownership
-import luce_std.math
+from luce_std import math
 import layout
 import result
 from layout import Widget, Layout, Constraints, Size, Event

@@ -1,13 +1,13 @@
 ## Distinct test colors make hover, gutter, divider and shadow pixels independent
 ## of the default theme. Sampling avoids glyphs and uses logical-to-backing scale.
-import luce_gpu.gpu
-import luce_window.input
+from luce_gpu import gpu
+from luce_window import input
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import native
-import luce_ui.ui
-import luce_window.window
+from luce_ui import ui
+from luce_window import window
 from luce_ui.ui import Application, Command, Menu, Pane, PaneHeader, IconKind, SplitView, TextEditor, Button, Widget, Event
 
 pub func render(app: interop.Reference[Application], host: window.Window, surface: gpu.Surface) -> !:

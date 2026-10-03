@@ -1,12 +1,12 @@
 ## Editor icons are the shared luciaos rounded SVGs (24×24, currentColor), rasterised by
 ## luce-svg to an anti-aliased coverage bitmap and drawn as a tinted mask, like glyphs. IconKind names the icon; the artwork lives in the embedded
 ## icon_assets table. A blank kind draws nothing.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 from painter import Painter
-import luce_svg.svg
+from luce_svg import svg
 import icon_assets
 
 pub enum IconKind as u8:

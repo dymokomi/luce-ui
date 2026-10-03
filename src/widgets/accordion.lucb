@@ -1,8 +1,8 @@
 ## Accordion: a vertical stack of titled sections, one open at a time, and the
 ## SectionHeader widget that heads each section.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
-import luce_std.math
+from luce_std import math
 import memory
 import ownership
 import time
@@ -11,7 +11,7 @@ import result
 from layout import Widget, Layout, Size, Constraints, Event
 from painter import Painter
 from geometry import Point
-import luce_window.input
+from luce_window import input
 from font import Font, selected_font
 
 ## A section heading of an accordion: the title and a chevron, on the raised

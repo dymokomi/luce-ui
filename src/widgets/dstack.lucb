@@ -1,9 +1,9 @@
 ## Dynamic workspace composition. Applications supply panels and respond to add
 ## and close requests; the framework owns all geometry and docking interaction.
-import luce_gpu.gpu
+from luce_gpu import gpu
 import interop
 import memory
-import luce_std.math
+from luce_std import math
 import ownership
 import layout
 import result
