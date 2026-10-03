@@ -1,5 +1,7 @@
 ## Shared single-line editing for command search and prompts. The document owns
-## Unicode selection and history; popup widgets supply focus and submission.
+## Unicode selection and history; popup widgets supply focus and submission. A
+## `masked` input (a password) shows each character as a bullet in one cell and
+## never copies its text out.
 import clipboard
 import gpu
 import input
@@ -21,11 +23,38 @@ pub struct LineInput:
     var document: Document
     var dragging: bool
     var first: usize
+    pub var masked: bool
 
     pub func init() -> !:
         self.document = try Document()
         self.dragging = false
         self.first = 0
+        self.masked = false
+
+    ## The text from scalar `start` to `end` as shown: bullets when masked.
+    pub func shown(start: usize, end: usize) -> interop.Owned[str]!:
+        if not self.masked:
+            return try self.document.text(start, end)
+        let count = end - start if end > start else 0
+        let bullets = try alloc u8[count * 3] in memory.heap
+        defer free(bullets) in memory.heap
+        for at in 0..<count:
+            bullets[at * 3] = (u8)0xE2
+            bullets[at * 3 + 1] = (u8)0x80
+            bullets[at * 3 + 2] = (u8)0xA2
+        return try interop.copy_text((str)bullets)
+
+    ## The whole text as shown.
+    pub func shown_text() -> interop.Owned[str]!:
+        return try self.shown(0, self.document.length())
+
+    ## The cells scalar `at` takes: one bullet each when masked.
+    func cells_at(at: usize) -> usize:
+        return 1 if self.masked else cell_widths.grid(self.document.scalar(at), 0)
+
+    ## The cells from scalar `start` to `end`.
+    func span(start: usize, end: usize) -> usize:
+        return end - start if self.masked else cell_widths.span(&self.document, start, end)
 
     pub func text() -> interop.Owned[str]!:
         return try self.document.text()
@@ -51,7 +80,8 @@ pub struct LineInput:
             if command and event.key == input.Key.a:
                 try self.document.select(0, self.document.length())
             elif command and (event.key == input.Key.c or event.key == input.Key.x):
-                if self.document.first() != self.document.last():
+                # A masked input keeps its text to itself, as a password field does.
+                if self.document.first() != self.document.last() and not self.masked:
                     let text = try self.document.text(self.document.first(), self.document.last())
                     defer text.release()
                     # Without a desktop clipboard (no X display) a copy does nothing.
@@ -87,11 +117,16 @@ pub struct LineInput:
                 try editing.move(&self.document, self.document.length(), event.shift)
             elif event.key == input.Key.left:
                 let caret = self.document.caret()
-                let offset = editing.word_left(&self.document, caret) if command or event.alt else (caret - 1 if caret > 0 else 0)
+                var offset = caret - 1 if caret > 0 else 0
+                if command or event.alt:
+                    # Masked text has no words to show: a word jump goes to the start.
+                    offset = 0 if self.masked else editing.word_left(&self.document, caret)
                 try editing.move(&self.document, self.document.first() if not event.shift and self.document.first() != self.document.last() else offset, event.shift)
             elif event.key == input.Key.right:
                 let caret = self.document.caret()
-                let offset = editing.word_right(&self.document, caret) if command or event.alt else (caret + 1 if caret < self.document.length() else caret)
+                var offset = caret + 1 if caret < self.document.length() else caret
+                if command or event.alt:
+                    offset = self.document.length() if self.masked else editing.word_right(&self.document, caret)
                 try editing.move(&self.document, self.document.last() if not event.shift and self.document.first() != self.document.last() else offset, event.shift)
         return before != self.document.version()
 
@@ -110,6 +145,9 @@ pub struct LineInput:
     ## The caret boundary nearest a point `x` points right of the shown text's left
     ## edge, in cells of `advance` points from the first shown scalar.
     func offset_at(advance: f64, x: f64) -> usize:
+        if self.masked:
+            let nearest = self.first + (usize)(math.max(0.0, x) / advance + 0.5)
+            return nearest if nearest < self.document.length() else self.document.length()
         return cell_widths.nearest(&self.document, self.first, self.document.length(), math.max(0.0, x) / advance)
 
     ## The first scalar shown in a window `columns` cells wide: the start, unless the
@@ -119,7 +157,7 @@ pub struct LineInput:
         var start = caret
         var used: usize = 0
         while start > 0:
-            let span = cell_widths.grid(self.document.scalar(start - 1), 0)
+            let span = self.cells_at(start - 1)
             if used + span > columns:
                 break
             used += span
@@ -136,7 +174,7 @@ pub struct LineInput:
         var end = start
         var used: usize = 0
         while end < self.document.length():
-            let span = cell_widths.grid(self.document.scalar(end), 0)
+            let span = self.cells_at(end)
             if used + span > room:
                 break
             used += span
@@ -144,12 +182,12 @@ pub struct LineInput:
         let first = start if start > self.document.first() else self.document.first()
         let last = end if end < self.document.last() else self.document.last()
         if last > first:
-            let left = (f64)cell_widths.span(&self.document, start, first) * advance
-            try painter.rectangle(gpu.Rect(x + left, y, (f64)cell_widths.span(&self.document, first, last) * advance, font.value().height()), theme.selection)
-        let text = try self.document.text(start, end)
+            let left = (f64)self.span(start, first) * advance
+            try painter.rectangle(gpu.Rect(x + left, y, (f64)self.span(first, last) * advance, font.value().height()), theme.selection)
+        let text = try self.shown(start, end)
         defer text.release()
         try painter.text(text.value, x, y, theme.foreground, font)
-        try painter.rectangle(gpu.Rect(x + (f64)cell_widths.span(&self.document, start, caret) * advance, y, 1.0, font.value().height()), theme.accent)
+        try painter.rectangle(gpu.Rect(x + (f64)self.span(start, caret) * advance, y, 1.0, font.value().height()), theme.accent)
 
     pub mutating func close():
         self.document.close()
@@ -225,3 +263,24 @@ test "the shown window and clicks count cells: wide scalars take two":
     assert(line.offset_at(10.0, 500.0) == 5)
     line.first = 2
     assert(line.offset_at(10.0, 6.0) == 3)
+
+test "a masked input gives every scalar one cell and copies nothing":
+    var line = try LineInput()
+    defer line.close()
+    line.masked = true
+    try line.set_text("田中abc")
+    try line.document.select(5, 5)
+    # Five bullets, one cell each: four cells show the last four.
+    assert(line.window_start(4) == 1 and line.window_start(5) == 0)
+    line.first = 0
+    assert(line.offset_at(10.0, 4.0) == 0 and line.offset_at(10.0, 6.0) == 1 and line.offset_at(10.0, 21.0) == 2)
+    assert(line.offset_at(10.0, 500.0) == 5)
+    let shown = try line.shown(0, 5)
+    defer shown.release()
+    assert(shown.value == "•••••")
+    try line.document.select(0, 5)
+    # Copy and cut leave the text where it is; the clipboard is not touched.
+    discard(try line.event(Event(kind = input.EventKind.key_down, key = input.Key.x, meta = true)))
+    let kept = try line.text()
+    defer kept.release()
+    assert(kept.value == "田中abc")

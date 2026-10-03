@@ -15,7 +15,8 @@ from luce_ui.font import Font, selected_font
 ## the focus color, text inset by one cell, everything selected on focus, and a
 ## commit on Enter or on losing focus (`on_commit`); Escape puts the committed
 ## text back. `on_change` fires on every edit. An empty field shows its
-## `placeholder` in the muted color.
+## `placeholder` in the muted color. A `secure` field (a password) shows bullets
+## and refuses copy and cut.
 pub struct TextField: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]
@@ -27,7 +28,8 @@ pub struct TextField: Widget:
     let submitted: interop.Signal[str]
 
     ## `cells` is the width the field asks for, in character cells.
-    pub func init(text: str = "", font: interop.Reference[Font]? = none, placeholder: str = "", cells: f64 = 12.0) -> !:
+    pub func init(text: str = "", font: interop.Reference[Font]? = none, placeholder: str = "", cells: f64 = 12.0,
+                  secure: bool = false) -> !:
         var selected = try selected_font(font)
         errdefer selected.release()
         let box = try layout.make_layout()
@@ -38,6 +40,7 @@ pub struct TextField: Widget:
         box.value().set_cursor(input.Cursor.text)
         var line = try LineInput()
         errdefer line.close()
+        line.masked = secure
         try line.set_text(text)
         let changed = try interop.Signal[str]()
         errdefer changed.release()
@@ -125,7 +128,9 @@ pub struct TextField: Widget:
         elif focused:
             try self.input.paint(&painter, self.font, theme, inset, text_y, size.width - inset * 2.0)
         else:
-            try painter.text(current.value, inset, text_y, color = theme.foreground if self.box.value().is_enabled() else theme.muted, font = self.font)
+            let shown = try self.input.shown_text()
+            defer shown.release()
+            try painter.text(shown.value, inset, text_y, color = theme.foreground if self.box.value().is_enabled() else theme.muted, font = self.font)
 
     pub mutating func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled:
@@ -188,6 +193,19 @@ pub struct TextField: Widget:
         self.placeholder.trace(visit, context)
 
 pub let text_field_type: interop.Type[TextField] = interop.Type[TextField]("TextField", TextField.close, TextField.trace, closeable = true, main_thread = true)
+
+test "a secure field keeps its text and shows bullets":
+    var field = try TextField("pässword", secure = true)
+    defer field.close()
+    let current = try field.text()
+    defer current.release()
+    assert(current.value == "pässword")
+    let shown = try field.input.shown_text()
+    defer shown.release()
+    assert(shown.value == "••••••••")
+    let part = try field.input.shown(2, 5)
+    defer part.release()
+    assert(part.value == "•••")
 
 test "a text field holds, resets and commits text":
     var field = try TextField("Layer 2", placeholder = "Name")
