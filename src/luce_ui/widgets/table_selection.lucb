@@ -1,0 +1,154 @@
+## A table's selected rows. The lead is the focused row: the one a single selection
+## names, keyboard moves start from and activation reports. With `multiple` set,
+## more rows can be marked besides it, the way a Finder or Mail list selects:
+## a click selects one row, a command-click toggles one, and a shift-click or a
+## shift-arrow selects the range from the anchor (the row last clicked) to the lead.
+import memory
+import luce_ui.result as result
+
+pub struct RowSelection:
+    var marked: bool[]
+    pub var lead: i64
+    var anchor: i64
+    let multiple: bool
+
+    pub func init(rows: usize, multiple: bool) -> !:
+        let marked = try alloc bool[rows] in memory.heap
+        for at in 0..<rows:
+            marked[at] = false
+        self.marked = marked
+        self.lead = -1
+        self.anchor = -1
+        self.multiple = multiple
+
+    ## Whether row `index` is selected.
+    pub func contains(index: i64) -> bool:
+        return index >= 0 and index < (i64)self.marked.length and self.marked[(usize)index]
+
+    ## How many rows are selected.
+    pub func count() -> usize:
+        var total: usize = 0
+        for on in self.marked:
+            if on:
+                total += 1
+        return total
+
+    ## Follow a new row count. Rows still in range keep their state.
+    pub mutating func resize(rows: usize) -> !:
+        let grown = try alloc bool[rows] in memory.heap
+        for at in 0..<rows:
+            grown[at] = at < self.marked.length and self.marked[at]
+        free(self.marked) in memory.heap
+        self.marked = grown
+        if self.lead >= (i64)rows:
+            self.lead = -1
+        if self.anchor >= (i64)rows:
+            self.anchor = -1
+
+    ## Select only row `index`, or nothing for -1.
+    pub mutating func only(index: i64) -> !:
+        try self.check(index)
+        for at in 0..<self.marked.length:
+            self.marked[at] = false
+        if index >= 0:
+            self.marked[(usize)index] = true
+        self.lead = index
+        self.anchor = index
+
+    ## Add row `index` to the selection or take it out (command-click). It becomes
+    ## the lead and the anchor either way. A single selection selects it alone.
+    pub mutating func toggle(index: i64) -> !:
+        if not self.multiple or index < 0:
+            return try self.only(index)
+        try self.check(index)
+        self.marked[(usize)index] = not self.marked[(usize)index]
+        self.lead = index
+        self.anchor = index
+
+    ## Select the range from the anchor to row `index` (shift-click), which becomes
+    ## the lead. Rows marked before outside the range are dropped, as in Finder.
+    pub mutating func extend(index: i64) -> !:
+        if not self.multiple or self.anchor < 0 or index < 0:
+            return try self.only(index)
+        try self.check(index)
+        let low = self.anchor if self.anchor < index else index
+        let high = index if self.anchor < index else self.anchor
+        for at in 0..<self.marked.length:
+            self.marked[at] = (i64)at >= low and (i64)at <= high
+        self.lead = index
+
+    ## Select every row; the lead stays where it is, or goes to the first row.
+    pub mutating func all():
+        if not self.multiple or self.marked.length == 0:
+            return
+        for at in 0..<self.marked.length:
+            self.marked[at] = true
+        if self.lead < 0:
+            self.lead = 0
+            self.anchor = 0
+
+    ## Mark row `index` on or off without moving the lead: restoring a selection
+    ## after the rows were rebuilt.
+    pub mutating func mark(index: i64, on: bool) -> !:
+        try self.check(index)
+        if index < 0:
+            return
+        if not self.multiple and on:
+            return try self.only(index)
+        self.marked[(usize)index] = on
+
+    func check(index: i64) -> !:
+        if index < -1 or index >= (i64)self.marked.length:
+            error(result.invalid, "table selection is outside its rows")
+
+    pub mutating func close():
+        free(self.marked) in memory.heap
+
+test "a single selection holds one row":
+    var rows = try RowSelection(5, false)
+    defer rows.close()
+    try rows.only(2)
+    try rows.toggle(3)
+    assert(rows.count() == 1 and rows.contains(3) and rows.lead == 3)
+    try rows.extend(0)
+    assert(rows.count() == 1 and rows.contains(0))
+    rows.all()
+    assert(rows.count() == 1)
+    try rows.only(-1)
+    assert(rows.count() == 0 and rows.lead == -1)
+
+test "command-click toggles and shift-click selects from the anchor":
+    var rows = try RowSelection(8, true)
+    defer rows.close()
+    try rows.only(2)
+    try rows.toggle(5)
+    assert(rows.count() == 2 and rows.contains(2) and rows.contains(5) and rows.lead == 5)
+    try rows.toggle(2)
+    assert(rows.count() == 1 and not rows.contains(2) and rows.lead == 2)
+    # The anchor is the row last clicked, 2: shift-click 4 selects 2…4 only.
+    try rows.extend(4)
+    assert(rows.count() == 3 and rows.contains(2) and rows.contains(4) and not rows.contains(5) and rows.lead == 4)
+    # Extending again pivots on the same anchor.
+    try rows.extend(0)
+    assert(rows.count() == 3 and rows.contains(0) and rows.contains(2) and not rows.contains(3))
+    rows.all()
+    assert(rows.count() == 8 and rows.lead == 0)
+    try rows.only(6)
+    assert(rows.count() == 1 and rows.contains(6))
+
+test "marks survive a resize while their rows exist":
+    var rows = try RowSelection(4, true)
+    defer rows.close()
+    try rows.only(1)
+    try rows.toggle(3)
+    try rows.resize(3)
+    assert(rows.count() == 1 and rows.contains(1) and rows.lead == -1)
+    try rows.resize(6)
+    assert(rows.count() == 1 and not rows.contains(4))
+    try rows.mark(4, true)
+    assert(rows.count() == 2 and rows.lead == -1)
+    var refused = false
+    rows.only(6) catch failure:
+        assert(failure.code == result.invalid)
+        refused = true
+    assert(refused and rows.count() == 2)

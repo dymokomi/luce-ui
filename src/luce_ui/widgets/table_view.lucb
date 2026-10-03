@@ -1,8 +1,9 @@
-## A virtualized, single-selection multi-column list: a small model/view/delegate
-## table. Columns describe sizing and alignment; each row is a list of cells that
-## carry their own presentation — icon, tint, muted, emphasis — which is the
-## delegate role. The view owns scrolling, whole-row selection, keyboard navigation,
-## activation, an optional sticky header and drag-to-resize column dividers.
+## A virtualized multi-column list: a small model/view/delegate table. Columns
+## describe sizing and alignment; each row is a list of cells that carry their own
+## presentation — icon, tint, muted, emphasis — which is the delegate role. The view
+## owns scrolling, whole-row selection (one row, or several with `multiple`),
+## keyboard navigation, activation, an optional sticky header and drag-to-resize
+## column dividers.
 import gpu
 import input
 import interop
@@ -17,6 +18,7 @@ from luce_ui.painter import Painter
 from luce_ui.font import Font, selected_font
 from luce_ui.theme import Theme
 from luce_ui.icons import IconKind
+from luce_ui.widgets.table_selection import RowSelection
 import luce_ui.icons as icons
 
 let maximum_columns: usize = 16
@@ -68,7 +70,8 @@ pub struct TableView: Widget:
     var cells: StoredCell[]
     var rows: usize
     let activated: interop.Signal[i64]
-    var selection: i64
+    ## The selected rows; its lead is `selected_index`.
+    var picked: RowSelection
     var scroll: f64
     let show_header: bool
     let resizable: bool
@@ -83,8 +86,11 @@ pub struct TableView: Widget:
 
     ## `cells` is row-major: `columns.length` cells per row, laid out one row after
     ## another. A flat slice keeps the public signature expressible from either tier.
+    ## `multiple` lets command-click, shift-click, shift-arrows and command-A select
+    ## several rows.
     pub func init(columns: const TableColumn[], cells: const TableCell[], row_height: f64? = none,
-                  font: interop.Reference[Font]? = none, header: bool = true, resizable: bool = true) -> !:
+                  font: interop.Reference[Font]? = none, header: bool = true, resizable: bool = true,
+                  multiple: bool = false) -> !:
         if columns.length == 0 or columns.length > maximum_columns:
             error(result.invalid, "a table needs between 1 and 16 columns")
         var selected = try selected_font(font)
@@ -105,12 +111,14 @@ pub struct TableView: Widget:
         let stored_columns = try copy_columns(columns)
         errdefer release_columns(stored_columns)
         let stored_cells = try copy_cells(cells, columns.length, selected)
+        errdefer release_cells(stored_cells)
+        let picked = try RowSelection(cells.length // columns.length, multiple)
         self.box = box
         self.columns = stored_columns
         self.cells = stored_cells
         self.rows = cells.length // columns.length
         self.activated = signal
-        self.selection = -1
+        self.picked = picked
         self.scroll = 0.0
         self.show_header = header
         self.resizable = resizable
@@ -130,8 +138,28 @@ pub struct TableView: Widget:
     func header_height() -> f64:
         return self.row_height() if self.show_header else 0.0
 
+    ## The lead selected row (the one last clicked or moved to), or -1.
     pub func selected_index() -> i64:
-        return self.selection
+        return self.picked.lead
+
+    ## Whether row `index` is selected.
+    pub func is_selected(index: i64) -> bool:
+        return self.picked.contains(index)
+
+    ## How many rows are selected.
+    pub func selected_count() -> i64:
+        return (i64)self.picked.count()
+
+    ## Select every row of a `multiple` table.
+    pub mutating func select_all():
+        self.picked.all()
+        self.box.value().invalidate()
+
+    ## Add row `index` to the selection or take it out, keeping the lead: restoring
+    ## a selection after `set_rows`. A single-selection table selects it alone.
+    pub mutating func mark(index: i64, on: bool) -> !:
+        try self.picked.mark(index, on)
+        self.box.value().invalidate()
 
     pub func scroll_offset() -> f64:
         return self.scroll
@@ -172,16 +200,18 @@ pub struct TableView: Widget:
         release_cells(self.cells)
         self.cells = copies
         self.rows = cells.length // self.columns.length
-        if self.selection >= (i64)self.rows:
-            self.selection = -1
+        try self.picked.resize(self.rows)
         let limit = math.max(0.0, (f64)self.rows * self.row_height() - math.max(0.0, self.box.value().bounds().height - self.header_height()))
         self.scroll = math.clamp(self.scroll, 0.0, limit)
         self.box.value().invalidate()
 
+    ## Select row `index` alone (-1 for none) and scroll it into view.
     pub mutating func select(index: i64) -> !:
-        if index < -1 or index >= (i64)self.rows:
-            error(result.invalid, "table selection is outside its rows")
-        self.selection = index
+        try self.picked.only(index)
+        self.reveal(index)
+
+    ## Scroll row `index` into view.
+    mutating func reveal(index: i64):
         if index >= 0:
             let rh = self.row_height()
             let viewport = self.box.value().bounds().height - self.header_height()
@@ -222,9 +252,10 @@ pub struct TableView: Widget:
             if y >= size.height:
                 break
             if y + rh > hh:
-                if (i64)index == self.selection:
+                if self.picked.contains((i64)index):
                     try painter.rectangle(gpu.Rect(0.0, y, size.width, rh), theme.selection)
-                    try painter.rectangle(gpu.Rect(0.0, y, 2.0, rh), theme.accent)
+                    if (i64)index == self.picked.lead:
+                        try painter.rectangle(gpu.Rect(0.0, y, 2.0, rh), theme.accent)
                 elif self.box.value().contains_pointer() and self.box.value().pointer_position().y >= math.max(hh, y) and self.box.value().pointer_position().y < y + rh:
                     try painter.rectangle(gpu.Rect(0.0, y, size.width, rh), theme.hover())
                 var x: f64 = 0.0
@@ -304,7 +335,7 @@ pub struct TableView: Widget:
         let activate = self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
         if activate:
-            return self.activated.emit(self.selection)
+            return self.activated.emit(self.picked.lead)
         return result.success[unit](())
 
     mutating func handle(event: Event) -> bool!:
@@ -351,22 +382,44 @@ pub struct TableView: Widget:
                 return false
             let index = (i64)((event.y - hh + self.scroll) / rh)
             if index >= 0 and index < (i64)self.rows:
-                try self.select(index)
-                return event.button == 0
+                if event.button == 1:
+                    # A right-click on a selected row keeps the selection for its menu.
+                    if not self.picked.contains(index):
+                        try self.select(index)
+                    return false
+                if event.shift:
+                    try self.picked.extend(index)
+                elif event.meta or event.control:
+                    try self.picked.toggle(index)
+                else:
+                    try self.picked.only(index)
+                self.reveal(index)
+                return true
             if event.button == 1:
                 try self.select(-1)
         elif event.kind == input.EventKind.key_down:
-            if event.key == input.Key.enter and self.selection >= 0:
+            let lead = self.picked.lead
+            if event.key == input.Key.enter and lead >= 0:
                 return true
             elif self.rows > 0:
+                var target: i64 = -1
                 if event.key == input.Key.down:
-                    try self.select(self.selection + 1 if self.selection + 1 < (i64)self.rows else self.selection)
+                    target = lead + 1 if lead + 1 < (i64)self.rows else lead
                 elif event.key == input.Key.up:
-                    try self.select(self.selection - 1 if self.selection > 0 else 0)
+                    target = lead - 1 if lead > 0 else 0
                 elif event.key == input.Key.home:
-                    try self.select(0)
+                    target = 0
                 elif event.key == input.Key.end:
-                    try self.select((i64)self.rows - 1)
+                    target = (i64)self.rows - 1
+                elif event.key == input.Key.a and (event.meta or event.control):
+                    self.select_all()
+                    return false
+                if target >= 0:
+                    if event.shift:
+                        try self.picked.extend(target)
+                    else:
+                        try self.picked.only(target)
+                    self.reveal(target)
         return false
 
     pub mutating func close():
@@ -375,6 +428,7 @@ pub struct TableView: Widget:
         self.activated.release()
         release_cells(self.cells)
         release_columns(self.columns)
+        self.picked.close()
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):

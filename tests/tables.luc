@@ -1,0 +1,67 @@
+from ui import Application, Font, TableView, TableColumn, TableCell, Event
+from gpu import Frame
+from input import EventKind, Key
+import window
+
+## Rows and the header are this tall.
+let row_height: float = 24.0
+
+## Click row `row` of `table` through the application, with modifiers.
+func click_row(app: Application, table: TableView, row: int, shift: bool = false, meta: bool = false, button: int = 0) -> unit!:
+    let area = table.layout().bounds()
+    let y = area.y + row_height * (float(row) + 1.5)
+    app.dispatch(Event(kind = EventKind.pointer_down, x = area.x + 20.0, y = y, shift = shift, meta = meta, button = button))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = area.x + 20.0, y = y, button = button))
+
+func key(app: Application, pressed: Key, shift: bool = false, meta: bool = false) -> unit!:
+    app.dispatch(Event(kind = EventKind.key_down, key = pressed, shift = shift, meta = meta))
+
+func picked(table: TableView) -> list[int]:
+    var rows: list[int] = []
+    for row in 0..<6:
+        if table.is_selected(row):
+            rows.append(row)
+    return rows
+
+## A multiple-selection table selects as Finder and Mail do: command-click toggles,
+## shift-click and shift-arrows select from the anchor, command-A selects all, and
+## a right-click on a selected row keeps the selection.
+pub func tables() -> unit!:
+    let font = Font()
+    var cells: list[TableCell] = []
+    for row in 0..<6:
+        cells.append(TableCell(text = f"row {row}"))
+    let table = TableView([TableColumn(title = "Name", weight = 1.0)], cells, row_height = row_height, font = font, multiple = true)
+    var activated: list[int] = []
+    let connection = table.on_activate(func (row: int) -> unit!:
+        activated.append(row))
+    let app = Application(table)
+    let frame = Frame(window.Size(300.0, 400.0, 300.0, 400.0, 1.0))
+    app.layout(300.0, 400.0)
+    app.render(frame.target())
+
+    click_row(app, table, 1)
+    assert(picked(table) == [1] and table.selected_index() == 1)
+    click_row(app, table, 3, meta = true)
+    assert(picked(table) == [1, 3] and table.selected_index() == 3)
+    click_row(app, table, 1, meta = true)
+    assert(picked(table) == [3] and table.selected_count() == 1)
+    # The anchor is row 1, the row last command-clicked.
+    click_row(app, table, 4, shift = true)
+    assert(picked(table) == [1, 2, 3, 4] and table.selected_index() == 4)
+    key(app, Key.down, shift = true)
+    assert(picked(table) == [1, 2, 3, 4, 5] and table.selected_index() == 5)
+    click_row(app, table, 2, button = 1)
+    assert(table.selected_count() == 5)
+    key(app, Key.up)
+    assert(picked(table) == [4])
+    key(app, Key.a, meta = true)
+    assert(table.selected_count() == 6)
+    table.select(0)
+    assert(picked(table) == [0])
+    table.mark(2, true)
+    assert(picked(table) == [0, 2] and table.selected_index() == 0)
+    # Every left click reports the lead row.
+    assert(activated == [1, 3, 1, 4])
+    connection.disconnect()
+    frame.close()
