@@ -93,7 +93,7 @@ pub func contextual() -> unit!:
     rail.dispatch(Event(kind = EventKind.pointer_down, button = 0, x = 16.0, y = 16.0, inside = true))
     let started = time.now()
     while time.now() - started < 450000000:
-        discard(0)
+        _ = 0
     face.poll_hold()
     rail.layout(320.0, 200.0)
     assert(flyout.is_open())

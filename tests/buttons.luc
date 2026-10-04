@@ -23,7 +23,7 @@ class Pad: Widget:
         return Size(200.0, 200.0)
 
     pub func draw(self, target: RenderTarget) -> unit!:
-        discard(target)
+        _ = target
 
     pub func event(self, event: Event) -> unit!:
         if event.kind == EventKind.pointer_down:

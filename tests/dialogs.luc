@@ -78,7 +78,7 @@ pub func dialogs() -> unit!:
     app.dispatch(Event(kind = EventKind.key_down, key = Key.c, meta = true))
     assert(count.copies == 0)
     app.dispatch(Event(kind = EventKind.key_down, key = Key.v, meta = platform.macos, control = not platform.macos)) catch failure:
-        discard(failure)
+        _ = failure
     assert(count.pastes == 1)
     # A prompt holds input: the click behind it is swallowed.
     prompt.open("Name", "")

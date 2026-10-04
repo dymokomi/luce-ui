@@ -25,7 +25,7 @@ class Well: Widget:
         return Size(100.0, 100.0)
 
     pub func draw(self, target: RenderTarget) -> unit!:
-        discard(target)
+        _ = target
 
     pub func event(self, event: Event) -> unit!:
         if event.kind == EventKind.drag_entered:
