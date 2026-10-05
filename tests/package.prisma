@@ -6,22 +6,22 @@ def package "luce_ui_tests" {
     }
     def dependency "luce-gpu" {
         str owner = "dymokomi"
-        str version = "^0.4.0"
+        str version = "^0.5.0"
         str path = "../../luce-gpu"
     }
     def dependency "luce-std" {
         str owner = "dymokomi"
-        str version = "^0.5.0"
+        str version = "^0.6.0"
         str path = "../../luce-std"
     }
     def dependency "luce-3d" {
         str owner = "dymokomi"
-        str version = "^0.8.0"
+        str version = "^0.9.0"
         str path = "../../luce-3d"
     }
     def dependency "luce-window" {
         str owner = "dymokomi"
-        str version = "^0.5.0"
+        str version = "^0.6.0"
         str path = "../../luce-window"
     }
 }
