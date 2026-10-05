@@ -18,6 +18,7 @@ from luce_window import window
 struct Watch:
     var id: i64
     var descriptor: platform.SocketDescriptor
+    var interest: net.WaitInterest
     var callback: interop.Callback[unit, unit]?
     var active: bool
 
@@ -59,7 +60,7 @@ pub struct Watches:
             _ = failure
         try window.watch(native, window.Interest.both if readable and writable else (window.Interest.readable if readable else window.Interest.writable))
         self.next_id = self.next_id +? 1 else error(result.limit, "watch identities exhausted")
-        self.slots[free_slot] = Watch(id = self.next_id, descriptor = native, callback = callback.clone(), active = true)
+        self.slots[free_slot] = Watch(id = self.next_id, descriptor = native, interest = interest, callback = callback.clone(), active = true)
         return self.next_id
 
     ## Stop a watch by its handle; safe from inside its own callback.
@@ -87,7 +88,11 @@ pub struct Watches:
     pub func service() -> interop.Outcome[unit]:
         var poller = self.poller else return result.success[unit](())
         let ready = poller.wait(net.Deadline.at(0)) catch failure:
-            return result.failure[unit](failure.code, failure.message)
+            # Windows' WSAPoll fails outright when one socket in the set was closed:
+            # drop the ones that fail alone, and ask again.
+            self.drop_failing()
+            recover poller.wait(net.Deadline.at(0)) catch again:
+                return result.failure[unit](again.code, again.message)
         if ready == 0:
             return result.success[unit](())
         for index in 0..<self.slots.length:
@@ -105,6 +110,27 @@ pub struct Watches:
                         return outcome
                     outcome.release()
         return result.success[unit](())
+
+    ## Drop each watch whose descriptor a poll of its own refuses (a closed socket).
+    func drop_failing():
+        for index in 0..<self.slots.length:
+            if not self.slots[index].active:
+                continue
+            var probe = net.Poller.create(1) catch failure:
+                _ = failure
+                return
+            defer probe.destroy()
+            var refused = false
+            probe.watch(0, self.slots[index].descriptor, self.slots[index].interest) catch failure:
+                _ = failure
+                refused = true
+            if not refused:
+                _ = probe.wait(net.Deadline.at(0)) catch failure:
+                    _ = failure
+                    refused = true
+                    recover 0
+            if refused:
+                self.drop(index)
 
     pub func close():
         for index in 0..<self.slots.length:
