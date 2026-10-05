@@ -16,7 +16,7 @@ extend ParameterPanel:
     func folder_height() -> f64:
         return self.row_height() + 2.0
 
-    func separator_height() -> f64:
+    static func separator_height() -> f64:
         return 9.0
 
     ## Whether row `index` may share a line with the row before it.
@@ -186,7 +186,7 @@ extend ParameterPanel:
     # -- The parts of a placed row, in the panel's points.
 
     ## How many fields the row types into.
-    func field_count(row: Row) -> i64:
+    static func field_count(row: Row) -> i64:
         if row.kind == ParameterKind.number or row.kind == ParameterKind.integer or row.kind == ParameterKind.text or row.kind == ParameterKind.path:
             return 1
         if row.kind == ParameterKind.vector or row.kind == ParameterKind.color:
@@ -243,7 +243,7 @@ extend ParameterPanel:
         return Rect(row.control_x, row.y + math.floor((self.row_height() - toggle_side) * 0.5), toggle_side, toggle_side)
 
     ## The row's whole control span.
-    func span_rect(row: Row) -> Rect:
+    static func span_rect(row: Row) -> Rect:
         return Rect(row.control_x, row.y, row.control_width, row.height)
 
     ## What is at (`x`, `y`): the row, the part and the field's component; row -1 for nothing.

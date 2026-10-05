@@ -185,7 +185,7 @@ pub struct ColorEditor: Widget:
             return true
         return false
 
-    func value_at(x: f64, tx: f64, tw: f64) -> i64:
+    static func value_at(x: f64, tx: f64, tw: f64) -> i64:
         let fraction = math.clamp((x - tx) / math.max(1.0, tw), 0.0, 1.0)
         return (i64)(fraction * 255.0 + 0.5)
 

@@ -290,11 +290,11 @@ pub struct Layout:
         return self.drop_accepted
 
     ## How many files the drag in progress (or the drop just made) carries.
-    pub func drop_count() -> i64:
+    pub static func drop_count() -> i64:
         return (i64)drop_payload_count
 
     ## The path of dragged file `index`, as UTF-8.
-    pub func drop_path(index: i64) -> interop.Owned[str]!:
+    pub static func drop_path(index: i64) -> interop.Owned[str]!:
         if index < 0 or index >= (i64)drop_payload_count:
             error(result.invalid, "no dragged file has that index")
         return try interop.copy_text(drop_payload[(usize)index])
@@ -368,7 +368,7 @@ pub struct Layout:
     ## Announce a change the next frame must show. It moves the global layout epoch,
     ## so the next arrangement regathers, remeasures and places the whole tree and
     ## the run loop presents a frame; there is no per-box dirty state.
-    pub func invalidate():
+    pub static func invalidate():
         bump_revision()
 
     ## Clamp the measured size to `minimum`..`maximum` (each extent in 0..16384); a

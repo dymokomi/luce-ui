@@ -156,12 +156,12 @@ pub struct CurveEditor: Widget:
         self.count -= 1
 
     ## The square the curve is drawn in, inset for the point handles.
-    func plot(width: f64, height: f64) -> gpu.Rect:
+    static func plot(width: f64, height: f64) -> gpu.Rect:
         let inset = 6.0
         let side = math.max(16.0, math.min(width, height) - inset * 2.0)
         return gpu.Rect(inset, inset + math.max(0.0, (height - inset * 2.0 - side) * 0.5), side, side)
 
-    func to_plot(plot: gpu.Rect, x: f64, y: f64) -> Point:
+    static func to_plot(plot: gpu.Rect, x: f64, y: f64) -> Point:
         return Point(plot.x + x * plot.width, plot.y + (1.0 - y) * plot.height)
 
     ## The point within reach of (`x`, `y`) in widget coordinates, or -1.

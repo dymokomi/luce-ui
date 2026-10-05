@@ -66,7 +66,7 @@ extend Tree:
     ## A soft drop shadow around the whole popup: several expanding layers, densest at
     ## the box and fading outward, with a slight downward bias so the surface reads as
     ## lifted off the content behind it. Drawn before the popup's own clip.
-    func draw_shadow(target: interop.View[gpu.RenderTarget], bounds: Rect, theme: Theme) -> !:
+    static func draw_shadow(target: interop.View[gpu.RenderTarget], bounds: Rect, theme: Theme) -> !:
         if theme.shadow_offset == 0.0 or theme.shadow_opacity == 0.0:
             return
         var painter = try Painter(target)

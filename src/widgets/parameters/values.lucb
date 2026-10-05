@@ -275,7 +275,7 @@ extend ParameterPanel:
             return not folder.disabled and not folder.disabled_when
         return true
 
-    func emit(signal: interop.Signal[i64], index: i64) -> !:
+    static func emit(signal: interop.Signal[i64], index: i64) -> !:
         let outcome = signal.emit(index)
         defer outcome.release()
         try outcome.get()

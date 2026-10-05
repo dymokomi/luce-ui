@@ -235,7 +235,7 @@ extend ParameterPanel:
         try self.touch((i64)index)
 
     ## The step arrows, scrubbing and the ladder's middle rung move by.
-    func increment(row: Row) -> f64:
+    static func increment(row: Row) -> f64:
         if row.step > 0.0:
             return row.step
         if row.kind == ParameterKind.integer:
@@ -245,7 +245,7 @@ extend ParameterPanel:
         return math.min(1.0, math.pow(10.0, 1.0 - (f64)row.decimals))
 
     ## `value` on the row's grid: its step, or the decimals it shows.
-    func snapped(row: Row, value: f64) -> f64:
+    static func snapped(row: Row, value: f64) -> f64:
         let grid = row.step if row.step > 0.0 else math.pow(10.0, -(f64)row.decimals)
         return row_clamp(row, math.floor(value / grid + 0.5) * grid)
 

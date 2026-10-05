@@ -25,7 +25,7 @@ pub struct Shortcut:
     ## `+`-separated tokens are case-insensitive: `cmd`/`ctrl`/`super` map to the
     ## primary modifier, plus `shift` and `alt`; the final token names the key.
     ## An empty chord (or "none") is unbound.
-    pub func parse(text: str) -> Shortcut!:
+    pub static func parse(text: str) -> Shortcut!:
         var primary = false
         var shift = false
         var alt = false

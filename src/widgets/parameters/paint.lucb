@@ -121,14 +121,14 @@ extend ParameterPanel:
 
     ## A sunken well with a one-point border: the accent while typed in or
     ## scrubbed, lighter while hovered.
-    func paint_well(painter: Painter*, rect: Rect, theme: Theme, hot: bool, active: bool, current: bool) -> !:
+    static func paint_well(painter: Painter*, rect: Rect, theme: Theme, hot: bool, active: bool, current: bool) -> !:
         let radius = math.min(theme.control_radius, 3.0)
         let border = theme.accent if active else (theme.hover_border() if hot else (theme.active_border if current else theme.border))
         try painter.rounded_rectangle(rect, border, radius)
         try painter.rounded_rectangle(Rect(rect.x + 1.0, rect.y + 1.0, math.max(0.0, rect.width - 2.0), math.max(0.0, rect.height - 2.0)), theme.sunken, math.max(0.0, radius - 1.0))
 
     ## A raised face for buttons and menus.
-    func paint_raised(painter: Painter*, rect: Rect, theme: Theme, hot: bool, pressed: bool) -> !:
+    static func paint_raised(painter: Painter*, rect: Rect, theme: Theme, hot: bool, pressed: bool) -> !:
         let radius = math.min(theme.control_radius, 3.0)
         try painter.rounded_rectangle(rect, theme.hover_border() if hot else theme.border, radius)
         let face = theme.pressed if pressed else (theme.button_hover if hot else theme.button)
@@ -164,7 +164,7 @@ extend ParameterPanel:
             try painter.text(suffix, rect.x + inset + text_width(self.font, shown), y, theme.muted, self.font)
 
     ## The range a slider spans: the soft range, else a finite hard one.
-    func slider_range(row: Row) -> (f64, f64)?:
+    static func slider_range(row: Row) -> (f64, f64)?:
         if row.soft_maximum > row.soft_minimum:
             return (row.soft_minimum, row.soft_maximum)
         if row.maximum - row.minimum > 0.0 and row.maximum - row.minimum <= 1.0e6:

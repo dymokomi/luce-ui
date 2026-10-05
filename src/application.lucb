@@ -182,19 +182,19 @@ pub struct Application:
 
     ## Show the desktop's open-file dialog with `message` and return the chosen
     ## path, or an empty string when it was canceled.
-    pub func open_file(message: str) -> interop.Owned[str]!:
+    pub static func open_file(message: str) -> interop.Owned[str]!:
         let chosen = try dialogs.open_file(message) else return try interop.copy_text("")
         return chosen
 
     ## Show the desktop's open-file dialog letting several files be chosen and
     ## return their paths one to a line, or an empty string when it was canceled.
-    pub func open_files(message: str) -> interop.Owned[str]!:
+    pub static func open_files(message: str) -> interop.Owned[str]!:
         let chosen = try dialogs.open_files(message) else return try interop.copy_text("")
         return chosen
 
     ## Show the desktop's save-file dialog suggesting `name` and return the chosen
     ## path, or an empty string when it was canceled.
-    pub func save_file(message: str, name: str) -> interop.Owned[str]!:
+    pub static func save_file(message: str, name: str) -> interop.Owned[str]!:
         let chosen = try dialogs.save_file(message, name) else return try interop.copy_text("")
         return chosen
 
@@ -312,7 +312,7 @@ pub struct Application:
 
     ## The files a drag carries, for tests and embedders that dispatch drag events
     ## themselves; a running window supplies them on its own.
-    pub func set_drop_paths(paths: const str[]) -> !:
+    pub static func set_drop_paths(paths: const str[]) -> !:
         try layout.set_drop_payload(paths)
 
     ## Arrange the tree at the target's size and draw it into the target. The
@@ -506,7 +506,7 @@ pub struct Application:
         return result.success[unit](())
 
     ## A digest of a failed outcome's message; never 0.
-    func failure_digest(outcome: interop.Outcome[unit]) -> u64:
+    static func failure_digest(outcome: interop.Outcome[unit]) -> u64:
         _ = outcome.get() catch failure:
             var digest: u64 = 1469598103934665603
             for byte in failure.message.bytes:
@@ -514,7 +514,7 @@ pub struct Application:
             return digest if digest != 0 else 1
         return 1
 
-    func report_input_failure(outcome: interop.Outcome[unit], handler: interop.Callback[str, unit]) -> interop.Outcome[unit]:
+    static func report_input_failure(outcome: interop.Outcome[unit], handler: interop.Callback[str, unit]) -> interop.Outcome[unit]:
         _ = outcome.get() catch failure:
             return handler.invoke(failure.message)
         return result.success[unit](())

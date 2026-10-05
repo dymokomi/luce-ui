@@ -32,7 +32,7 @@ pub struct Catalog:
     var fixed: CommandSlot[]
     var position: DockPosition
 
-    func make() -> Catalog!:
+    static func make() -> Catalog!:
         let entries = try new CommandSlot[catalog_limit] --- in memory.heap
         errdefer free(entries) in memory.heap
         let links = try new ConnectionSlot[catalog_limit] --- in memory.heap
