@@ -2,7 +2,9 @@ from luce_ui.ui import Application, Font, Button, TextField, TextPrompt, VStack,
 from luce_gpu.gpu import Frame
 from luce_window.input import EventKind, Key
 from luce_window import window
+from luce_ui import ui
 import platform
+import time
 
 class Count:
     pub var clicks: int = 0
@@ -253,4 +255,51 @@ pub func field_command_keys() -> unit!:
     triggered_next.disconnect()
     triggered_wrap.disconnect()
     triggered_undo.disconnect()
+    app.close()
+
+## Enter submits a field every time, also when its text did not change (an
+## address bar loads its page again); a commit only follows a change.
+pub func field_submits() -> unit!:
+    let address = TextField("https://example.com", cells = 24.0)
+    var submitted: list[str] = []
+    var committed = 0
+    let submits = address.on_submit(func (value: str) -> unit!:
+        submitted.append(value))
+    let commits = address.on_commit(func (value: str) -> unit!:
+        committed += 1)
+    let app = Application(VStack([address], spacing = 0.0))
+    render(app)
+    app.focus(address.layout())
+    render(app)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    assert(submitted.length == 1 and submitted[0] == "https://example.com" and committed == 0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.end))
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 47))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    assert(submitted.length == 2 and submitted[1] == "https://example.com/" and committed == 1)
+    # A held Enter repeats nothing.
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter, repeated = true))
+    assert(submitted.length == 2)
+    submits.disconnect()
+    commits.disconnect()
+    app.close()
+
+## The title, the next wake-up and descriptor watches are reachable before the
+## window opens; the loop applies them when it runs.
+pub func application_wakes() -> unit!:
+    let app = Application(VStack([], spacing = 0.0), title = "First")
+    app.set_title("Second — ü")
+    app.wake_after(0.25)
+    app.wake_at(0)
+    app.wake_at(time.now() + 1000000)
+    # Watching runs in the window's loop (src/watches.lucb tests it on sockets); here the surface
+    # and its checks: a descriptor must be valid.
+    var calls = 0
+    var refused = false
+    _ = app.watch(-1, func () -> unit!:
+        calls += 1) catch failure:
+        refused = failure.code == ui.invalid
+        recover 0
+    assert(refused and calls == 0)
+    app.unwatch(1)
     app.close()

@@ -124,3 +124,7 @@ test "the icon cache reuses a rasterised icon for the same name and size and evi
         if value == 255:
             lit = true
     assert(lit)
+
+test "the navigation arrows are in the set":
+    for name in ["arrow-left", "arrow-right", "arrow-up", "arrow-down"]:
+        assert(known(name))

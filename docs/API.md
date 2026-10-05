@@ -20,7 +20,8 @@ All objects and callbacks belong to the main thread.
 | `SplitView` | Two widgets, `axis`, preferred `fraction`, `handle_width`; `fraction`, `set_fraction`, `layout` |
 | `Viewport` | Preferred minimum width/height; `on_render`, `layout` |
 | `SceneView` | `SceneView(scene, camera, renderer=none, width=320, height=240)`: a Viewport drawing a luce-3d scene; `scene`, `camera`, `renderer`, `layout` |
-| `Application` | Content, title, dimensions, optional `game`/`fps`/`fullscreen`; `run`, `stop`, `close`, `on_frame`, `set_game`, `set_fps`, `set_fullscreen`, `set_commands`, `command`, `layout`, `dispatch`, `render` |
+| `Application` | Content, title, dimensions, optional `game`/`fps`/`fullscreen`; `run`, `stop`, `close`, `on_frame`, `after`/`every`/`post`/`cancel`, `wake_at`/`wake_after`, `watch`/`unwatch`, `set_title`, `set_game`, `set_fps`, `set_fullscreen`, `set_commands`, `command`, `layout`, `dispatch`, `render` |
+| `TextField` | `TextField(text, placeholder=..., cells=12, secure=false)`; `text`, `set_text`, `on_change` (each edit), `on_commit` (Enter or focus loss, when changed), `on_submit` (every Enter, changed or not) |
 | `Raster` | Mutable RGBA surface; `set_pixel`, `put`, `fill`, `fill_rect`, `dab`, `draw`, `color_at` |
 | `Painter` | Checked GPU target; `rectangle(rect, color, opacity=1.0)`, `triangle(a, b, c, color)`, `line(a, b, width, color)`, `text`, `target` |
 | `Font` | Installed monospace family and size; `measure`, `cells`, `advance`, `height`, `line_height` |
@@ -87,6 +88,28 @@ waits out the remaining frame interval instead of blocking until the next input.
 `fps=0` is uncapped. `fullscreen=true` covers the main display without chrome
 through standard `window`; `set_fullscreen` toggles it while `run` is active.
 This is not a game engine — simulation, input and drawing stay in the application.
+`set_title` changes the window's title, at once while `run` is active.
+
+### Sleeping until there is work
+
+An idle `run` blocks in the window's wait and uses no CPU. It runs a turn (frame
+callbacks, timers, watches, a frame when something changed) when input arrives,
+a timer is due, `window.wake()` is called from another thread, or:
+
+- `wake_at(instant)` comes: an instant in `time.now()`'s monotonic nanoseconds,
+  or `wake_after(seconds)`. One request at a time, each call replacing the last
+  and 0 dropping it; an earlier timer or event still runs first. For an engine
+  that knows when its next work is due (a page's timers and animations), set it
+  each turn instead of keeping an `after` timer to cancel and reschedule.
+- A descriptor given to `watch(descriptor, callback, readable=true,
+  writable=false)` turns ready: a socket, or outside Windows a pipe. The callback
+  runs on the main loop; readiness is level-triggered, so read or write until the
+  descriptor would block, or the callback runs again on the next turn. `unwatch`
+  takes the handle `watch` returned; unwatch before closing the descriptor (one
+  closed while watched is dropped on the next turn). Up to 64; on Windows watching
+  makes a socket nonblocking. A browser with requests in flight sleeps until a
+  socket has something instead of polling every few milliseconds.
+
 While the window is being live-resized the OS runs a modal loop that starves that
 frame pump, so `run` registers a redraw the window invokes from inside it: the
 content repaints at each intermediate size instead of stretching the last frame.

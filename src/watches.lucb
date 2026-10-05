@@ -1,0 +1,191 @@
+## The run loop's watched descriptors: up to 64 sockets (or, outside Windows, pipes)
+## whose readiness runs a callback on the main loop. The window's wait
+## (luce-window `window.watch`) ends when one turns ready, so a program with requests
+## in flight sleeps until there is something to read or write instead of polling on a
+## short timer. Each serviced turn asks a luce-std Poller, without waiting, which are
+## ready and runs their callbacks. Readiness is level-triggered: a callback that
+## leaves its descriptor ready is called again on the next turn, and the loop does
+## not sleep until it reads, writes or unwatches. A descriptor closed while watched
+## is dropped on the next turn.
+import interop
+import memory
+import ownership
+import platform
+import result
+from luce_std import net
+from luce_window import window
+
+struct Watch:
+    var id: i64
+    var descriptor: platform.SocketDescriptor
+    var callback: interop.Callback[unit, unit]?
+    var active: bool
+
+## The watches and the next handle to give out; handles start at 1 and are never
+## reused. Slot `n` of the poller holds watch `n`.
+pub struct Watches:
+    var slots: Watch[64]
+    var poller: net.Poller?
+    var next_id: i64
+
+    pub func init():
+        var empty: Watch[64]
+        self.slots = empty
+        self.poller = none
+        self.next_id = 0
+
+    ## Run `callback` on the main loop whenever `descriptor` is ready to read (and,
+    ## with `writable`, to write). Returns the handle `remove` takes.
+    pub func add(descriptor: i64, callback: interop.Callback[unit, unit], readable: bool, writable: bool) -> i64!:
+        if not readable and not writable:
+            error(result.invalid, "a watch needs readable, writable or both")
+        if descriptor < 0 or (platform.posix and descriptor > 2147483647):
+            error(result.invalid, "a watched descriptor must be valid")
+        let native = (platform.SocketDescriptor)descriptor
+        var free_slot = self.slots.length
+        for index in 0..<self.slots.length:
+            if self.slots[index].active and self.slots[index].descriptor == native:
+                error(result.invalid, "the descriptor is already watched; unwatch it first")
+            if not self.slots[index].active and free_slot == self.slots.length:
+                free_slot = index
+        if free_slot == self.slots.length:
+            error(result.limit, "at most 64 descriptors can be watched")
+        if self.poller == none:
+            self.poller = try net.Poller.create(self.slots.length)
+        let interest = net.WaitInterest.both if readable and writable else (net.WaitInterest.read if readable else net.WaitInterest.write)
+        var poller = self.poller else trap("the watch poller was not created")
+        try poller.watch(free_slot, native, interest)
+        errdefer poller.disable(free_slot) catch failure:
+            _ = failure
+        try window.watch(native, window.Interest.both if readable and writable else (window.Interest.readable if readable else window.Interest.writable))
+        self.next_id = self.next_id +? 1 else error(result.limit, "watch identities exhausted")
+        self.slots[free_slot] = Watch(id = self.next_id, descriptor = native, callback = callback.clone(), active = true)
+        return self.next_id
+
+    ## Stop a watch by its handle; safe from inside its own callback.
+    pub func remove(id: i64):
+        for index in 0..<self.slots.length:
+            if self.slots[index].active and self.slots[index].id == id:
+                self.drop(index)
+                return
+
+    func drop(index: usize):
+        let descriptor = self.slots[index].descriptor
+        if let callback = self.slots[index].callback:
+            callback.release()
+        self.slots[index].callback = none
+        self.slots[index].active = false
+        window.unwatch(descriptor) catch failure:
+            _ = failure
+        if let poller = self.poller:
+            var slots = poller
+            slots.disable(index) catch failure:
+                _ = failure
+
+    ## Run the callback of every watch whose descriptor is ready now, without waiting.
+    ## Returns the first callback failure, like the timers.
+    pub func service() -> interop.Outcome[unit]:
+        var poller = self.poller else return result.success[unit](())
+        let ready = poller.wait(net.Deadline.at(0)) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        if ready == 0:
+            return result.success[unit](())
+        for index in 0..<self.slots.length:
+            if not self.slots[index].active:
+                continue
+            let readiness = poller.readiness(index) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            if readiness.invalid:
+                self.drop(index)
+                continue
+            if readiness.readable or readiness.writable or readiness.hangup or readiness.failure:
+                if let callback = self.slots[index].callback:
+                    let outcome = callback.invoke(())
+                    if not outcome.is_success():
+                        return outcome
+                    outcome.release()
+        return result.success[unit](())
+
+    pub func close():
+        for index in 0..<self.slots.length:
+            if self.slots[index].active:
+                self.drop(index)
+        if let poller = self.poller:
+            var owned = poller
+            owned.destroy()
+        self.poller = none
+
+    pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        for index in 0..<self.slots.length:
+            if let callback = self.slots[index].callback:
+                callback.trace(visit, context)
+
+struct Counter:
+    var calls: i64
+
+    func hit(argument: unit) -> interop.Outcome[unit]:
+        _ = argument
+        self.calls += 1
+        return result.success[unit](())
+
+    func close():
+        self.calls = 0
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        _ = visit
+        _ = context
+
+let counter_type: interop.Type[Counter] = interop.Type[Counter]("watch test counter", Counter.close, Counter.trace)
+
+func serviced(watching: Watches*) -> !:
+    let outcome = watching.service()
+    defer outcome.release()
+    try outcome.get()
+
+test "a watched socket runs its callback while it is readable, and not once unwatched":
+    let counter = try interop.Reference[Counter].adopt(new Counter() in memory.heap, counter_type, memory.heap)
+    defer counter.release()
+    let callback = try interop.Callback[unit, unit].bind_mutating(counter, Counter.hit)
+    defer callback.release()
+    var receiver = try net.Datagram.bind(net.SocketAddress.loopback(0))
+    defer receiver.destroy()
+    var sender = try net.Datagram.bind(net.SocketAddress.loopback(0))
+    defer sender.destroy()
+    var watching = Watches()
+    defer watching.close()
+    let descriptor = receiver.descriptor() else trap("the socket has no descriptor")
+    let id = try watching.add((i64)descriptor, callback, true, false)
+    try serviced(&watching)
+    assert(counter.value().calls == 0)
+    var rejected = false
+    _ = watching.add((i64)descriptor, callback, true, true) catch failure:
+        assert(failure.code == result.invalid)
+        rejected = true
+        recover 0
+    assert(rejected)
+    var payload: u8[1] = [7]
+    try sender.send_to(payload[..<1], try receiver.address())
+    _ = try receiver.wait(net.WaitInterest.read, try net.Deadline.after(5000000000))
+    # Level-triggered: still readable, so called again on the next turn.
+    try serviced(&watching)
+    try serviced(&watching)
+    assert(counter.value().calls == 2)
+    watching.remove(id)
+    try serviced(&watching)
+    assert(counter.value().calls == 2)
+
+test "a socket closed while watched is dropped on the next turn":
+    let counter = try interop.Reference[Counter].adopt(new Counter() in memory.heap, counter_type, memory.heap)
+    defer counter.release()
+    let callback = try interop.Callback[unit, unit].bind_mutating(counter, Counter.hit)
+    defer callback.release()
+    var watching = Watches()
+    defer watching.close()
+    var socket = try net.Datagram.bind(net.SocketAddress.loopback(0))
+    let descriptor = socket.descriptor() else trap("the socket has no descriptor")
+    _ = try watching.add((i64)descriptor, callback, true, true)
+    socket.destroy()
+    try serviced(&watching)
+    assert(counter.value().calls == 0)
+    for index in 0..<watching.slots.length:
+        assert(not watching.slots[index].active)

@@ -16,6 +16,7 @@ from luce_window import window
 import result
 import layout
 import scheduler
+import watches
 from layout import Widget, Tree, Event
 from theme import Theme
 from command import Command, Commands
@@ -23,7 +24,7 @@ from command import Command, Commands
 ## Construction is platform-independent. run acquires native resources and owns
 ## their complete lifetime, including error unwinding and callback-driven stop.
 pub struct Application:
-    let title: interop.Owned[str]
+    var title: interop.Owned[str]
     var tree: Tree
     var commands: Commands
     let frames: interop.Signal[f64]
@@ -41,6 +42,9 @@ pub struct Application:
     ## widget that fails every frame is reported once, not once a frame.
     var render_failure: u64
     var timers: scheduler.Scheduler
+    var watches: watches.Watches
+    ## The monotonic instant `wake_at` asked the loop to run a turn by, 0 for none.
+    var wake_deadline: u64
     var game: bool
     var target_fps: f64
     var fullscreen: bool
@@ -74,6 +78,8 @@ pub struct Application:
         self.render_failure = 0
         self.last_render = 0
         self.timers = scheduler.Scheduler()
+        self.watches = watches.Watches()
+        self.wake_deadline = 0
         self.game = game
         self.target_fps = fps
         self.fullscreen = fullscreen
@@ -82,6 +88,18 @@ pub struct Application:
     func check() -> !:
         if self.closed:
             error(result.invalid, "the UI application is closed")
+
+    ## Change the window's title, now while it runs, or for the next run.
+    pub func set_title(title: str) -> !:
+        try self.check()
+        if not utf8.valid(title.bytes):
+            error(result.invalid, "a window title must be valid UTF-8")
+        let replacement = try interop.copy_text(title)
+        let previous = self.title
+        self.title = replacement
+        previous.release()
+        if self.running:
+            try self.session_host.set_title(title)
 
     ## Present every frame and cap the loop to `fps` (0 is uncapped). This is a
     ## run-loop mode, not a game engine: the application still owns simulation.
@@ -147,6 +165,34 @@ pub struct Application:
     ## Stop a scheduled callback by the handle after/every/post returned.
     pub func cancel(id: i64):
         self.timers.cancel(id)
+
+    ## Run a turn of the loop (its frame callbacks, timers and watches) no later than
+    ## `instant`, a monotonic time in nanoseconds like `time.now()`, then sleep again.
+    ## One request at a time: each call replaces the last, an instant already past
+    ## runs a turn at once, and 0 drops the request. For an engine that knows when its
+    ## next work is due without a callback for each timer; an earlier timer or event
+    ## still runs first.
+    pub func wake_at(instant: i64):
+        self.wake_deadline = 0 if instant <= 0 else (u64)instant
+
+    ## `wake_at`, `seconds` from now.
+    pub func wake_after(seconds: f64):
+        let delay = 0.0 if not (seconds > 0.0) else math.min(seconds, 31536000.0)
+        self.wake_deadline = time.now() + (u64)(delay * 1000000000.0)
+
+    ## Run `callback` on the main loop whenever `descriptor` (a socket, or outside
+    ## Windows a pipe) is ready to read, or with `writable` to write; the loop
+    ## sleeps until then instead of polling. Level-triggered: read or write until the
+    ## descriptor would block, or the callback runs again on the next turn. Unwatch
+    ## before closing it. Up to 64 at once; on Windows watching makes a socket
+    ## nonblocking. Returns the handle `unwatch` takes.
+    pub func watch(descriptor: i64, callback: interop.Callback[unit, unit], readable: bool = true, writable: bool = false) -> i64!:
+        try self.check()
+        return try self.watches.add(descriptor, callback, readable, writable)
+
+    ## Stop a watch by the handle `watch` returned.
+    pub func unwatch(id: i64):
+        self.watches.remove(id)
 
     ## Frame callbacks receive elapsed seconds since the preceding iteration.
     pub func on_frame(callback: interop.Callback[f64, unit]) -> interop.Reference[interop.Connection]!:
@@ -438,6 +484,15 @@ pub struct Application:
             serviced.release()
             if not self.running:
                 break
+            let watched = self.watches.service()
+            if not watched.is_success():
+                return watched
+            watched.release()
+            if not self.running:
+                break
+            # This turn answers a wake_at that is due.
+            if self.wake_deadline != 0 and self.wake_deadline <= time.now():
+                self.wake_deadline = 0
             let current = time.now()
             let elapsed = (f64)(current - previous) / 1000000000.0
             previous = current
@@ -551,8 +606,8 @@ pub struct Application:
 
     ## How long the loop may block before it must run again: nothing when a frame is
     ## already pending or a frame_limit run wants every frame, otherwise the soonest of
-    ## a timer deadline, a blinking caret's cadence, and a one-second safety ceiling. A
-    ## wake() or an OS event ends the wait early.
+    ## a timer deadline, a wake_at instant, a blinking caret's cadence, and a one-second
+    ## safety ceiling. A wake(), an OS event or a watched descriptor ends the wait early.
     func wait_budget(frame_limit: i64) -> u64:
         if frame_limit > 0:
             return 0
@@ -566,7 +621,7 @@ pub struct Application:
                 let next = self.last_render + interval
                 if next > now:
                     budget = next - now
-            if let deadline = self.timers.next_deadline():
+            if let deadline = self.next_deadline():
                 if deadline <= now:
                     return 0
                 let delta = deadline - now
@@ -579,7 +634,7 @@ pub struct Application:
             return 0
         let now = time.now()
         var budget: u64 = 1000000000
-        if let deadline = self.timers.next_deadline():
+        if let deadline = self.next_deadline():
             if deadline <= now:
                 return 0
             let delta = deadline - now
@@ -592,6 +647,15 @@ pub struct Application:
             if wake - now < budget:
                 budget = wake - now
         return budget
+
+    ## The soonest of the timers' deadline and the wake_at instant.
+    func next_deadline() -> u64?:
+        let timer = self.timers.next_deadline()
+        if self.wake_deadline == 0:
+            return timer
+        if let soonest = timer:
+            return soonest if soonest < self.wake_deadline else self.wake_deadline
+        return self.wake_deadline
 
     ## End the run loop after the current iteration; the application stays usable.
     pub func stop():
@@ -613,6 +677,7 @@ pub struct Application:
             handler.release()
         self.commands.close()
         self.timers.close()
+        self.watches.close()
         self.frames.close()
         self.frames.release()
         self.tree.close()
@@ -625,6 +690,7 @@ pub struct Application:
             handler.trace(visit, context)
         self.commands.trace(visit, context)
         self.timers.trace(visit, context)
+        self.watches.trace(visit, context)
         self.frames.trace(visit, context)
         self.tree.trace(visit, context)
         self.title.trace(visit, context)

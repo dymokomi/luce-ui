@@ -1,0 +1,98 @@
+## The run loop sleeps until it has work: a watched socket turning readable, or a
+## wake_at instant, ends its wait. Each case is timed against the loop's one-second
+## safety ceiling, which is what would end the wait if neither did.
+import interop
+import memory
+import ownership
+import thread
+import time
+from luce_std import net
+from luce_ui import ui
+from luce_ui.ui import Application, Spacer, Widget
+
+## Stops the application from a callback: when its socket is readable, or on the first
+## frame at or after `due`.
+struct Stopper:
+    var app: Application*
+    var socket: net.Datagram*
+    var due: u64
+    var reads: i64
+
+    func readable(argument: unit) -> interop.Outcome[unit]:
+        _ = argument
+        var buffer: u8[8]
+        _ = self.socket.receive_from(buffer[..<8]) catch failure:
+            return interop.Outcome[unit].failure(failure.code, interop.copy_text(failure.message) catch exhausted: trap(exhausted.message))
+        self.reads += 1
+        self.app.stop()
+        return interop.Outcome[unit].success(interop.Owned[unit](()))
+
+    func frame(elapsed: f64) -> interop.Outcome[unit]:
+        _ = elapsed
+        if self.due != 0 and time.now() >= self.due:
+            self.app.stop()
+        return interop.Outcome[unit].success(interop.Owned[unit](()))
+
+    func close():
+        self.reads = 0
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        _ = visit
+        _ = context
+
+let stopper_type: interop.Type[Stopper] = interop.Type[Stopper]("run loop test stopper", Stopper.close, Stopper.trace)
+
+struct Delivery:
+    var socket: net.Datagram*
+    var address: net.SocketAddress
+
+## Send one datagram after 100 ms, from another thread.
+func deliver(context: void*?):
+    let delivery = (Delivery*)(context else trap("missing delivery"))
+    thread.sleep(100)
+    var payload: u8[1] = [1]
+    delivery.socket.send_to(payload[..<1], delivery.address) catch failure:
+        trap(failure.message)
+
+func run_once(app: interop.Reference[Application]) -> u64!:
+    let started = time.now()
+    let outcome = app.value().run()
+    defer outcome.release()
+    try outcome.get()
+    return time.since(started)
+
+pub func wakes() -> !:
+    let spacer = try interop.Reference[Spacer].adopt(new Spacer(1.0) in memory.heap, ui.spacer_type, memory.heap)
+    defer spacer.release()
+    let content = spacer.as_interface[Widget](spacer.value())
+    defer content.release()
+    let app = try interop.Reference[Application].adopt(new Application(content, title = "Run loop wakes", width = 200, height = 120) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    var receiver = try net.Datagram.bind(net.SocketAddress.loopback(0))
+    defer receiver.destroy()
+    var sender = try net.Datagram.bind(net.SocketAddress.loopback(0))
+    defer sender.destroy()
+    let stopper = try interop.Reference[Stopper].adopt(new Stopper(app = app.value(), socket = &receiver, due = 0, reads = 0) in memory.heap, stopper_type, memory.heap)
+    defer stopper.release()
+    let readable = try interop.Callback[unit, unit].bind_mutating(stopper, Stopper.readable)
+    defer readable.release()
+    let frames = try interop.Callback[f64, unit].bind_mutating(stopper, Stopper.frame)
+    defer frames.release()
+    let connection = try app.value().on_frame(frames)
+    defer connection.release()
+    # A datagram arriving ends the wait; its callback stops the loop.
+    let descriptor = receiver.descriptor() else trap("the socket has no descriptor")
+    let watch = try app.value().watch((i64)descriptor, readable)
+    var delivery = Delivery(socket = &sender, address = try receiver.address())
+    var worker = try thread.spawn(deliver, (void*)&delivery)
+    let watched = try run_once(app)
+    try worker.join()
+    app.value().unwatch(watch)
+    assert(stopper.value().reads == 1 and watched < 900000000)
+    # wake_at alone ends the wait; the first frame after it stops the loop.
+    try app.value().set_title("Run loop wakes — again")
+    stopper.value().due = time.now() + 100000000
+    app.value().wake_after(0.1)
+    let woken = try run_once(app)
+    assert(woken >= 90000000 and woken < 900000000)
+    print("ok run loop wakes for watched sockets and wake_at")

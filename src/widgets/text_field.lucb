@@ -15,7 +15,8 @@ from font import Font, selected_font
 ## the focus color, text inset by one cell, everything selected on focus, and a
 ## commit on Enter or on losing focus (`on_commit`); Escape puts the committed
 ## text back. `on_change` fires on every edit. An empty field shows its
-## `placeholder` in the muted color. A `secure` field (a password) shows bullets
+## `placeholder` in the muted color. `on_submit` fires on every Enter, changed or
+## not, for a field whose Enter is an action (an address bar loads the page again). A `secure` field (a password) shows bullets
 ## and refuses copy and cut.
 pub struct TextField: Widget:
     let box: interop.Reference[Layout]
@@ -26,6 +27,7 @@ pub struct TextField: Widget:
     var cells: f64
     let changed: interop.Signal[str]
     let submitted: interop.Signal[str]
+    let entered: interop.Signal[str]
 
     ## `cells` is the width the field asks for, in character cells.
     pub func init(text: str = "", font: interop.Reference[Font]? = none, placeholder: str = "", cells: f64 = 12.0,
@@ -46,6 +48,8 @@ pub struct TextField: Widget:
         errdefer changed.release()
         let submitted = try interop.Signal[str]()
         errdefer submitted.release()
+        let entered = try interop.Signal[str]()
+        errdefer entered.release()
         self.committed = try interop.copy_text(text)
         self.placeholder = try interop.copy_text(placeholder)
         self.box = box
@@ -54,6 +58,7 @@ pub struct TextField: Widget:
         self.cells = math.clamp(cells, 2.0, 120.0)
         self.changed = changed
         self.submitted = submitted
+        self.entered = entered
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -79,6 +84,22 @@ pub struct TextField: Widget:
     ## last committed text.
     pub func on_commit(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
         return try self.submitted.connect(callback)
+
+    ## Called with the text on every Enter, after `on_commit` (which only fires when
+    ## the text changed): an address field loads its address even when it is the same.
+    pub func on_submit(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.entered.connect(callback)
+
+    ## Enter: commit the text, then submit it.
+    func submit() -> interop.Outcome[unit]:
+        let committed = self.commit()
+        if not committed.is_success():
+            return committed
+        committed.release()
+        let current = self.input.text() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer current.release()
+        return self.entered.emit(current.value)
 
     func commit() -> interop.Outcome[unit]:
         let current = self.input.text() catch failure:
@@ -161,7 +182,7 @@ pub struct TextField: Widget:
         if event.kind == input.EventKind.key_down and event.key == input.Key.escape:
             return self.revert()
         if event.kind == input.EventKind.key_down and event.key == input.Key.enter and not event.repeated:
-            return self.commit()
+            return self.submit()
         if event.kind == input.EventKind.key_down or event.kind == input.EventKind.text_input:
             let mutated = self.input.event(event) catch failure:
                 return result.failure[unit](failure.code, failure.message)
@@ -180,6 +201,8 @@ pub struct TextField: Widget:
         self.changed.release()
         self.submitted.close()
         self.submitted.release()
+        self.entered.close()
+        self.entered.release()
         self.committed.release()
         self.placeholder.release()
         self.box.release()
@@ -189,6 +212,7 @@ pub struct TextField: Widget:
         self.box.trace(visit, context)
         self.changed.trace(visit, context)
         self.submitted.trace(visit, context)
+        self.entered.trace(visit, context)
         self.committed.trace(visit, context)
         self.placeholder.trace(visit, context)
 
