@@ -520,8 +520,11 @@ pub struct Application:
             # A frame the GPU skipped (a locked screen, a sleeping display) waits out
             # its backoff before it is drawn again.
             let retrying = self.retry.waiting(moment)
-            # A widget's wake-up (a blinking caret's next toggle) draws once, then rests.
-            let caret_due = not retrying and layout.take_due_wake(moment)
+            # A widget's wake-up (a blinking caret's next toggle) draws once, then rests;
+            # while a skipped frame waits, the wake-up is taken and drawn with the retry.
+            let caret_due = layout.take_due_wake(moment)
+            if caret_due and retrying:
+                self.dirty = true
             if not retrying and (self.game or self.dirty or epoch_now != self.last_epoch or caret_due):
                 let frame = surface.frame() catch failure:
                     return result.failure[unit](failure.code, failure.message)
@@ -658,7 +661,8 @@ pub struct Application:
             let delta = deadline - now
             if delta < budget:
                 budget = delta
-        let wake = layout.wake_deadline()
+        # A widget's wake-up waits with a skipped frame: the retry draws it.
+        let wake = 0 if retrying else layout.wake_deadline()
         if wake != 0:
             if wake <= now:
                 return 0
