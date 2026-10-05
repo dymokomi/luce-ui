@@ -3,7 +3,9 @@
 ## (luce-window `window.watch`) ends when one turns ready, so a program with requests
 ## in flight sleeps until there is something to read or write instead of polling on a
 ## short timer. Each serviced turn asks a luce-std Poller, without waiting, which are
-## ready and runs their callbacks. Readiness is level-triggered: a callback that
+## ready and runs their callbacks; the poller holds only the slots up to the last one in
+## use, and with nothing watched there is none and a turn asks nothing. Readiness is
+## level-triggered: a callback that
 ## leaves its descriptor ready is called again on the next turn, and the loop does
 ## not sleep until it reads, writes or unwatches. A descriptor closed while watched
 ## is dropped on the next turn.
@@ -23,7 +25,8 @@ struct Watch:
     var active: bool
 
 ## The watches and the next handle to give out; handles start at 1 and are never
-## reused. Slot `n` of the poller holds watch `n`.
+## reused. Slot `n` of the poller holds watch `n`, and the poller ends at the last active
+## slot (`fit`).
 pub struct Watches:
     var slots: Watch[64]
     var poller: net.Poller?
@@ -51,17 +54,15 @@ pub struct Watches:
                 free_slot = index
         if free_slot == self.slots.length:
             error(result.limit, "at most 64 descriptors can be watched")
-        if self.poller == none:
-            self.poller = try net.Poller.create(self.slots.length)
+        let id = self.next_id +? 1 else error(result.limit, "watch identities exhausted")
         let interest = net.WaitInterest.both if readable and writable else (net.WaitInterest.read if readable else net.WaitInterest.write)
-        var poller = self.poller else trap("the watch poller was not created")
-        try poller.watch(free_slot, native, interest)
-        errdefer poller.disable(free_slot) catch failure:
-            _ = failure
         try window.watch(native, window.Interest.both if readable and writable else (window.Interest.readable if readable else window.Interest.writable))
-        self.next_id = self.next_id +? 1 else error(result.limit, "watch identities exhausted")
-        self.slots[free_slot] = Watch(id = self.next_id, descriptor = native, interest = interest, callback = callback.clone(), active = true)
-        return self.next_id
+        self.slots[free_slot] = Watch(id = id, descriptor = native, interest = interest, callback = callback.clone(), active = true)
+        self.fit() catch failure:
+            self.drop(free_slot)
+            error(failure.code, failure.message)
+        self.next_id = id
+        return id
 
     ## Stop a watch by its handle; safe from inside its own callback.
     pub func remove(id: i64):
@@ -82,23 +83,57 @@ pub struct Watches:
             var slots = poller
             slots.disable(index) catch failure:
                 _ = failure
+        # a poller that cannot shrink now keeps the slot disabled, which polls as nothing
+        self.fit() catch failure:
+            _ = failure
+
+    ## Size the poller to the slots in use, one past the last active one, so a turn polls
+    ## only those; none while nothing is watched. A new poller takes the watches before it
+    ## replaces the old, which stays whole when it cannot be made.
+    func fit() -> !:
+        var end: usize = 0
+        for index in 0..<self.slots.length:
+            if self.slots[index].active:
+                end = index + 1
+        var capacity: usize = 0
+        if let poller = self.poller:
+            capacity = poller.capacity()
+        if end == capacity:
+            return
+        var fitted: net.Poller? = none
+        if end > 0:
+            var fresh = try net.Poller.create(end)
+            errdefer fresh.destroy()
+            for index in 0..<end:
+                if self.slots[index].active:
+                    try fresh.watch(index, self.slots[index].descriptor, self.slots[index].interest)
+            fitted = fresh
+        if let poller = self.poller:
+            var old = poller
+            old.destroy()
+        self.poller = fitted
 
     ## Run the callback of every watch whose descriptor is ready now, without waiting.
     ## Returns the first callback failure, like the timers.
     pub func service() -> interop.Outcome[unit]:
+        # nothing watched: there is no poller, and nothing to ask
         var poller = self.poller else return result.success[unit](())
         let ready = poller.wait(net.Deadline.at(0)) catch failure:
             # Windows' WSAPoll fails outright when one socket in the set was closed:
-            # drop the ones that fail alone, and ask again.
+            # drop the ones that fail alone, and ask the poller fitted to the rest again.
             self.drop_failing()
-            recover poller.wait(net.Deadline.at(0)) catch again:
+            var rest = self.poller else return result.success[unit](())
+            recover rest.wait(net.Deadline.at(0)) catch again:
                 return result.failure[unit](again.code, again.message)
         if ready == 0:
             return result.success[unit](())
         for index in 0..<self.slots.length:
             if not self.slots[index].active:
                 continue
-            let readiness = poller.readiness(index) catch failure:
+            # a callback may watch or unwatch, which refits the poller: asked afresh each
+            # time, a new one has no events yet, and a slot ready still is so next turn
+            var current = self.poller else break
+            let readiness = current.readiness(index) catch failure:
                 return result.failure[unit](failure.code, failure.message)
             if readiness.invalid:
                 self.drop(index)
@@ -199,6 +234,30 @@ test "a watched socket runs its callback while it is readable, and not once unwa
     watching.remove(id)
     try serviced(&watching)
     assert(counter.value().calls == 2)
+
+test "the poller holds only the slots in use, and is gone when nothing is watched":
+    let counter = try interop.Reference[Counter].adopt(new Counter() in memory.heap, counter_type, memory.heap)
+    defer counter.release()
+    let callback = try interop.Callback[unit, unit].bind_mutating(counter, Counter.hit)
+    defer callback.release()
+    var first = try net.Datagram.bind(net.SocketAddress.loopback(0))
+    defer first.destroy()
+    var second = try net.Datagram.bind(net.SocketAddress.loopback(0))
+    defer second.destroy()
+    var watching = Watches()
+    defer watching.close()
+    assert(watching.poller == none)
+    try serviced(&watching)
+    let one = try watching.add((i64)(first.descriptor() else trap("no descriptor")), callback, true, false)
+    let two = try watching.add((i64)(second.descriptor() else trap("no descriptor")), callback, true, false)
+    assert((watching.poller else trap("no poller")).capacity() == 2)
+    watching.remove(two)
+    assert((watching.poller else trap("no poller")).capacity() == 1)
+    try serviced(&watching)
+    watching.remove(one)
+    assert(watching.poller == none)
+    try serviced(&watching)
+    assert(counter.value().calls == 0)
 
 test "a socket closed while watched is dropped on the next turn":
     let counter = try interop.Reference[Counter].adopt(new Counter() in memory.heap, counter_type, memory.heap)
