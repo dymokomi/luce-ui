@@ -4,6 +4,7 @@ from luce_window.input import EventKind, Key
 from luce_window import window
 from luce_ui import ui
 import platform
+from interop import Connection
 import time
 
 class Count:
@@ -302,4 +303,51 @@ pub func application_wakes() -> unit!:
         recover 0
     assert(refused and calls == 0)
     app.unwatch(1)
+    app.close()
+
+## A focused field takes the editing chords (select all, copy, cut, paste, undo,
+## redo) before the application's commands; with no field focused they are the
+## application's again.
+pub func field_editing_shortcuts() -> unit!:
+    let count = Count()
+    let field = TextField("https://example.com", cells = 24.0)
+    let other = Button("Elsewhere")
+    let app = Application(VStack([field, other], spacing = 0.0))
+    var commands: list[Command] = []
+    var triggered: list[Connection] = []
+    for key in [Key.a, Key.c, Key.x, Key.v, Key.z]:
+        let command = Command("Page chord", Shortcut(key, primary = true))
+        triggered.append(command.on_trigger(count.trigger))
+        commands.append(command)
+    let redo = Command("Page redo", Shortcut(Key.z, primary = true, shift = true))
+    triggered.append(redo.on_trigger(count.trigger))
+    commands.append(redo)
+    app.set_commands(commands)
+    render(app)
+    app.focus(field.layout())
+    render(app)
+    let mac = platform.macos
+    # Select all, then typing replaces the whole address.
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.a, meta = mac, control = not mac))
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 120))
+    assert(field.text() == "x" and count.triggers == 0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.z, meta = mac, control = not mac))
+    assert(field.text() == "https://example.com")
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.z, meta = mac, control = not mac, shift = true))
+    assert(field.text() == "x")
+    for key in [Key.c, Key.x, Key.v]:
+        app.dispatch(Event(kind = EventKind.key_down, key = key, meta = mac, control = not mac))
+    assert(count.triggers == 0)
+    # select_all from code, as an address bar does on focus.
+    field.set_text("luce.luciaos.com")
+    field.select_all()
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 121))
+    assert(field.text() == "y")
+    # Focus elsewhere: the chords are the application's commands again.
+    app.focus(other.layout())
+    render(app)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.a, meta = mac, control = not mac))
+    assert(count.triggers == 1)
+    for connection in triggered:
+        connection.disconnect()
     app.close()

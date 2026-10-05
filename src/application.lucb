@@ -17,6 +17,7 @@ import result
 import layout
 import scheduler
 import watches
+import present_retry
 from layout import Widget, Tree, Event
 from theme import Theme
 from command import Command, Commands
@@ -24,7 +25,7 @@ from command import Command, Commands
 ## Construction is platform-independent. run acquires native resources and owns
 ## their complete lifetime, including error unwinding and callback-driven stop.
 pub struct Application:
-    var title: interop.Owned[str]
+    var title_text: interop.Owned[str]
     var tree: Tree
     var commands: Commands
     let frames: interop.Signal[f64]
@@ -45,6 +46,8 @@ pub struct Application:
     var watches: watches.Watches
     ## The monotonic instant `wake_at` asked the loop to run a turn by, 0 for none.
     var wake_deadline: u64
+    ## When a frame the GPU skipped may be drawn again (present_retry.lucb).
+    var retry: present_retry.PresentRetry
     var game: bool
     var target_fps: f64
     var fullscreen: bool
@@ -62,7 +65,7 @@ pub struct Application:
         var tree = try Tree(content, theme)
         errdefer tree.close()
         let frames = try interop.Signal[f64]()
-        self.title = copied
+        self.title_text = copied
         self.tree = tree
         self.commands = Commands()
         self.frames = frames
@@ -80,6 +83,7 @@ pub struct Application:
         self.timers = scheduler.Scheduler()
         self.watches = watches.Watches()
         self.wake_deadline = 0
+        self.retry = present_retry.PresentRetry()
         self.game = game
         self.target_fps = fps
         self.fullscreen = fullscreen
@@ -95,11 +99,15 @@ pub struct Application:
         if not utf8.valid(title.bytes):
             error(result.invalid, "a window title must be valid UTF-8")
         let replacement = try interop.copy_text(title)
-        let previous = self.title
-        self.title = replacement
+        let previous = self.title_text
+        self.title_text = replacement
         previous.release()
         if self.running:
             try self.session_host.set_title(title)
+
+    ## The window's title, as given at construction or by the last set_title.
+    pub func title() -> interop.Owned[str]!:
+        return try interop.copy_text(self.title_text.value)
 
     ## Present every frame and cap the loop to `fps` (0 is uncapped). This is a
     ## run-loop mode, not a game engine: the application still owns simulation.
@@ -411,9 +419,9 @@ pub struct Application:
         # A windowed program has nowhere to print a trap; unless it chose its own
         # name and version, report crashes under the window title.
         if not core.crash_reports_enabled():
-            crash.enable(self.title.value) catch failure:
+            crash.enable(self.title_text.value) catch failure:
                 _ = failure
-        self.session_host = window.Window.open(window.Options(title = self.title.value, width = (u32)self.width, height = (u32)self.height, fullscreen = self.fullscreen)) catch failure:
+        self.session_host = window.Window.open(window.Options(title = self.title_text.value, width = (u32)self.width, height = (u32)self.height, fullscreen = self.fullscreen)) catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer self.session_host.destroy()
         var device = gpu.Device.open() catch failure:
@@ -509,9 +517,12 @@ pub struct Application:
             # at the requested fps without a layout mutation each frame.
             let epoch_now = layout.epoch()
             let moment = time.now()
+            # A frame the GPU skipped (a locked screen, a sleeping display) waits out
+            # its backoff before it is drawn again.
+            let retrying = self.retry.waiting(moment)
             # A widget's wake-up (a blinking caret's next toggle) draws once, then rests.
-            let caret_due = layout.take_due_wake(moment)
-            if self.game or self.dirty or epoch_now != self.last_epoch or caret_due:
+            let caret_due = not retrying and layout.take_due_wake(moment)
+            if not retrying and (self.game or self.dirty or epoch_now != self.last_epoch or caret_due):
                 let frame = surface.frame() catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 defer frame.release()
@@ -545,12 +556,16 @@ pub struct Application:
                 self.update_cursor(self.session_host) catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 var resized = false
-                _ = frame.value().present(self.tree.theme().background) catch failure:
+                let presented = frame.value().present(self.tree.theme().background) catch failure:
                     if failure.code != gpu.frame_resized:
                         return result.failure[unit](failure.code, failure.message)
                     resized = true
                     recover gpu.PresentResult.skipped
-                self.dirty = resized
+                # A resize redraws at once at the new size; a skipped present stays
+                # dirty and is retried after a backoff.
+                if not resized:
+                    self.retry.presented(presented, moment)
+                self.dirty = presented == gpu.PresentResult.skipped
                 self.last_epoch = epoch_now
                 self.last_render = moment
             count += 1
@@ -579,6 +594,7 @@ pub struct Application:
     ## handler when one is set. Every event marks the frame dirty so it is presented.
     func handle_event(host: window.Window, event: input.Event) -> interop.Outcome[unit]:
         self.dirty = true
+        self.retry.interrupt()
         if event.kind == input.EventKind.close_requested:
             if let handler = self.close_handler:
                 let permission = handler.invoke(())
@@ -606,18 +622,20 @@ pub struct Application:
 
     ## How long the loop may block before it must run again: nothing when a frame is
     ## already pending or a frame_limit run wants every frame, otherwise the soonest of
-    ## a timer deadline, a wake_at instant, a blinking caret's cadence, and a one-second
-    ## safety ceiling. A wake(), an OS event or a watched descriptor ends the wait early.
+    ## a timer deadline, a wake_at instant, a skipped frame's retry, a blinking caret's
+    ## cadence, and a one-second safety ceiling. A wake(), an OS event or a watched
+    ## descriptor ends the wait early.
     func wait_budget(frame_limit: i64) -> u64:
         if frame_limit > 0:
             return 0
+        let retrying = self.retry.waiting(time.now())
         if self.game:
-            if self.target_fps <= 0.0:
+            if self.target_fps <= 0.0 and not retrying:
                 return 0
             let now = time.now()
-            let interval = (u64)(1000000000.0 / self.target_fps)
             var budget: u64 = 0
-            if self.last_render != 0:
+            if self.last_render != 0 and self.target_fps > 0.0:
+                let interval = (u64)(1000000000.0 / self.target_fps)
                 let next = self.last_render + interval
                 if next > now:
                     budget = next - now
@@ -630,7 +648,7 @@ pub struct Application:
             return budget
         # A widget that changed the layout while drawing (an accordion easing a
         # section open) wants the next frame at once, not after the next event.
-        if self.dirty or self.tree.is_animating() or layout.epoch() != self.last_epoch:
+        if not retrying and (self.dirty or self.tree.is_animating() or layout.epoch() != self.last_epoch):
             return 0
         let now = time.now()
         var budget: u64 = 1000000000
@@ -648,14 +666,21 @@ pub struct Application:
                 budget = wake - now
         return budget
 
-    ## The soonest of the timers' deadline and the wake_at instant.
+    ## The soonest of the timers' deadline, the wake_at instant and a skipped frame's
+    ## retry.
     func next_deadline() -> u64?:
-        let timer = self.timers.next_deadline()
-        if self.wake_deadline == 0:
-            return timer
-        if let soonest = timer:
-            return soonest if soonest < self.wake_deadline else self.wake_deadline
-        return self.wake_deadline
+        var soonest = self.timers.next_deadline()
+        var retry_at: u64 = 0
+        if let instant = self.retry.deadline():
+            retry_at = instant
+        for candidate in [self.wake_deadline, retry_at]:
+            if candidate != 0:
+                if let current = soonest:
+                    if candidate < current:
+                        soonest = candidate
+                else:
+                    soonest = candidate
+        return soonest
 
     ## End the run loop after the current iteration; the application stays usable.
     pub func stop():
@@ -681,7 +706,7 @@ pub struct Application:
         self.frames.close()
         self.frames.release()
         self.tree.close()
-        self.title.release()
+        self.title_text.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
         if let handler = self.close_handler:
@@ -693,7 +718,7 @@ pub struct Application:
         self.watches.trace(visit, context)
         self.frames.trace(visit, context)
         self.tree.trace(visit, context)
-        self.title.trace(visit, context)
+        self.title_text.trace(visit, context)
 
 func check_fps(fps: f64) -> !:
     if not math.is_finite(fps) or fps < 0.0 or fps > 1000.0:

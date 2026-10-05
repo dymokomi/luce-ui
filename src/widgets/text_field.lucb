@@ -76,6 +76,12 @@ pub struct TextField: Widget:
         previous_committed.release()
         self.box.value().invalidate()
 
+    ## Select the whole text, as Cmd/Ctrl+A does; an address bar does it on focus so
+    ## typing replaces the address.
+    pub func select_all() -> !:
+        try self.input.select_all()
+        self.box.value().invalidate()
+
     ## Called with the whole text after each edit that changes it.
     pub func on_change(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)

@@ -19,7 +19,7 @@ from docking import docking, docking_layout
 from cursors import cursors
 from clicks import clicks
 from tables import tables
-from dialogs import dialogs, dialog_keys, number_submit, field_leaves, field_command_keys, field_submits, application_wakes
+from dialogs import dialogs, dialog_keys, number_submit, field_leaves, field_command_keys, field_submits, application_wakes, field_editing_shortcuts
 from scene_views import scene_views
 from parameters import parameters
 
@@ -124,6 +124,7 @@ pub func main(arguments: list[str]) -> int!:
     field_command_keys()
     field_submits()
     application_wakes()
+    field_editing_shortcuts()
     scrolling()
     parameters()
     let font = Font(size = 14.0)

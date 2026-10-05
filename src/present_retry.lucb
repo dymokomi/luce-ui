@@ -1,0 +1,58 @@
+## When the run loop may try again after the GPU skipped a present. A backend skips
+## when it has nothing to draw into: Metal's nextDrawable returns nil while the screen
+## is locked or the display sleeps; Vulkan (Windows, Linux) has no swapchain image
+## (timed out, out of date) or the window is hidden or zero-sized. The frame stays
+## dirty and is drawn again, but after a backoff that doubles from 16 ms to one
+## second, so a sleeping display does not make the loop spin. Input, or a frame
+## that is submitted, ends the wait.
+from luce_gpu import gpu
+
+let first_backoff: u64 = 16000000
+let longest_backoff: u64 = 1000000000
+
+pub struct PresentRetry:
+    ## The instant before which no retry is drawn; 0 when none is pending.
+    var retry_at: u64
+    var backoff: u64
+
+    pub func init():
+        self.retry_at = 0
+        self.backoff = 0
+
+    ## Record a present's result at `now`.
+    pub func presented(outcome: gpu.PresentResult, now: u64):
+        if outcome == gpu.PresentResult.submitted:
+            self.retry_at = 0
+            self.backoff = 0
+            return
+        self.backoff = first_backoff if self.backoff == 0 else (self.backoff * 2 if self.backoff < longest_backoff // 2 else longest_backoff)
+        self.retry_at = now + self.backoff
+
+    ## Whether a skipped frame is still waiting out its backoff at `now`.
+    pub func waiting(now: u64) -> bool:
+        return self.retry_at > now
+
+    ## The retry instant to wake for, if one is pending.
+    pub func deadline() -> u64?:
+        return none if self.retry_at == 0 else self.retry_at
+
+    ## Input arrived: draw at once, the display is evidently awake. The backoff keeps
+    ## growing if the next present is skipped too.
+    pub func interrupt():
+        self.retry_at = 0
+
+test "a skipped present is drawn again after a backoff that doubles up to a second":
+    var retry = PresentRetry()
+    assert(not retry.waiting(100) and retry.deadline() == none)
+    retry.presented(gpu.PresentResult.skipped, 100)
+    assert(retry.waiting(100) and retry.waiting(100 + first_backoff - 1) and not retry.waiting(100 + first_backoff))
+    retry.presented(gpu.PresentResult.skipped, 1000)
+    assert(retry.deadline() == 1000 + 2 * first_backoff)
+    for index in 0..<20:
+        retry.presented(gpu.PresentResult.skipped, 0)
+    assert(retry.deadline() == longest_backoff)
+    retry.interrupt()
+    assert(not retry.waiting(0))
+    retry.presented(gpu.PresentResult.submitted, 5)
+    retry.presented(gpu.PresentResult.skipped, 5)
+    assert(retry.deadline() == 5 + first_backoff)

@@ -65,6 +65,10 @@ pub struct LineInput:
         try self.document.select(0, self.document.length())
         self.dragging = false
 
+    ## Select the whole text.
+    pub func select_all() -> !:
+        try self.document.select(0, self.document.length())
+
     pub func event(event: Event) -> bool!:
         let before = self.document.version()
         let command = event.control or event.meta
@@ -78,7 +82,7 @@ pub struct LineInput:
                 try self.document.insert((str)bytes[..<count])
         elif event.kind == input.EventKind.key_down:
             if command and event.key == input.Key.a:
-                try self.document.select(0, self.document.length())
+                try self.select_all()
             elif command and (event.key == input.Key.c or event.key == input.Key.x):
                 # A masked input keeps its text to itself, as a password field does.
                 if self.document.first() != self.document.last() and not self.masked:

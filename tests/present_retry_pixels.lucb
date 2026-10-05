@@ -1,0 +1,105 @@
+## A present the GPU skips is drawn again on a later turn, without input to mark the
+## frame dirty. Ordering the window out makes Metal skip (the host is not visible);
+## while it is out the loop retries on a backoff (a few turns, not a spin), and once
+## it is back the frame is drawn.
+import c
+import interop
+import memory
+import ownership
+import time
+from luce_gpu import gpu
+from luce_ui import ui
+from luce_ui.ui import Application, Viewport, Widget
+
+extern func objc_getClass(name: c.str) -> void*
+extern func sel_registerName(name: c.str) -> void*
+extern func msg as "objc_msgSend"(object: void*, selector: void*) -> void*
+extern func msg_count as "objc_msgSend"(object: void*, selector: void*) -> u64
+extern func msg_index as "objc_msgSend"(object: void*, selector: void*, index: u64) -> void*
+extern func msg_text as "objc_msgSend"(object: void*, selector: void*) -> c.str
+extern func msg_order as "objc_msgSend"(object: void*, selector: void*, sender: void*?)
+
+let title = "Present retry"
+
+func native_window() -> void*:
+    let app = msg(objc_getClass("NSApplication"), sel_registerName("sharedApplication"))
+    let windows = msg(app, sel_registerName("windows"))
+    for index in 0..<msg_count(windows, sel_registerName("count")):
+        let native = msg_index(windows, sel_registerName("objectAtIndex:"), index)
+        if (str)msg_text(msg(native, sel_registerName("title")), sel_registerName("UTF8String")) == title:
+            return native
+    trap("the test window is not registered with AppKit")
+
+## Phase 0 waits for the first draw and orders the window out; phase 1 counts the
+## turns while it is out, then orders it back in; phase 2 waits for a draw.
+struct Probe:
+    var app: Application*
+    var phase: i64
+    var since: u64
+    var turns: i64
+    var draws: i64
+    var draws_hidden: i64
+    var failed: bool
+
+    func frame(elapsed: f64) -> interop.Outcome[unit]:
+        _ = elapsed
+        let now = time.now()
+        if self.phase == 0 and self.draws > 0:
+            msg_order(native_window(), sel_registerName("orderOut:"), none)
+            self.app.invalidate()
+            self.phase = 1
+            self.since = now
+        elif self.phase == 1:
+            self.turns += 1
+            if now - self.since > 1200000000:
+                self.draws_hidden = self.draws
+                msg_order(native_window(), sel_registerName("orderFront:"), none)
+                self.phase = 2
+                self.since = now
+        elif self.phase == 2:
+            if self.draws > self.draws_hidden:
+                self.app.stop()
+            elif now - self.since > 3000000000:
+                self.failed = true
+                self.app.stop()
+        return interop.Outcome[unit].success(interop.Owned[unit](()))
+
+    func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        _ = target
+        self.draws += 1
+        return interop.Outcome[unit].success(interop.Owned[unit](()))
+
+    func close():
+        self.phase = 0
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        _ = visit
+        _ = context
+
+let probe_type: interop.Type[Probe] = interop.Type[Probe]("present retry probe", Probe.close, Probe.trace)
+
+pub func skipped_presents() -> !:
+    let view = try interop.Reference[Viewport].adopt(new Viewport(64.0, 40.0) in memory.heap, ui.viewport_type, memory.heap)
+    defer view.release()
+    let content = view.as_interface[Widget](view.value())
+    defer content.release()
+    let app = try interop.Reference[Application].adopt(new Application(content, title = title, width = 160, height = 100) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    let probe = try interop.Reference[Probe].adopt(new Probe(app = app.value(), phase = 0, since = 0, turns = 0, draws = 0, draws_hidden = 0, failed = false) in memory.heap, probe_type, memory.heap)
+    defer probe.release()
+    let frames = try interop.Callback[f64, unit].bind_mutating(probe, Probe.frame)
+    defer frames.release()
+    let drawing = try interop.Callback[interop.View[gpu.RenderTarget], unit].bind_mutating(probe, Probe.draw)
+    defer drawing.release()
+    let frame_connection = try app.value().on_frame(frames)
+    defer frame_connection.release()
+    let draw_connection = try view.value().on_render(drawing)
+    defer draw_connection.release()
+    let outcome = app.value().run()
+    defer outcome.release()
+    try outcome.get()
+    let result = probe.value()
+    # 1.2 s out: retries at about 16, 48, 112, 240, 496 and 1008 ms, where a loop that
+    # forgot the skipped frame turns only for the odd window event, and a spin thousands.
+    assert(not result.failed and result.turns >= 5 and result.turns <= 40)
+    print(f"ok a skipped present is retried on a backoff ({result.turns} turns hidden) and drawn once visible")

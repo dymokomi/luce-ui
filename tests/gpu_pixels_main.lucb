@@ -11,6 +11,7 @@ import style_pixels
 import docking_pixels
 import text_pixels
 import run_loop_pixels
+import present_retry_pixels
 from luce_ui.ui import Application, Button, Viewport, HStack, Widget, Painter, Rect, Size, Alignment
 
 struct Paint:
@@ -140,4 +141,5 @@ pub func main(arguments: str[]) -> i32!:
     try text_pixels.check(host, surface)
     print("ok UI Metal pixels, ancestor clipping, resize and expired viewport")
     try run_loop_pixels.wakes()
+    try present_retry_pixels.skipped_presents()
     return 0
