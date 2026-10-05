@@ -53,7 +53,7 @@ extend ParameterPanel:
             try self.finish()
         if self.edit_row >= 0:
             try self.end_editing(true)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     # -- Hover.
 
@@ -64,7 +64,7 @@ extend ParameterPanel:
         self.hot_part = part
         self.hot_component = component
         self.box.value().set_cursor(self.cursor_for(row, part))
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Scrubbable parts show the resize cursor, as every scrubber does; typing
     ## fields the text cursor; things to click the pointer.
@@ -87,7 +87,7 @@ extend ParameterPanel:
             let advance = self.font.value().advance()
             self.fixed_label = math.clamp(self.press_label + event.x - self.press_x, advance * 3.0, math.max(advance * 3.0, self.placed_width - 80.0))
             self.stale = true
-            Layout.invalidate()
+            self.box.value().invalidate()
             return
         if self.laddering:
             try self.climb(event)
@@ -118,7 +118,7 @@ extend ParameterPanel:
             self.rows[index].open = open
             try self.remember_folder(self.rows[index].name.value, open)
             self.stale = true
-            Layout.invalidate()
+            self.box.value().invalidate()
             return
         if part == part_divider:
             self.press_part = part_divider
@@ -151,7 +151,7 @@ extend ParameterPanel:
         if part == part_slider:
             try self.begin(row)
             try self.slide(event.x)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     func release(event: Event) -> !:
         let row = self.press_row
@@ -161,7 +161,7 @@ extend ParameterPanel:
         self.press_row = -1
         self.press_part = part_none
         self.scrubbing = false
-        Layout.invalidate()
+        self.box.value().invalidate()
         if part == part_divider or row < 0 or row >= (i64)self.total:
             return
         if scrubbed or part == part_slider:
@@ -284,7 +284,7 @@ extend ParameterPanel:
         let cell = self.row_height()
         try self.ladder.value().show(rungs, count, start, event.x - 40.0, event.y - cell * ((f64)start + 0.5))
         try self.begin(row)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     func climb(event: Event) -> !:
         let index = (usize)self.press_row
@@ -367,7 +367,7 @@ extend ParameterPanel:
         try self.items_popup.value().open()
         self.popup_mode = mode
         self.popup_row = row
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## A color's editor under its swatch.
     func open_color(index: usize) -> !:
@@ -383,7 +383,7 @@ extend ParameterPanel:
         channels = self.color_popup.value().rgb()
         self.color_row = (i64)index
         self.color_shown = channels
-        Layout.invalidate()
+        self.box.value().invalidate()
 
 ## Whether a kind scrubs and takes the ladder.
 func numeric(kind: ParameterKind) -> bool:

@@ -71,7 +71,7 @@ pub struct Slider: Widget:
         if not math.is_finite(value):
             error(result.invalid, "slider values must be finite")
         self.current = math.clamp(value, self.minimum, self.maximum)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Change the bounds and re-clamp the value; no change signal.
     pub func set_range(minimum: f64, maximum: f64) -> !:
@@ -80,7 +80,7 @@ pub struct Slider: Widget:
         self.minimum = minimum
         self.maximum = maximum
         self.current = math.clamp(self.current, minimum, maximum)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func on_change(callback: interop.Callback[f64, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
@@ -90,7 +90,7 @@ pub struct Slider: Widget:
         if clamped == self.current:
             return result.success[unit](())
         self.current = clamped
-        Layout.invalidate()
+        self.box.value().invalidate()
         return self.changed.emit(clamped)
 
     func label_width() -> f64:
@@ -169,7 +169,7 @@ pub struct Slider: Widget:
     pub func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled:
             self.dragging = false
-            Layout.invalidate()
+            self.box.value().invalidate()
             return result.success[unit](())
         if not self.box.value().is_enabled():
             return result.success[unit](())
@@ -180,10 +180,10 @@ pub struct Slider: Widget:
         if event.kind == input.EventKind.pointer_moved:
             if self.dragging:
                 return self.change(self.value_at(event.x, bounds.width, bounds.height))
-            Layout.invalidate()
+            self.box.value().invalidate()
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
             self.dragging = false
-            Layout.invalidate()
+            self.box.value().invalidate()
         elif event.kind == input.EventKind.key_down:
             let amount = self.increment() * (10.0 if event.shift else 1.0)
             if event.key == input.Key.left or event.key == input.Key.down:

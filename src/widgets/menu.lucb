@@ -58,7 +58,7 @@ pub struct Menu: Widget:
         let previous_caption = self.caption
         self.caption = replacement
         previous_caption.release()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Offer `actions` from now on, as a menu whose choices depend on another
     ## (a font's styles on its family).

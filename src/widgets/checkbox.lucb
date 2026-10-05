@@ -50,7 +50,7 @@ pub struct Checkbox: Widget:
         if checked == self.checked:
             return
         self.checked = checked
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func set_text(text: str) -> !:
         _ = try self.font.value().measure(text)
@@ -58,7 +58,7 @@ pub struct Checkbox: Widget:
         let previous_caption = self.caption
         self.caption = replacement
         previous_caption.release()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Called with the new state after each user toggle; `set_checked` does not
     ## call it.
@@ -67,7 +67,7 @@ pub struct Checkbox: Widget:
 
     func toggle() -> interop.Outcome[unit]:
         self.checked = not self.checked
-        Layout.invalidate()
+        self.box.value().invalidate()
         return self.changed.emit(self.checked)
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
@@ -111,7 +111,7 @@ pub struct Checkbox: Widget:
             self.box.value().request_focus()
             return self.toggle()
         if event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_left:
-            Layout.invalidate()
+            self.box.value().invalidate()
         elif event.kind == input.EventKind.key_down and not event.repeated and (event.key == input.Key.space or event.key == input.Key.enter):
             return self.toggle()
         return result.success[unit](())

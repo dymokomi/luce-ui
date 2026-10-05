@@ -122,7 +122,7 @@ pub struct Font:
 
     ## The monospace cells `text` takes: two per wide East Asian scalar, none per
     ## combining mark, one for the rest. Fails when `text` is not UTF-8.
-    pub static func cells(text: str) -> i64!:
+    pub func cells(text: str) -> i64!:
         return (i64)(try fonts.text_cells(text))
 
     ## Internal rendering entry: cache-owned pixels are copied into the frame.

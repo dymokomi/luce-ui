@@ -69,7 +69,7 @@ pub struct TextField: Widget:
         let previous_committed = self.committed
         self.committed = replacement
         previous_committed.release()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Called with the whole text after each edit that changes it.
     pub func on_change(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
@@ -91,13 +91,13 @@ pub struct TextField: Widget:
         let previous_committed = self.committed
         self.committed = replacement
         previous_committed.release()
-        Layout.invalidate()
+        self.box.value().invalidate()
         return self.submitted.emit(current.value)
 
     func revert() -> interop.Outcome[unit]:
         self.input.set_text(self.committed.value) catch failure:
             return result.failure[unit](failure.code, failure.message)
-        Layout.invalidate()
+        self.box.value().invalidate()
         return result.success[unit](())
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
@@ -149,12 +149,12 @@ pub struct TextField: Widget:
                 defer current.release()
                 self.input.set_text(current.value) catch failure:
                     return result.failure[unit](failure.code, failure.message)
-                Layout.invalidate()
+                self.box.value().invalidate()
                 return result.success[unit](())
         if event.kind == input.EventKind.pointer_down or event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_up:
             self.input.pointer(event, self.font, inset, 0.0, bounds.width - inset * 2.0, bounds.height) catch failure:
                 return result.failure[unit](failure.code, failure.message)
-            Layout.invalidate()
+            self.box.value().invalidate()
             return result.success[unit](())
         if event.kind == input.EventKind.focus_lost:
             return self.commit()
@@ -166,7 +166,7 @@ pub struct TextField: Widget:
             let mutated = self.input.event(event) catch failure:
                 return result.failure[unit](failure.code, failure.message)
             if mutated:
-                Layout.invalidate()
+                self.box.value().invalidate()
                 let current = self.input.text() catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 defer current.release()

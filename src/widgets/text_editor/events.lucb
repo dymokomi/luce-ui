@@ -18,7 +18,7 @@ extend TextEditor:
         let before = self.document.version()
         self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
-        Layout.invalidate()
+        self.box.value().invalidate()
         if self.pending_swatch >= 0:
             let offset = self.pending_swatch
             self.pending_swatch = -1

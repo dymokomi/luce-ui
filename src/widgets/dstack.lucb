@@ -277,7 +277,7 @@ pub struct DStack: Widget:
         if branch == 0 or not math.is_finite(fraction) or fraction < 0.0 or fraction > 1.0:
             error(result.invalid, "panel must have a split parent and a fraction in 0..1")
         self.state.value().model.nodes[branch].fraction = fraction
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Called with the panel whenever a selection shows it: a click on its tab,
     ## stepping through tabs, a focus move, `select` or `add`.

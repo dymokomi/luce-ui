@@ -127,14 +127,14 @@ pub struct Button: Widget:
         let previous_caption = self.caption
         self.caption = replacement
         previous_caption.release()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Change how the button rests; `selected` marks it as the active choice.
     pub func set_style(style: ButtonStyle):
         if style == self.style:
             return
         self.style = style
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func style_of() -> ButtonStyle:
         return self.style
@@ -147,12 +147,12 @@ pub struct Button: Widget:
         let previous = self.glyph
         self.glyph = replacement
         previous.release()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Mark the button as the face of a group, with a small corner triangle.
     pub func set_grouped(grouped: bool):
         self.grouped = grouped
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## A press held a moment (400 ms): instead of a click, this, while still
     ## held — `poll_hold` each frame fires it (or letting go after the moment).
@@ -216,7 +216,7 @@ pub struct Button: Widget:
         let pressing = self.pressed and (self.pressed_key != input.Key.unknown or self.box.value().contains_pointer())
         # Held for a hold: keep frames coming so `poll_hold` sees the moment pass.
         if self.pressed and self.holds and not self.hold_fired:
-            Layout.invalidate()
+            self.box.value().invalidate()
         let hovering = self.is_enabled() and self.box.value().contains_pointer()
         let resting = theme.accent if self.style == ButtonStyle.selected else (theme.raised if self.style == ButtonStyle.raised else theme.button)
         var color = resting
@@ -267,7 +267,7 @@ pub struct Button: Widget:
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
             let activate = self.pressed and self.pressed_key == input.Key.unknown and event.inside
             self.pressed = false
-            Layout.invalidate()
+            self.box.value().invalidate()
             if activate and self.hold_fired:
                 return result.success[unit](())
             if activate and self.holds and time.since(self.pressed_at) >= 400000000:
@@ -283,10 +283,10 @@ pub struct Button: Widget:
                 return result.success[unit](())
             self.pressed = false
             self.pressed_key = input.Key.unknown
-            Layout.invalidate()
+            self.box.value().invalidate()
             if activate:
                 return self.click()
-        Layout.invalidate()
+        self.box.value().invalidate()
         return result.success[unit](())
 
     pub func close():

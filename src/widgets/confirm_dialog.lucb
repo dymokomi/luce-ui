@@ -164,7 +164,7 @@ pub struct ConfirmDialog: Widget:
             let bounds = self.box.value().bounds()
             if event.inside and event.y >= bounds.height - self.row_height() and pressed >= 0 and self.slot_role(event.x) == pressed:
                 return self.choose(pressed)
-        Layout.invalidate()
+        self.box.value().invalidate()
         return result.success[unit](())
 
     pub func close():

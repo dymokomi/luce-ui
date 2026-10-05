@@ -70,7 +70,7 @@ pub struct HsbField: Widget:
         self.hue = wrap_hue(hue)
         self.saturation = math.clamp(saturation, 0.0, 1.0)
         self.brightness = math.clamp(brightness, 0.0, 1.0)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(self.side, self.side))
@@ -117,7 +117,7 @@ pub struct HsbField: Widget:
             return result.success[unit](())
         self.saturation = math.clamp(x / bounds.width, 0.0, 1.0)
         self.brightness = 1.0 - math.clamp(y / bounds.height, 0.0, 1.0)
-        Layout.invalidate()
+        self.box.value().invalidate()
         return self.changed.emit(())
 
     pub func event(event: Event) -> interop.Outcome[unit]:
@@ -185,7 +185,7 @@ pub struct HueStrip: Widget:
         if not math.is_finite(hue):
             error(result.invalid, "hue must be finite")
         self.hue = wrap_hue(hue)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(strip_width + arrow_room * 2.0, self.height))
@@ -233,7 +233,7 @@ pub struct HueStrip: Widget:
         self.hue = (1.0 - math.clamp(y / bounds.height, 0.0, 1.0)) * 360.0
         if self.hue >= 360.0:
             self.hue = 0.0
-        Layout.invalidate()
+        self.box.value().invalidate()
         return self.changed.emit(self.hue)
 
     pub func event(event: Event) -> interop.Outcome[unit]:

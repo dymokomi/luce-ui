@@ -10,18 +10,18 @@ extend TextEditor:
     pub func set_ai_lines(first: i64, last: i64):
         self.ai_first = first if first <= last else last
         self.ai_last = last if last >= first else first
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Remove the AI line marking; the same as `set_ai_lines(0, 0)`.
     pub func clear_ai_lines():
         self.ai_first = 0
         self.ai_last = 0
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Replace every highlight with this complete, ordered set.
     pub func set_highlights(highlights: const Highlight[]) -> !:
         try self.highlights.replace(0, (i64)self.document.length(), highlights)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Publish a bounded analysis result: replace the highlights within
     ## `start..<end` with `highlights`, which lie inside it, computed against
@@ -34,7 +34,7 @@ extend TextEditor:
         if start < 0 or end < start or end > self.length():
             error(result.invalid, "highlight interval is outside the document")
         try self.highlights.replace(start, end, highlights)
-        Layout.invalidate()
+        self.box.value().invalidate()
         return true
 
     ## The color of the highlight covering scalar `offset`, or none.
@@ -45,7 +45,7 @@ extend TextEditor:
     ## language service republishes this on each change, alongside the highlights.
     pub func set_swatches(marks: const Swatch[]) -> !:
         try self.swatches.replace(marks)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## The chips that reserve layout columns. Only when soft-wrap is off, so wrapped
     ## rendering keeps the projection's scalar-based column layout; wrapped mode draws
@@ -123,7 +123,7 @@ extend TextEditor:
             else:
                 index += 1
         try self.swatches.replace(marks[..<written])
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Consecutive hex digits following a `#` at `at` (0 when that scalar is not `#`),
     ## capped at seven so a run longer than six fails the 3/6-digit test.
@@ -202,7 +202,7 @@ extend TextEditor:
             previous.release()
         self.baseline = replacement
         self.diff_version = -1
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func clear_baseline():
         if let previous = self.baseline:
@@ -210,7 +210,7 @@ extend TextEditor:
         self.baseline = none
         self.diff.clear()
         self.diff_version = -1
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Whether the text differed from the baseline when the view last refreshed.
     pub func has_changes() -> bool:

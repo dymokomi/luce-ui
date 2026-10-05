@@ -137,7 +137,7 @@ pub struct ColorEditor: Widget:
     pub func event(event: Event) -> interop.Outcome[unit]:
         let handled = self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
-        Layout.invalidate()
+        self.box.value().invalidate()
         if handled:
             var buffer: u8[8]
             return self.changed.emit(self.hex_string_into(buffer))

@@ -59,7 +59,7 @@ extend Tree:
                 let box = self.entries[index].box.value()
                 box.drop_accepted = true
                 box.drop_hovered = true
-                Layout.invalidate()
+                box.invalidate()
                 self.drop_hover = target
                 let entered = self.send_drag(index, input.EventKind.drag_entered, event.x, event.y)
                 if not entered.is_success():
@@ -75,7 +75,7 @@ extend Tree:
             if let index = self.find(self.drop_hover):
                 let box = self.entries[index].box.value()
                 box.drop_hovered = false
-                Layout.invalidate()
+                box.invalidate()
                 self.drop_hover = 0
                 if box.drop_accepted:
                     return self.send_drag(index, input.EventKind.drop, event.x, event.y)
@@ -89,7 +89,7 @@ extend Tree:
         let index = found else return result.success[unit](())
         let box = self.entries[index].box.value()
         box.drop_hovered = false
-        Layout.invalidate()
+        box.invalidate()
         self.drop_hover = 0
         return self.send_drag(index, input.EventKind.drag_left, 0.0, 0.0)
 

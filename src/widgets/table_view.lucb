@@ -153,13 +153,13 @@ pub struct TableView: Widget:
     ## Select every row of a `multiple` table.
     pub func select_all():
         self.picked.all()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Add row `index` to the selection or take it out, keeping the lead: restoring
     ## a selection after `set_rows`. A single-selection table selects it alone.
     pub func mark(index: i64, on: bool) -> !:
         try self.picked.mark(index, on)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func scroll_offset() -> f64:
         return self.scroll
@@ -203,7 +203,7 @@ pub struct TableView: Widget:
         try self.picked.resize(self.rows)
         let limit = math.max(0.0, (f64)self.rows * self.row_height() - math.max(0.0, self.box.value().bounds().height - self.header_height()))
         self.scroll = math.clamp(self.scroll, 0.0, limit)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Select row `index` alone (-1 for none) and scroll it into view.
     pub func select(index: i64) -> !:
@@ -222,7 +222,7 @@ pub struct TableView: Widget:
                 self.scroll = y
             elif y + rh > self.scroll + viewport:
                 self.scroll = math.max(0.0, y + rh - viewport)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func on_activate(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
         return try self.activated.connect(callback)
@@ -352,7 +352,7 @@ pub struct TableView: Widget:
             let width = math.max(self.columns[self.drag_column].minimum,
                                  self.drag_start_width + self.drag_sign * (event.x - self.drag_start_x))
             self.columns[self.drag_column].width = width
-            Layout.invalidate()
+            self.box.value().invalidate()
             return false
         if event.kind == input.EventKind.pointer_moved:
             if self.show_header and event.y < hh and self.divider_at(event.x, widths) >= 0:
@@ -361,14 +361,14 @@ pub struct TableView: Widget:
                 self.box.value().set_cursor(input.Cursor.pointer)
             # Repaint on every move so the hovered row keeps up with the pointer;
             # set_cursor alone does not invalidate.
-            Layout.invalidate()
+            self.box.value().invalidate()
             return false
         if event.kind == input.EventKind.scroll:
             let scale = 1.0 if event.scroll_unit == input.ScrollUnit.points else rh * 3.0
             let viewport = math.max(0.0, self.box.value().bounds().height - hh)
             let limit = math.max(0.0, (f64)self.rows * rh - viewport)
             self.scroll = math.clamp(self.scroll - event.scroll_y * scale, 0.0, limit)
-            Layout.invalidate()
+            self.box.value().invalidate()
         elif event.kind == input.EventKind.pointer_down and (event.button == 0 or event.button == 1) and event.inside:
             if self.show_header and event.y < hh:
                 if event.button == 0:

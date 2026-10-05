@@ -144,7 +144,7 @@ pub struct TextPrompt: Widget:
         elif self.editable:
             _ = self.text.event(event) catch failure:
                 return result.failure[unit](failure.code, failure.message)
-        Layout.invalidate()
+        self.box.value().invalidate()
         return result.success[unit](())
 
     pub func close():

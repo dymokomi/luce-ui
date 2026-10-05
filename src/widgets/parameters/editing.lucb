@@ -26,7 +26,7 @@ extend ParameterPanel:
         # While typing, Tab moves to the next field of the panel, not out of it.
         self.box.value().set_accepts_tab(true)
         self.box.value().set_cursor(input.Cursor.text)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Stop typing. Kept, the text becomes the value: arithmetic and `+=`
     ## forms are worked out, anything unreadable leaves the value as it was.
@@ -37,7 +37,7 @@ extend ParameterPanel:
         self.box.value().set_text_input(false)
         self.box.value().set_accepts_tab(false)
         self.box.value().set_cursor(self.cursor_for(self.hot_row, self.hot_part))
-        Layout.invalidate()
+        self.box.value().invalidate()
         if not keep or row < 0 or row >= (i64)self.total:
             return
         let index = (usize)row
@@ -68,7 +68,7 @@ extend ParameterPanel:
                 self.set_hot(row, part, component)
             try self.input.pointer(Event(kind = event.kind, x = event.x - field.x, y = event.y - field.y, button = event.button, shift = event.shift),
                                    self.font, inset, 0.0, field.width - inset * 2.0, field.height)
-            Layout.invalidate()
+            self.box.value().invalidate()
             return true
         if kind == input.EventKind.focus_lost:
             try self.end_editing(true)
@@ -97,7 +97,7 @@ extend ParameterPanel:
                 return true
         if kind == input.EventKind.key_down or kind == input.EventKind.text_input:
             if try self.input.event(event):
-                Layout.invalidate()
+                self.box.value().invalidate()
             return true
         return false
 
@@ -158,7 +158,7 @@ extend ParameterPanel:
             let moved = self.next_row(row, event.key == input.Key.up)
             if moved >= 0:
                 self.current = moved
-                Layout.invalidate()
+                self.box.value().invalidate()
             return
         if not self.enabled(index):
             return
@@ -202,7 +202,7 @@ extend ParameterPanel:
             let chosen = self.items_popup.value().take_chosen()
             self.popup_mode = popup_none
             self.popup_row = -1
-            Layout.invalidate()
+            self.box.value().invalidate()
             if chosen >= 0:
                 try self.chose(mode, row, chosen)
         if self.color_row >= 0:

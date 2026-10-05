@@ -111,7 +111,7 @@ extend TextEditor:
         self.clicks = 0
         try self.document.select((usize)anchor, (usize)caret)
         try self.reveal_caret()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## The latest change to the text, for incremental reanalysis: the replaced
     ## range, the new end and the version it produced.
@@ -180,5 +180,5 @@ extend TextEditor:
         self.active_since = time.now()
         self.reveal_caret() catch failure:
             return result.failure[unit](failure.code, failure.message)
-        Layout.invalidate()
+        self.box.value().invalidate()
         return self.changed.emit(())

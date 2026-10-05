@@ -104,7 +104,7 @@ pub struct NumberField: Widget:
             error(result.invalid, "number field values must be finite")
         self.current = self.precise(value)
         self.editing = false
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## What a cmd/ctrl-click puts back.
     pub func set_default(value: f64) -> !:
@@ -117,7 +117,7 @@ pub struct NumberField: Widget:
         if decimals < 0 or decimals > 9:
             error(result.invalid, "number field decimals must be 0..9")
         self.decimals = decimals
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Snap to multiples of `step` from the minimum (0 turns snapping off).
     pub func set_step(step: f64) -> !:
@@ -125,7 +125,7 @@ pub struct NumberField: Widget:
             error(result.invalid, "a number field step must be finite and nonnegative")
         self.step = step
         self.current = self.snap(self.current)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## The unit shown after the value, muted.
     pub func set_suffix(suffix: str) -> !:
@@ -133,7 +133,7 @@ pub struct NumberField: Widget:
         let previous_suffix = self.suffix
         self.suffix = replacement
         previous_suffix.release()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Change the bounds and re-clamp and re-snap the value; no signal.
     pub func set_range(minimum: f64, maximum: f64) -> !:
@@ -142,7 +142,7 @@ pub struct NumberField: Widget:
         self.minimum = minimum
         self.maximum = maximum
         self.current = self.snap(self.current)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Called with the new value after each user change: a scrub step, an arrow
     ## key, a committed edit or a cmd/ctrl-click reset. `set_value` does not call it.
@@ -184,7 +184,7 @@ pub struct NumberField: Widget:
         if snapped == self.current:
             return result.success[unit](())
         self.current = snapped
-        Layout.invalidate()
+        self.box.value().invalidate()
         return self.changed.emit(snapped)
 
     ## One increment for arrows and scrubbing: the step, or a two-hundredth of the range.
@@ -197,12 +197,12 @@ pub struct NumberField: Widget:
         try self.input.set_text(shown)
         self.editing = true
         self.box.value().set_cursor(input.Cursor.text)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     func finish_editing(keep: bool) -> interop.Outcome[unit]:
         self.editing = false
         self.box.value().set_cursor(input.Cursor.resize_horizontal)
-        Layout.invalidate()
+        self.box.value().invalidate()
         if not keep:
             return result.success[unit](())
         let typed = self.input.text() catch failure:
@@ -272,7 +272,7 @@ pub struct NumberField: Widget:
                     return self.finish_editing(true)
                 self.input.pointer(event, self.font, inset, 0.0, bounds.width - inset * 2.0, bounds.height) catch failure:
                     return result.failure[unit](failure.code, failure.message)
-                Layout.invalidate()
+                self.box.value().invalidate()
                 return result.success[unit](())
             if event.kind == input.EventKind.focus_lost:
                 return self.finish_editing(true)
@@ -284,7 +284,7 @@ pub struct NumberField: Widget:
                 let mutated = self.input.event(event) catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 if mutated:
-                    Layout.invalidate()
+                    self.box.value().invalidate()
             return result.success[unit](())
         if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
             self.box.value().request_focus()
@@ -307,7 +307,7 @@ pub struct NumberField: Widget:
                     let per_pixel = self.increment() * 0.5 * (10.0 if event.shift else 1.0)
                     return self.change(self.press_value + travelled * per_pixel)
             else:
-                Layout.invalidate()
+                self.box.value().invalidate()
             return result.success[unit](())
         if event.kind == input.EventKind.pointer_up and event.button == 0:
             let was_pressed = self.pressed

@@ -54,7 +54,7 @@ pub struct PaneHeader: Widget:
         let previous_caption = self.caption
         self.caption = replacement
         previous_caption.release()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func set_detail(detail: str) -> !:
         if detail == self.description.value:
@@ -64,13 +64,13 @@ pub struct PaneHeader: Widget:
         let previous_description = self.description
         self.description = replacement
         previous_description.release()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func set_icon(icon: IconKind):
         if icon == self.icon:
             return
         self.icon = icon
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     func inset() -> f64:
         return math.ceil(self.font.value().advance() * self.box.value().theme().header_inset_cells)

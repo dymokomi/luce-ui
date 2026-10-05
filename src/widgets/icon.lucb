@@ -29,7 +29,7 @@ pub struct Icon: Widget:
 
     pub func set_kind(kind: IconKind):
         self.kind = kind
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(self.font.value().height(), self.font.value().line_height()))

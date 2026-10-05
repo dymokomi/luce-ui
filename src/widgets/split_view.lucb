@@ -62,7 +62,7 @@ struct Divider: Widget:
     func handle(event: Event) -> !:
         if event.cancelled:
             self.dragging = false
-            Layout.invalidate()
+            self.box.value().invalidate()
             return
         let parent = self.parent.get() else return
         defer parent.release()
@@ -75,13 +75,13 @@ struct Divider: Widget:
         if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
             self.dragging = true
             self.grab = event.x if self.horizontal else event.y
-            Layout.invalidate()
+            self.box.value().invalidate()
         elif event.kind == input.EventKind.pointer_moved and self.dragging:
             let coordinate = event.x if self.horizontal else event.y
             try parent.value().set_split(math.clamp((position + coordinate - self.grab) / available, 0.0, 1.0))
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
             self.dragging = false
-            Layout.invalidate()
+            self.box.value().invalidate()
         elif event.kind == input.EventKind.key_down:
             let backward = event.key == input.Key.left if self.horizontal else event.key == input.Key.up
             let forward = event.key == input.Key.right if self.horizontal else event.key == input.Key.down

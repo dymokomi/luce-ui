@@ -69,7 +69,7 @@ pub struct Panel: Widget:
         let previous_caption = self.caption
         self.caption = replacement
         previous_caption.release()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func set_detail(detail: str) -> !:
         if detail == self.description.value: return
@@ -77,12 +77,12 @@ pub struct Panel: Widget:
         let previous_description = self.description
         self.description = replacement
         previous_description.release()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func set_icon(icon: IconKind):
         if icon == self.symbol: return
         self.symbol = icon
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func set_content(content: interop.Interface[Widget]) -> !:
         if let bar = self.footer:

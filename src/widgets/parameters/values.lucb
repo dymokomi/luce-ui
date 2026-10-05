@@ -29,7 +29,7 @@ extend ParameterPanel:
         self.total = made
         self.apply_conditions()
         self.stale = true
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## How many parameters the panel holds.
     pub func count() -> i64:
@@ -82,7 +82,7 @@ extend ParameterPanel:
             return
         self.rows[(usize)index].values[(usize)component] = kept
         self.apply_conditions()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Set a text, path or info row's text from code; no signal.
     pub func set_text(index: i64, text: str) -> !:
@@ -91,20 +91,20 @@ extend ParameterPanel:
             return
         try replace_text(&self.rows[(usize)index].text, text)
         self.apply_conditions()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Change what the row shows as its label (a button's caption).
     pub func set_label(index: i64, label: str) -> !:
         _ = try self.row(index)
         try replace_text(&self.rows[(usize)index].label, label)
         self.stale = true
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Offer `items` in a menu from now on (a choice that depends on another).
     pub func set_items(index: i64, items: str) -> !:
         _ = try self.row(index)
         try replace_text(&self.rows[(usize)index].items, items)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Change the default a reset puts back, and the changed marker compares with.
     pub func set_default(index: i64, component: i64, value: f64) -> !:
@@ -112,7 +112,7 @@ extend ParameterPanel:
         if component < 0 or component >= row.components:
             error(result.invalid, "no such parameter component")
         self.rows[(usize)index].defaults[(usize)component] = row_clamp(row, value)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Hide the row, or show it again, whatever its conditions say.
     pub func set_hidden(index: i64, hidden: bool) -> !:
@@ -121,13 +121,13 @@ extend ParameterPanel:
             return
         self.rows[(usize)index].hidden = hidden
         self.stale = true
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Dim the row and ignore its input, or enable it again.
     pub func set_enabled(index: i64, enabled: bool) -> !:
         _ = try self.row(index)
         self.rows[(usize)index].disabled = not enabled
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Whether the row shows: not hidden, its conditions do not hide it and its folder is open.
     pub func is_shown(index: i64) -> bool!:
@@ -164,7 +164,7 @@ extend ParameterPanel:
         if index >= 0 and self.rows[(usize)index].kind == ParameterKind.folder:
             self.rows[(usize)index].open = open
             self.stale = true
-            Layout.invalidate()
+            self.box.value().invalidate()
 
     ## The label column's width, as last placed.
     pub func label_width() -> f64:
@@ -177,7 +177,7 @@ extend ParameterPanel:
             error(result.invalid, "a label column is 0..4096 points")
         self.fixed_label = width
         self.stale = true
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Row `index`'s line in the panel's points, as last placed; empty while it does not show.
     pub func row_bounds(index: i64) -> Rect!:
@@ -200,7 +200,7 @@ extend ParameterPanel:
             error(result.invalid, "a panel margin is 0..64 points")
         self.margin = margin
         self.stale = true
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## How long the pointer rests on a row before its tooltip shows, in seconds (0.6 unless set).
     pub func set_tip_delay(seconds: f64) -> !:
@@ -294,7 +294,7 @@ extend ParameterPanel:
             try self.flush()
         self.pending = index
         self.apply_conditions()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## End the edit under way: its waiting change, then its commit.
     func finish() -> !:

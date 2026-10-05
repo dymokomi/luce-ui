@@ -102,7 +102,7 @@ pub struct ActionPopup: Widget:
         self.selected = -1
         self.first = 0
         self.pressed = -1
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func is_open() -> bool:
         return self.box.value().is_visible()
@@ -312,7 +312,7 @@ pub struct ActionPopup: Widget:
                     self.first = index
                 elif index >= self.first + rows:
                     self.first = index - rows + 1
-                Layout.invalidate()
+                self.box.value().invalidate()
                 return
 
     ## The wheel scrolls the rows, three to a notch (a trackpad's points by the
@@ -327,7 +327,7 @@ pub struct ActionPopup: Widget:
         let index = self.index_at(event.y)
         let over = event.inside and index >= 0 and not self.commands.values()[self.matches[(usize)index]].value().is_divider() and self.commands.values()[self.matches[(usize)index]].value().is_enabled()
         self.selected = index if over else -1
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Scroll the row to reveal into the middle, now the popup is placed.
     func show_revealed():
@@ -375,7 +375,7 @@ pub struct ActionPopup: Widget:
             if changed:
                 self.filter() catch failure:
                     return result.failure[unit](failure.code, failure.message)
-            Layout.invalidate()
+            self.box.value().invalidate()
         if event.cancelled:
             self.box.value().set_visible(false)
             self.pressed = -1
@@ -401,7 +401,7 @@ pub struct ActionPopup: Widget:
                 # Hovering a divider or a gap between rows highlights nothing, so the
                 # last item does not linger as if still under the pointer.
                 self.selected = -1
-            Layout.invalidate()
+            self.box.value().invalidate()
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
             let index = self.index_at(event.y)
             let over = event.inside and index >= 0 and not self.commands.values()[self.matches[(usize)index]].value().is_divider()

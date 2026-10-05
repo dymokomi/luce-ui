@@ -73,12 +73,12 @@ pub struct CurveEditor: Widget:
         self.xs[1] = 1.0
         self.ys[1] = 1.0
         self.selected = -1
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Add a point from code, sorted by x; one at an existing x replaces it. No change signal.
     pub func add_point(x: f64, y: f64) -> !:
         _ = try self.insert(x, y)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## The curve's output for `x`.
     pub func evaluate(x: f64) -> f64:
@@ -226,13 +226,13 @@ pub struct CurveEditor: Widget:
             fx = math.clamp(fx, self.xs[index - 1] + gap, self.xs[index + 1] - gap)
         self.xs[index] = fx
         self.ys[index] = fy
-        Layout.invalidate()
+        self.box.value().invalidate()
         return self.changed.emit(())
 
     pub func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled:
             self.dragging = false
-            Layout.invalidate()
+            self.box.value().invalidate()
             return result.success[unit](())
         if not self.box.value().is_enabled():
             return result.success[unit](())
@@ -260,16 +260,16 @@ pub struct CurveEditor: Widget:
                 if event.x < plot.x - margin or event.x > plot.x + plot.width + margin or event.y < plot.y - margin or event.y > plot.y + plot.height + margin:
                     self.remove((usize)self.selected)
                     self.selected = -1
-                    Layout.invalidate()
+                    self.box.value().invalidate()
                     self.dragging = false
                     return self.changed.emit(())
             self.dragging = false
-            Layout.invalidate()
+            self.box.value().invalidate()
         elif event.kind == input.EventKind.key_down:
             if (event.key == input.Key.backspace or event.key == input.Key.delete) and self.selected > 0 and self.selected < (i64)self.count - 1:
                 self.remove((usize)self.selected)
                 self.selected = -1
-                Layout.invalidate()
+                self.box.value().invalidate()
                 return self.changed.emit(())
         return result.success[unit](())
 

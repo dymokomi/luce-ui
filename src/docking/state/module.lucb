@@ -298,7 +298,7 @@ pub struct State: Arrangement, CursorSource:
     pub func invalidate():
         if let box = self.box.get():
             defer box.release()
-            Layout.invalidate()
+            box.value().invalidate()
 
     func publish(model: Model):
         self.model = model

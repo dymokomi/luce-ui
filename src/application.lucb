@@ -182,19 +182,19 @@ pub struct Application:
 
     ## Show the desktop's open-file dialog with `message` and return the chosen
     ## path, or an empty string when it was canceled.
-    pub static func open_file(message: str) -> interop.Owned[str]!:
+    pub func open_file(message: str) -> interop.Owned[str]!:
         let chosen = try dialogs.open_file(message) else return try interop.copy_text("")
         return chosen
 
     ## Show the desktop's open-file dialog letting several files be chosen and
     ## return their paths one to a line, or an empty string when it was canceled.
-    pub static func open_files(message: str) -> interop.Owned[str]!:
+    pub func open_files(message: str) -> interop.Owned[str]!:
         let chosen = try dialogs.open_files(message) else return try interop.copy_text("")
         return chosen
 
     ## Show the desktop's save-file dialog suggesting `name` and return the chosen
     ## path, or an empty string when it was canceled.
-    pub static func save_file(message: str, name: str) -> interop.Owned[str]!:
+    pub func save_file(message: str, name: str) -> interop.Owned[str]!:
         let chosen = try dialogs.save_file(message, name) else return try interop.copy_text("")
         return chosen
 
@@ -312,7 +312,7 @@ pub struct Application:
 
     ## The files a drag carries, for tests and embedders that dispatch drag events
     ## themselves; a running window supplies them on its own.
-    pub static func set_drop_paths(paths: const str[]) -> !:
+    pub func set_drop_paths(paths: const str[]) -> !:
         try layout.set_drop_payload(paths)
 
     ## Arrange the tree at the target's size and draw it into the target. The

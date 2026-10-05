@@ -51,7 +51,7 @@ pub struct TabBar: Widget:
     ## unaffected.
     pub func select(index: i64):
         self.selected = math.iclamp(index, 0, (i64)self.titles.length - 1)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## The tab clicked since the last take, or -1.
     pub func take_click() -> i64:
@@ -100,7 +100,7 @@ pub struct TabBar: Widget:
             let width = self.tab_width(index)
             if event.x >= x and event.x < x + width:
                 self.pending = (i64)index
-                Layout.invalidate()
+                self.box.value().invalidate()
                 return result.success[unit](())
             x += width + 2.0
         return result.success[unit](())
@@ -177,7 +177,7 @@ pub struct Tabs: Widget:
         self.bar.value().select(chosen)
         for which in 0..<self.pages.length:
             self.pages[which].value().set_visible((i64)which == chosen)
-        Layout.invalidate()
+        self.box.value().invalidate()
         return self.changed.emit(chosen)
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:

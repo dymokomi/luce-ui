@@ -44,7 +44,7 @@ pub struct SectionHeader: Widget:
 
     pub func set_open(open: bool):
         self.open = open
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Whether it was clicked since the last take.
     pub func take_click() -> bool:
@@ -83,10 +83,10 @@ pub struct SectionHeader: Widget:
             return result.success[unit](())
         if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
             self.pending = true
-            Layout.invalidate()
+            self.box.value().invalidate()
             return result.success[unit](())
         if event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_left:
-            Layout.invalidate()
+            self.box.value().invalidate()
         return result.success[unit](())
 
     pub func close():
@@ -196,7 +196,7 @@ pub struct Accordion: Widget:
                 section.content_box.value().set_limits(Size(0.0, 0.0), Size(16384.0, 16384.0)) catch failure:
                     return result.failure[unit](failure.code, failure.message)
         self.open_index = index if index >= 0 else -1
-        Layout.invalidate()
+        self.box.value().invalidate()
         return self.changed.emit(self.open_index)
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
@@ -246,7 +246,7 @@ pub struct Accordion: Widget:
             if section.progress != section.target:
                 moving = true
         if moving:
-            Layout.invalidate()
+            self.box.value().invalidate()
 
     pub func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())

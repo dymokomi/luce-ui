@@ -157,7 +157,7 @@ pub struct ValueLadder: Widget:
 
     pub func select(rung: usize):
         self.selected = rung
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func hide():
         self.box.value().set_visible(false)

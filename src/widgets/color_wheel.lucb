@@ -104,7 +104,7 @@ pub struct ColorWheel: Widget:
             error(result.invalid, "a color wheel's shape is 0 (triangle), 1 (square) or 2 (disc)")
         self.shape = shape
         self.part = part_none
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Set the shown color from code; no signal.
     pub func set_hsb(hue: f64, saturation: f64, brightness: f64) -> !:
@@ -113,7 +113,7 @@ pub struct ColorWheel: Widget:
         self.hue = wrap_degrees(hue)
         self.saturation = math.clamp(saturation, 0.0, 1.0)
         self.brightness = math.clamp(brightness, 0.0, 1.0)
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## Where to press, in the box's points, for a host or test driving the
     ## wheel: the ring's middle at `hue` degrees, or the field's point for
@@ -207,7 +207,7 @@ pub struct ColorWheel: Widget:
         let size = try checked.size()
         if size.width != self.drawn_width:
             self.drawn_width = size.width
-            Layout.invalidate()
+            self.box.value().invalidate()
         let wheel = wheel_in(size.width, size.height, self.shape)
         if wheel.outer < 4.0:
             return
@@ -252,7 +252,7 @@ pub struct ColorWheel: Widget:
     # mark: Input ==================================================================================
 
     func changed_now() -> interop.Outcome[unit]:
-        Layout.invalidate()
+        self.box.value().invalidate()
         return self.changed.emit(())
 
     func nudge(degrees: f64) -> interop.Outcome[unit]:

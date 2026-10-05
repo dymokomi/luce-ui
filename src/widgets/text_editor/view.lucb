@@ -21,7 +21,7 @@ extend TextEditor:
         self.scroll_x = 0.0
         try self.refresh_view()
         try self.reveal_caret()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     ## The horizontal and vertical scroll in points, clamped to the content.
     pub func scroll_offset() -> Size:
@@ -56,7 +56,7 @@ extend TextEditor:
             let offset = self.projection.line(row).end
             try self.document.select(offset, offset)
         self.clamp_scroll()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(640.0, 360.0))

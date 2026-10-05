@@ -42,13 +42,13 @@ pub struct Text: Widget:
         let previous_caption = self.caption
         self.caption = replacement
         previous_caption.release()
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func set_muted(muted: bool):
         if muted == self.muted:
             return
         self.muted = muted
-        Layout.invalidate()
+        self.box.value().invalidate()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         let width = self.font.value().measure(self.caption.value) catch failure:
