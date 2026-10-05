@@ -25,7 +25,7 @@ pub struct Shortcut:
     ## `+`-separated tokens are case-insensitive: `cmd`/`ctrl`/`super` map to the
     ## primary modifier, plus `shift` and `alt`; the final token names the key.
     ## An empty chord (or "none") is unbound.
-    pub static func parse(text: str) -> Shortcut!:
+    pub func parse(text: str) -> Shortcut!:
         var primary = false
         var shift = false
         var alt = false
@@ -105,7 +105,7 @@ pub struct Command:
         return self.caption.clone()
 
     ## Relabel a live command, for one whose caption reflects its state.
-    pub mutating func set_text(text: str) -> !:
+    pub func set_text(text: str) -> !:
         let replacement = try interop.copy_text(text)
         let previous_caption = self.caption
         self.caption = replacement
@@ -115,7 +115,7 @@ pub struct Command:
         return self.binding
 
     ## Rebind this command, for a keymap loaded from settings.
-    pub mutating func set_shortcut(shortcut: Shortcut):
+    pub func set_shortcut(shortcut: Shortcut):
         self.binding = shortcut
 
     ## Write a display label for the shortcut into `buffer` (macOS modifier glyphs then
@@ -130,11 +130,11 @@ pub struct Command:
     pub func is_checked() -> bool:
         return self.checked
 
-    pub mutating func set_checked(checked: bool):
+    pub func set_checked(checked: bool):
         self.checked = checked
 
     ## A disabled command ignores `trigger`; its shortcut still consumes the key.
-    pub mutating func set_enabled(enabled: bool):
+    pub func set_enabled(enabled: bool):
         self.enabled = enabled
 
     pub func on_trigger(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
@@ -144,7 +144,7 @@ pub struct Command:
     pub func trigger() -> interop.Outcome[unit]:
         return self.triggered.emit(()) if self.enabled else result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.triggered.close()
         self.triggered.release()
         self.caption.release()
@@ -180,14 +180,14 @@ pub struct Commands:
         return none
 
     ## Replace the registry with `items`, at most 4096, retaining each.
-    pub mutating func set(items: const interop.Reference[Command][]) -> !:
+    pub func set(items: const interop.Reference[Command][]) -> !:
         if items.length > 4096:
             error(result.invalid, "a command registry supports at most 4096 entries")
         for item in items:
-            discard(try item.get())
+            _ = try item.get()
         var copied: interop.Reference[Command][]
         if items.length > 0:
-            copied = try alloc interop.Reference[Command][items.length] in memory.heap
+            copied = try new interop.Reference[Command][items.length] --- in memory.heap
             for index in 0..<items.length:
                 copied[index] = items[index].clone()
         # The new list in place before the old one is released: a release can
@@ -207,12 +207,12 @@ pub struct Commands:
                 if not event.repeated:
                     let invoked = selected.value().trigger()
                     defer invoked.release()
-                    discard(invoked.get() catch failure:
-                        return result.failure[bool](failure.code, failure.message))
+                    _ = invoked.get() catch failure:
+                        return result.failure[bool](failure.code, failure.message)
                 return result.success[bool](true)
         return result.success[bool](false)
 
-    pub mutating func close():
+    pub func close():
         let previous = self.items
         var empty: interop.Reference[Command][]
         self.items = empty
@@ -425,9 +425,9 @@ test "Shortcut.parse reads modifiers, letters, digits, symbols and function keys
     assert((try Shortcut.parse("cmd+1")).key == input.Key.digit_1)
     assert((try Shortcut.parse("none")).key == input.Key.unknown)
     var rejected = false
-    discard(Shortcut.parse("cmd+nope") catch failure:
+    _ = Shortcut.parse("cmd+nope") catch failure:
         rejected = true
-        recover Shortcut())
+        recover Shortcut()
     assert(rejected)
 
 test "a shortcut round-trips through its storable chord":

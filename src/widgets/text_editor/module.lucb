@@ -138,7 +138,7 @@ pub struct TextEditor: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
-    pub mutating func close():
+    pub func close():
         self.font.release()
         self.changed.close()
         self.changed.release()

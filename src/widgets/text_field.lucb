@@ -63,13 +63,13 @@ pub struct TextField: Widget:
         return try self.input.text()
 
     ## Set the text from code and take it as committed; no signals.
-    pub mutating func set_text(text: str) -> !:
+    pub func set_text(text: str) -> !:
         try self.input.set_text(text)
         let replacement = try interop.copy_text(text)
         let previous_committed = self.committed
         self.committed = replacement
         previous_committed.release()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Called with the whole text after each edit that changes it.
     pub func on_change(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
@@ -80,7 +80,7 @@ pub struct TextField: Widget:
     pub func on_commit(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
         return try self.submitted.connect(callback)
 
-    mutating func commit() -> interop.Outcome[unit]:
+    func commit() -> interop.Outcome[unit]:
         let current = self.input.text() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer current.release()
@@ -91,19 +91,19 @@ pub struct TextField: Widget:
         let previous_committed = self.committed
         self.committed = replacement
         previous_committed.release()
-        self.box.value().invalidate()
+        Layout.invalidate()
         return self.submitted.emit(current.value)
 
-    mutating func revert() -> interop.Outcome[unit]:
+    func revert() -> interop.Outcome[unit]:
         self.input.set_text(self.committed.value) catch failure:
             return result.failure[unit](failure.code, failure.message)
-        self.box.value().invalidate()
+        Layout.invalidate()
         return result.success[unit](())
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(self.font.value().advance() * self.cells, self.box.value().theme().row_height(self.font)))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -132,7 +132,7 @@ pub struct TextField: Widget:
             defer shown.release()
             try painter.text(shown.value, inset, text_y, color = theme.foreground if self.box.value().is_enabled() else theme.muted, font = self.font)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled:
             return self.revert()
         if not self.box.value().is_enabled():
@@ -149,12 +149,12 @@ pub struct TextField: Widget:
                 defer current.release()
                 self.input.set_text(current.value) catch failure:
                     return result.failure[unit](failure.code, failure.message)
-                self.box.value().invalidate()
+                Layout.invalidate()
                 return result.success[unit](())
         if event.kind == input.EventKind.pointer_down or event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_up:
             self.input.pointer(event, self.font, inset, 0.0, bounds.width - inset * 2.0, bounds.height) catch failure:
                 return result.failure[unit](failure.code, failure.message)
-            self.box.value().invalidate()
+            Layout.invalidate()
             return result.success[unit](())
         if event.kind == input.EventKind.focus_lost:
             return self.commit()
@@ -166,14 +166,14 @@ pub struct TextField: Widget:
             let mutated = self.input.event(event) catch failure:
                 return result.failure[unit](failure.code, failure.message)
             if mutated:
-                self.box.value().invalidate()
+                Layout.invalidate()
                 let current = self.input.text() catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 defer current.release()
                 return self.changed.emit(current.value)
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.font.release()
         self.input.close()
         self.changed.close()

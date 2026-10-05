@@ -28,7 +28,7 @@ struct ActionCursor: CursorSource:
     pub func cursor(position: Point, captured: bool) -> input.Cursor:
         return input.Cursor.pointer if self.action.value().is_enabled() else input.Cursor.arrow
 
-    pub mutating func close():
+    pub func close():
         self.action.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
@@ -76,7 +76,7 @@ pub struct Button: Widget:
             error(result.invalid, "unknown icon name")
         var selected = try selected_font(font)
         errdefer selected.release()
-        discard(try selected.value().measure(text))
+        _ = try selected.value().measure(text)
         let box = try layout.make_layout()
         errdefer box.release()
         try box.value().set_shrink(vertical = 0.0)
@@ -108,7 +108,7 @@ pub struct Button: Widget:
         self.font = selected
         self.action = action
         if let command = action:
-            discard(command.clone())
+            _ = command.clone()
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -119,50 +119,50 @@ pub struct Button: Widget:
             return action.value().text()
         return self.caption.clone()
 
-    pub mutating func set_text(text: str) -> !:
+    pub func set_text(text: str) -> !:
         if self.action != none:
             error(result.invalid, "an action button takes its label from the action")
-        discard(try self.font.value().measure(text))
+        _ = try self.font.value().measure(text)
         let replacement = try interop.copy_text(text)
         let previous_caption = self.caption
         self.caption = replacement
         previous_caption.release()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Change how the button rests; `selected` marks it as the active choice.
-    pub mutating func set_style(style: ButtonStyle):
+    pub func set_style(style: ButtonStyle):
         if style == self.style:
             return
         self.style = style
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     pub func style_of() -> ButtonStyle:
         return self.style
 
     ## Show `icon` (a luciaos-assets name) instead: a tool group's current tool.
-    pub mutating func set_icon(icon: str) -> !:
+    pub func set_icon(icon: str) -> !:
         if icon != "" and not icons.known(icon):
             error(result.invalid, "unknown icon name")
         let replacement = try interop.copy_text(icon)
         let previous = self.glyph
         self.glyph = replacement
         previous.release()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Mark the button as the face of a group, with a small corner triangle.
-    pub mutating func set_grouped(grouped: bool):
+    pub func set_grouped(grouped: bool):
         self.grouped = grouped
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## A press held a moment (400 ms): instead of a click, this, while still
     ## held — `poll_hold` each frame fires it (or letting go after the moment).
-    pub mutating func on_hold(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+    pub func on_hold(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         self.holds = true
         return try self.holding.connect(callback)
 
     ## Called each frame: a press held long enough fires the hold now, while
     ## the button is still down (a flyout opens under the pointer).
-    pub mutating func poll_hold() -> interop.Outcome[unit]:
+    pub func poll_hold() -> interop.Outcome[unit]:
         if not self.pressed or not self.holds or self.hold_fired or self.pressed_key != input.Key.unknown:
             return result.success[unit](())
         if time.since(self.pressed_at) < 400000000:
@@ -203,7 +203,7 @@ pub struct Button: Widget:
             width += self.glyph_size() + (self.font.value().advance() * 0.5 if caption.value.length > 0 else 0.0)
         return result.success[Size](Size(width + self.box.value().theme().inset(self.font) * 2.0, self.box.value().theme().row_height(self.font)))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -216,7 +216,7 @@ pub struct Button: Widget:
         let pressing = self.pressed and (self.pressed_key != input.Key.unknown or self.box.value().contains_pointer())
         # Held for a hold: keep frames coming so `poll_hold` sees the moment pass.
         if self.pressed and self.holds and not self.hold_fired:
-            self.box.value().invalidate()
+            Layout.invalidate()
         let hovering = self.is_enabled() and self.box.value().contains_pointer()
         let resting = theme.accent if self.style == ButtonStyle.selected else (theme.raised if self.style == ButtonStyle.raised else theme.button)
         var color = resting
@@ -250,7 +250,7 @@ pub struct Button: Widget:
             # The group's mark: a small triangle in the bottom-right corner.
             try painter.triangle(Point(size.width - 3.0, size.height - 8.0), Point(size.width - 3.0, size.height - 3.0), Point(size.width - 8.0, size.height - 3.0), ink)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if event.kind == input.EventKind.pointer_moved and not event.cancelled:
             return result.success[unit](())
         if event.cancelled:
@@ -267,7 +267,7 @@ pub struct Button: Widget:
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
             let activate = self.pressed and self.pressed_key == input.Key.unknown and event.inside
             self.pressed = false
-            self.box.value().invalidate()
+            Layout.invalidate()
             if activate and self.hold_fired:
                 return result.success[unit](())
             if activate and self.holds and time.since(self.pressed_at) >= 400000000:
@@ -283,13 +283,13 @@ pub struct Button: Widget:
                 return result.success[unit](())
             self.pressed = false
             self.pressed_key = input.Key.unknown
-            self.box.value().invalidate()
+            Layout.invalidate()
             if activate:
                 return self.click()
-        self.box.value().invalidate()
+        Layout.invalidate()
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         if let action = self.action:
             action.release()
         self.font.release()

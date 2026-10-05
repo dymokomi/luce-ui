@@ -34,13 +34,13 @@ pub struct ParameterTip: Widget:
         return self.box.value().is_visible()
 
     ## Show `doc` and `name` at (`x`, `y`) in the panel's points.
-    pub mutating func show(doc: str, name: str, x: f64, y: f64) -> !:
+    pub func show(doc: str, name: str, x: f64, y: f64) -> !:
         try replace_text(&self.doc, doc)
         try replace_text(&self.name, name)
         try self.box.value().set_popup_point(x, y)
         self.box.value().set_visible(true)
 
-    pub mutating func hide():
+    pub func hide():
         self.box.value().set_visible(false)
 
     ## Characters to a line: at most 44, fewer for a short doc.
@@ -54,7 +54,7 @@ pub struct ParameterTip: Widget:
         var at: usize = 0
         while at < self.doc.value.length:
             let (end, next) = wrap(self.doc.value, at, self.columns())
-            discard(end)
+            _ = end
             at = next
             count += 1
         return count
@@ -64,7 +64,7 @@ pub struct ParameterTip: Widget:
         let line = self.font.value().line_height()
         return result.success[Size](Size((f64)self.columns() * advance + advance * 2.0, (f64)(self.lines() + 1) * line + 8.0))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -88,10 +88,10 @@ pub struct ParameterTip: Widget:
             y += line
         try painter.text(self.name.value, advance, y, theme.muted, self.font)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.doc.release()
         self.name.release()
         self.font.release()
@@ -147,7 +147,7 @@ pub struct ValueLadder: Widget:
         return self.box.clone()
 
     ## Show `count` of `rungs`, `start` lit, with its top-left at (`x`, `y`).
-    pub mutating func show(rungs: f64[8], count: usize, start: usize, x: f64, y: f64) -> !:
+    pub func show(rungs: f64[8], count: usize, start: usize, x: f64, y: f64) -> !:
         self.rungs = rungs
         self.count = count
         self.start = start
@@ -155,11 +155,11 @@ pub struct ValueLadder: Widget:
         try self.box.value().set_popup_point(x, y)
         self.box.value().set_visible(true)
 
-    pub mutating func select(rung: usize):
+    pub func select(rung: usize):
         self.selected = rung
-        self.box.value().invalidate()
+        Layout.invalidate()
 
-    pub mutating func hide():
+    pub func hide():
         self.box.value().set_visible(false)
 
     func cell() -> f64:
@@ -168,7 +168,7 @@ pub struct ValueLadder: Widget:
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(80.0, self.cell() * (f64)self.count + 1.0))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -191,10 +191,10 @@ pub struct ValueLadder: Widget:
             let x = math.floor((size.width - text_width(self.font, shown)) * 0.5)
             try painter.text(shown, x, y + math.floor((cell - self.font.value().height()) * 0.5), theme.accent_text if lit else theme.foreground, self.font)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.font.release()
         self.box.release()
 

@@ -45,12 +45,12 @@ pub struct ContextMenu: Widget:
 
     ## Choose the entries for the next opening, typically from an `on_open` handler
     ## that inspects the current selection before the menu is placed and shown.
-    pub mutating func set_commands(commands: const interop.Reference[Command][]) -> !:
+    pub func set_commands(commands: const interop.Reference[Command][]) -> !:
         try self.popup.value().set_commands(commands)
 
     ## Open at (`x`, `y`) in the menu's own space; `held` when a press still
     ## under way opens it, so letting go over an item chooses that item.
-    pub mutating func open_at(x: f64, y: f64, held: bool = false) -> !:
+    pub func open_at(x: f64, y: f64, held: bool = false) -> !:
         let notified = self.opening.emit(())
         defer notified.release()
         try notified.get()
@@ -67,16 +67,16 @@ pub struct ContextMenu: Widget:
             return result.failure[Size](failure.code, failure.message)
         return result.success[Size](size)
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         return result.success[unit](())
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if event.kind == input.EventKind.pointer_down and event.button == 1:
             self.open_at(event.x, event.y) catch failure:
                 return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.opening.close()
         self.opening.release()
         self.popup.release()

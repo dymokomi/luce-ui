@@ -25,7 +25,7 @@ struct RenderBinding:
         self.camera = camera.clone()
         self.renderer = renderer.clone()
 
-    mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         let renderer = self.renderer.get() catch failure:
             return failed[unit](failure.code, failure.message)
         # A custom geometry/material may close its renderer while being visited.
@@ -34,7 +34,7 @@ struct RenderBinding:
         defer self.renderer.leave()
         return renderer.render(self.scene, self.camera, target, fit_aspect = true)
 
-    mutating func close():
+    func close():
         self.scene.release()
         self.camera.release()
         self.renderer.release()
@@ -84,13 +84,13 @@ pub struct SceneView: Widget:
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return self.viewport.value().measure(available)
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         return self.viewport.value().draw(target)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         return self.viewport.value().event(event)
 
-    pub mutating func close():
+    pub func close():
         self.connection.value().disconnect()
         self.connection.release()
         self.viewport.release()
@@ -105,6 +105,6 @@ pub let scene_view_type: interop.Type[SceneView] = interop.Type[SceneView]("Scen
 
 func select_renderer(renderer: interop.Reference[Renderer]?) -> interop.Reference[Renderer]!:
     if let provided = renderer:
-        discard(try provided.get())
+        _ = try provided.get()
         return provided.clone()
     return try interop.Reference[Renderer].adopt(new Renderer() in memory.heap, renderer_type, memory.heap)

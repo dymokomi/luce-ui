@@ -34,7 +34,7 @@ extend State:
 
     ## Abandon any press, divider drag, tab drag or window gesture, and show the
     ## committed model again.
-    pub mutating func cancel():
+    pub func cancel():
         self.gesture = Gesture.idle
         self.float_pressed = 0
         self.detached = none
@@ -54,7 +54,7 @@ extend State:
     ## through tabs, Enter or Down focuses the active tab's content, Control-N
     ## opens the add menu, and arrows (Shift for bigger steps), Home and End move
     ## a divider pressed last. Escape or cancellation abandons the gesture.
-    pub mutating func handle(event: Event) -> !:
+    pub func handle(event: Event) -> !:
         if event.cancelled or (event.kind == input.EventKind.key_down and event.key == input.Key.escape):
             self.cancel()
             return
@@ -175,7 +175,7 @@ extend State:
                 elif event.key == input.Key.n and event.control:
                     try self.open_menu(group)
 
-    mutating func step(group: usize, backwards: bool) -> !:
+    func step(group: usize, backwards: bool) -> !:
         let current = self.model.tabs[self.model.nodes[group].selected].order
         let count = self.model.tab_count(group)
         let next = (current + count - 1) % count if backwards else (current + 1) % count
@@ -187,7 +187,7 @@ extend State:
         defer delivered.release()
         try delivered.get()
 
-    mutating func resize_to(geometry: Geometry, x: f64, y: f64) -> !:
+    func resize_to(geometry: Geometry, x: f64, y: f64) -> !:
         if not math.is_finite(x) or not math.is_finite(y):
             error(result.invalid, "divider position must be finite")
         let bounds = geometry.panes[self.resize]

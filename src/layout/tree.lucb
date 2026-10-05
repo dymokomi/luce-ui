@@ -78,11 +78,10 @@ pub struct Tree:
     pub func theme() -> Theme:
         return self.appearance
 
-    pub mutating func set_theme(theme: Theme) -> !:
+    pub func set_theme(theme: Theme) -> !:
         try theme.validate()
         self.appearance = theme
         bump_revision()
-
 
     func find(identifier: u64) -> usize?:
         if identifier == 0:
@@ -121,7 +120,7 @@ pub struct Tree:
             lost.release()
         return self.cancel(identifier)
 
-    pub mutating func close():
+    pub func close():
         for entry in self.entries[..<self.count]:
             # Cycle collection can finalize a layout before its application.
             # Closed layouts already released their state; only detach live ones.

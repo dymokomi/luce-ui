@@ -17,7 +17,7 @@ pub struct TextureCache:
 
     ## The texture for a `columns` by `rows` picture in `pixel_format` on `target`'s
     ## device, made on first use; none when a standalone frame has no device.
-    pub mutating func texture_for(target: const gpu.RenderTarget*, columns: u32, rows: u32, pixel_format: gpu.Format) -> gpu.Texture?!:
+    pub func texture_for(target: const gpu.RenderTarget*, columns: u32, rows: u32, pixel_format: gpu.Format) -> gpu.Texture?!:
         let device = self.device else gpu.device_of(target) catch failure:
             if failure.code == gpu.unavailable:
                 return none
@@ -38,11 +38,11 @@ pub struct TextureCache:
         return self.uploaded != revision
 
     ## Record that the texture now holds `revision`.
-    pub mutating func mark_uploaded(revision: u64):
+    pub func mark_uploaded(revision: u64):
         self.uploaded = revision
 
     ## Destroy the texture and release the device; the next draw makes them again.
-    pub mutating func release():
+    pub func release():
         if let texture = self.texture:
             var owned = texture
             owned.destroy()

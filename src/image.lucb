@@ -25,7 +25,7 @@ pub struct Image:
             error(result.invalid, "image dimensions must be in 1..16384")
         if width * height > 67108864:
             error(result.invalid, "an image supports at most 67108864 pixels")
-        let pixels = try alloc u8[(usize)(width * height * 4)] in memory.heap
+        let pixels = try new u8[(usize)(width * height * 4)] --- in memory.heap
         for index in 0..<pixels.length:
             pixels[index] = 0
         self.columns = (u32)width
@@ -41,7 +41,7 @@ pub struct Image:
         return (i64)self.rows
 
     ## Replace every pixel with tightly packed, top-down RGBA bytes.
-    pub mutating func write(pixels: const u8[]) -> !:
+    pub func write(pixels: const u8[]) -> !:
         try self.require_open()
         if pixels.length != self.pixels.length:
             error(result.invalid, "image pixel data must be width * height * 4 bytes")
@@ -49,7 +49,7 @@ pub struct Image:
         self.revision += 1
 
     ## Set one pixel from a linear color and straight alpha.
-    pub mutating func set_pixel(x: i64, y: i64, color: gpu.Color) -> !:
+    pub func set_pixel(x: i64, y: i64, color: gpu.Color) -> !:
         try self.require_open()
         if x < 0 or y < 0 or x >= (i64)self.columns or y >= (i64)self.rows:
             error(result.invalid, "image pixel is out of bounds")
@@ -63,8 +63,8 @@ pub struct Image:
         self.revision += 1
 
     ## Draw `source` (all of it by default) scaled onto `rectangle` of `target`.
-    pub mutating func draw(target: interop.View[gpu.RenderTarget], rectangle: gpu.Rect, source: gpu.Region? = none,
-                           opacity: f64 = 1.0, filter: gpu.Filter = gpu.Filter.linear) -> !:
+    pub func draw(target: interop.View[gpu.RenderTarget], rectangle: gpu.Rect, source: gpu.Region? = none,
+                  opacity: f64 = 1.0, filter: gpu.Filter = gpu.Filter.linear) -> !:
         try self.require_open()
         if not math.is_finite(opacity) or opacity < 0.0 or opacity > 1.0:
             error(result.invalid, "image opacity must be in 0..1")
@@ -77,7 +77,7 @@ pub struct Image:
         let texture = (try self.refresh(checked)) else return
         try gpu.draw_image(checked, texture, rectangle, source, opacity, filter)
 
-    mutating func refresh(target: const gpu.RenderTarget*) -> gpu.Texture?!:
+    func refresh(target: const gpu.RenderTarget*) -> gpu.Texture?!:
         let texture = (try self.cache.texture_for(target, self.columns, self.rows, gpu.Format.rgba8)) else return none
         if self.cache.stale(self.revision):
             try texture.upload(self.pixels)
@@ -90,7 +90,7 @@ pub struct Image:
 
     ## Release the texture, the device reference and the pixels; later writes and
     ## draws fail. Closing twice is harmless.
-    pub mutating func close():
+    pub func close():
         self.cache.release()
         if self.pixels.length > 0:
             free(self.pixels) in memory.heap
@@ -100,8 +100,9 @@ pub struct Image:
         self.rows = 0
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
-        discard(visit)
-        discard(context)
+        _ = self
+        _ = visit
+        _ = context
 
 ## The sRGB encoding of a linear component.
 func encode(value: f64) -> u8:
@@ -134,8 +135,8 @@ test "image pixels, bounds and closing":
     try image.write(bytes)
     assert(image.pixels[15] == 15)
     rejected = false
-    discard(Image(0, 1) catch failure:
+    _ = Image(0, 1) catch failure:
         assert(failure.code == result.invalid)
         rejected = true
-        recover try Image(1, 1))
+        recover try Image(1, 1)
     assert(rejected)

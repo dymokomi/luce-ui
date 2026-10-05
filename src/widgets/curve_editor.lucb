@@ -66,19 +66,19 @@ pub struct CurveEditor: Widget:
         return self.ys[(usize)index]
 
     ## Back to the identity, (0, 0) to (1, 1); no change signal.
-    pub mutating func reset():
+    pub func reset():
         self.count = 2
         self.xs[0] = 0.0
         self.ys[0] = 0.0
         self.xs[1] = 1.0
         self.ys[1] = 1.0
         self.selected = -1
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Add a point from code, sorted by x; one at an existing x replaces it. No change signal.
-    pub mutating func add_point(x: f64, y: f64) -> !:
-        discard(try self.insert(x, y))
-        self.box.value().invalidate()
+    pub func add_point(x: f64, y: f64) -> !:
+        _ = try self.insert(x, y)
+        Layout.invalidate()
 
     ## The curve's output for `x`.
     pub func evaluate(x: f64) -> f64:
@@ -126,7 +126,7 @@ pub struct CurveEditor: Widget:
         return (self.ys[segment + 1] - self.ys[segment]) / h
 
     ## Insert or replace a point; its index.
-    mutating func insert(x: f64, y: f64) -> usize!:
+    func insert(x: f64, y: f64) -> usize!:
         if not math.is_finite(x) or not math.is_finite(y) or x < 0.0 or x > 1.0 or y < 0.0 or y > 1.0:
             error(result.invalid, "curve points lie in 0..1")
         var index: usize = 0
@@ -147,7 +147,7 @@ pub struct CurveEditor: Widget:
         self.count += 1
         return index
 
-    mutating func remove(index: usize):
+    func remove(index: usize):
         if self.count <= 2 or index >= self.count:
             return
         for slot in index..<(self.count - 1):
@@ -169,7 +169,7 @@ pub struct CurveEditor: Widget:
         var best: i64 = -1
         var nearest = 10.0
         for index in 0..<self.count:
-            let at = self.to_plot(plot, self.xs[index], self.ys[index])
+            let at = CurveEditor.to_plot(plot, self.xs[index], self.ys[index])
             let distance = math.max(math.abs(at.x - x), math.abs(at.y - y))
             if distance <= nearest:
                 nearest = distance
@@ -177,10 +177,10 @@ pub struct CurveEditor: Widget:
         return best
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
-        discard(available)
+        _ = available
         return result.success[Size](Size(212.0, 212.0))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -191,7 +191,7 @@ pub struct CurveEditor: Widget:
         let size = try target.get().size()
         let theme = self.box.value().theme()
         let enabled = self.box.value().is_enabled()
-        let plot = self.plot(size.width, size.height)
+        let plot = CurveEditor.plot(size.width, size.height)
         try painter.rectangle(plot, theme.background)
         # A quarter grid and the identity diagonal.
         for step in 0..<(usize)5:
@@ -201,19 +201,19 @@ pub struct CurveEditor: Widget:
         try painter.line(Point(plot.x, plot.y + plot.height), Point(plot.x + plot.width, plot.y), 1.0, theme.border)
         # The curve, sampled finely enough to look smooth.
         let ink = theme.accent if enabled else theme.muted
-        var previous = self.to_plot(plot, 0.0, self.evaluate(0.0))
+        var previous = CurveEditor.to_plot(plot, 0.0, self.evaluate(0.0))
         for step in 1..<(usize)65:
             let x = (f64)step / 64.0
-            let next = self.to_plot(plot, x, self.evaluate(x))
+            let next = CurveEditor.to_plot(plot, x, self.evaluate(x))
             try painter.line(previous, next, 2.0, ink)
             previous = next
         for index in 0..<self.count:
-            let at = self.to_plot(plot, self.xs[index], self.ys[index])
+            let at = CurveEditor.to_plot(plot, self.xs[index], self.ys[index])
             let handle = 7.0 if (i64)index == self.selected else 5.0
             try painter.rectangle(gpu.Rect(at.x - handle * 0.5, at.y - handle * 0.5, handle, handle), theme.foreground if (i64)index != self.selected else ink)
 
     ## Move the dragged point to (`x`, `y`) in widget coordinates: ends stay at their x, the others stay between their neighbors.
-    mutating func drag_to(plot: gpu.Rect, x: f64, y: f64) -> interop.Outcome[unit]:
+    func drag_to(plot: gpu.Rect, x: f64, y: f64) -> interop.Outcome[unit]:
         let index = (usize)self.selected
         var fx = math.clamp((x - plot.x) / plot.width, 0.0, 1.0)
         let fy = math.clamp(1.0 - (y - plot.y) / plot.height, 0.0, 1.0)
@@ -226,25 +226,25 @@ pub struct CurveEditor: Widget:
             fx = math.clamp(fx, self.xs[index - 1] + gap, self.xs[index + 1] - gap)
         self.xs[index] = fx
         self.ys[index] = fy
-        self.box.value().invalidate()
+        Layout.invalidate()
         return self.changed.emit(())
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled:
             self.dragging = false
-            self.box.value().invalidate()
+            Layout.invalidate()
             return result.success[unit](())
         if not self.box.value().is_enabled():
             return result.success[unit](())
         let bounds = self.box.value().bounds()
-        let plot = self.plot(bounds.width, bounds.height)
+        let plot = CurveEditor.plot(bounds.width, bounds.height)
         if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
             var index = self.hit(plot, event.x, event.y)
             if index < 0:
                 let x = math.clamp((event.x - plot.x) / plot.width, 0.0, 1.0)
                 let y = math.clamp(1.0 - (event.y - plot.y) / plot.height, 0.0, 1.0)
                 let added = self.insert(x, y) catch failure:
-                    discard(failure)
+                    _ = failure
                     return result.success[unit](())
                 index = (i64)added
             self.selected = index
@@ -260,20 +260,20 @@ pub struct CurveEditor: Widget:
                 if event.x < plot.x - margin or event.x > plot.x + plot.width + margin or event.y < plot.y - margin or event.y > plot.y + plot.height + margin:
                     self.remove((usize)self.selected)
                     self.selected = -1
-                    self.box.value().invalidate()
+                    Layout.invalidate()
                     self.dragging = false
                     return self.changed.emit(())
             self.dragging = false
-            self.box.value().invalidate()
+            Layout.invalidate()
         elif event.kind == input.EventKind.key_down:
             if (event.key == input.Key.backspace or event.key == input.Key.delete) and self.selected > 0 and self.selected < (i64)self.count - 1:
                 self.remove((usize)self.selected)
                 self.selected = -1
-                self.box.value().invalidate()
+                Layout.invalidate()
                 return self.changed.emit(())
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.changed.close()
         self.changed.release()
         self.box.release()

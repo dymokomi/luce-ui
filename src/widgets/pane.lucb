@@ -33,7 +33,7 @@ pub struct Pane: Widget:
             return result.failure[Size](failure.code, failure.message)
         return result.success[Size](size)
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -55,10 +55,10 @@ pub struct Pane: Widget:
                 top += header_box.value().bounds().height
         try painter.rectangle(gpu.Rect(1.0, top, math.max(0.0, size.width - 2.0), math.max(0.0, size.height - top - 1.0)), theme.background)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):

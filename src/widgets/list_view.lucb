@@ -70,15 +70,15 @@ pub struct ListView: Widget:
     pub func scroll_offset() -> f64:
         return self.scroll
 
-    pub mutating func set_items(items: const ListItem[]) -> !:
+    pub func set_items(items: const ListItem[]) -> !:
         let copies = try copy_items(items, self.font)
         release_items(self.items)
         self.items = copies
         self.selection = -1
         self.scroll = 0.0
-        self.box.value().invalidate()
+        Layout.invalidate()
 
-    pub mutating func select(index: i64) -> !:
+    pub func select(index: i64) -> !:
         if index < -1 or index >= (i64)self.items.length:
             error(result.invalid, "list selection is outside its items")
         self.selection = index
@@ -91,7 +91,7 @@ pub struct ListView: Widget:
                 self.scroll = y
             elif y + self.row_height() > self.scroll + height:
                 self.scroll = math.max(0.0, y + self.row_height() - height)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     pub func on_activate(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
         return try self.activated.connect(callback)
@@ -99,7 +99,7 @@ pub struct ListView: Widget:
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(220.0, 240.0))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -132,21 +132,21 @@ pub struct ListView: Widget:
         if self.box.value().is_focused():
             try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), self.box.value().theme().accent)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         let activate = self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
         if activate:
             return self.activated.emit(self.selection)
         return result.success[unit](())
 
-    mutating func handle(event: Event) -> bool!:
+    func handle(event: Event) -> bool!:
         if event.cancelled:
             return false
         if event.kind == input.EventKind.scroll:
             let scale = 1.0 if event.scroll_unit == input.ScrollUnit.points else self.row_height() * 3.0
             let limit = math.max(0.0, (f64)self.items.length * self.row_height() - self.box.value().bounds().height)
             self.scroll = math.clamp(self.scroll - event.scroll_y * scale, 0.0, limit)
-            self.box.value().invalidate()
+            Layout.invalidate()
         elif event.kind == input.EventKind.pointer_down and (event.button == 0 or event.button == 1) and event.inside:
             let index = (i64)((event.y + self.scroll) / self.row_height())
             if index >= 0 and index < (i64)self.items.length:
@@ -169,7 +169,7 @@ pub struct ListView: Widget:
 
         return false
 
-    pub mutating func close():
+    pub func close():
         self.font.release()
         self.activated.close()
         self.activated.release()
@@ -186,11 +186,11 @@ pub struct ListView: Widget:
 func copy_items(items: const ListItem[], font: interop.Reference[Font]) -> StoredItem[]!:
     if items.length > 65536:
         error(result.invalid, "a list supports at most 65536 items")
-    let copies = try alloc StoredItem[items.length] in memory.heap
+    let copies = try new StoredItem[items.length] --- in memory.heap
     var count: usize = 0
     errdefer release_partial(copies, count)
     for item in items:
-        discard(try font.value().measure(item.text))
+        _ = try font.value().measure(item.text)
         copies[count] = StoredItem(try interop.copy_text(item.text), item.icon)
         count += 1
     return copies

@@ -5,7 +5,7 @@
 #==============================================================================================
 
 extend TextEditor:
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         # Passive hover is derived by Layout and rendered without remeasuring
         # controls or rebuilding text projections for each pointer movement. The
         # pointer turns into a hand over a color chip, updated only on a transition.
@@ -18,7 +18,7 @@ extend TextEditor:
         let before = self.document.version()
         self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
-        self.box.value().invalidate()
+        Layout.invalidate()
         if self.pending_swatch >= 0:
             let offset = self.pending_swatch
             self.pending_swatch = -1
@@ -27,7 +27,7 @@ extend TextEditor:
             return self.notify_changed()
         return result.success[unit](())
 
-    mutating func handle(event: Event) -> !:
+    func handle(event: Event) -> !:
         try self.refresh_view()
         if event.cancelled:
             self.dragging = false
@@ -55,7 +55,7 @@ extend TextEditor:
             if self.folds.values().length > 0 and event.x >= self.gutter_width() - self.font.value().advance() * 2.0 and event.x < self.gutter_width():
                 let visible = (usize)(math.max(0.0, event.y - drawing.vertical_padding(self.font) + self.scroll_y) / self.font.value().line_height())
                 if visible < self.projection.visible_count():
-                    discard(try self.toggle_fold((i64)self.projection.physical_row(visible) + 1))
+                    _ = try self.toggle_fold((i64)self.projection.physical_row(visible) + 1)
                 return
             self.dragging_scroll = event.x >= self.box.value().bounds().width - 10.0
             self.dragging = not self.dragging_scroll
@@ -100,7 +100,7 @@ extend TextEditor:
         self.active_since = time.now()
         try self.reveal_caret()
 
-    mutating func key(event: Event) -> !:
+    func key(event: Event) -> !:
         let command = (event.control and not event.alt) or event.meta
         if command:
             if event.key == input.Key.a:
@@ -128,10 +128,10 @@ extend TextEditor:
                 try self.document.insert(normalized.value)
                 return
             if event.key == input.Key.z and not self.read_only:
-                discard(try self.document.redo() if event.shift else try self.document.undo())
+                _ = try self.document.redo() if event.shift else try self.document.undo()
                 return
             if event.key == input.Key.y and not self.read_only:
-                discard(try self.document.redo())
+                _ = try self.document.redo()
                 return
         let caret = self.document.caret()
         let extend = event.shift
@@ -169,7 +169,7 @@ extend TextEditor:
                 if self.document.first() == self.document.last():
                     for fold in self.folds.values():
                         if fold.collapsed and ((event.key == input.Key.delete and caret + 1 == fold.hidden) or (event.key == input.Key.backspace and caret == fold.end)):
-                            discard(self.folds.set(fold.header, false))
+                            _ = self.folds.set(fold.header, false)
                             try self.finish_folding()
                             return
                 try editing.erase(&self.document, event.key == input.Key.backspace, command or event.alt)

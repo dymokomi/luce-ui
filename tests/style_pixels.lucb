@@ -11,7 +11,7 @@ from luce_window import window
 from luce_ui.ui import Application, Command, Menu, Pane, PaneHeader, IconKind, SplitView, TextEditor, Button, Widget, Event
 
 pub func render(app: interop.Reference[Application], host: window.Window, surface: gpu.Surface) -> !:
-    while let event = try host.poll(): discard(event)
+    while let event = try host.poll(): _ = event
     let recording = try surface.frame()
     defer recording.release()
     let target = try recording.value().target()
@@ -52,16 +52,16 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
     let white = gpu.Color(1.0, 1.0, 1.0)
     let black = gpu.Color()
     let theme = ui.Theme(background = white, border = black, active_border = gpu.Color(1.0, 0.0, 0.0),
-        panel = white, foreground = black, gutter = white,
-        accent = gpu.Color(0.0, 0.0, 1.0), shadow = black, shadow_opacity = 0.5)
+                         panel = white, foreground = black, gutter = white,
+                         accent = gpu.Color(0.0, 0.0, 1.0), shadow = black, shadow_opacity = 0.5)
     let app = try interop.Reference[Application].adopt(new Application(root, theme = theme) in memory.heap, ui.application_type, memory.heap)
     defer app.release()
     let scale = (try host.size()).scale
     for phase in 0..<3:
         if phase > 0:
             let moved = app.value().dispatch(Event(kind = input.EventKind.pointer_moved,
-                x = 102.0 if phase == 1 else 3.0,
-                y = 60.0 if phase == 1 else 1.0 + font.value().line_height() + 2.0))
+                                                   x = 102.0 if phase == 1 else 3.0,
+                                                   y = 60.0 if phase == 1 else 1.0 + font.value().line_height() + 2.0))
             defer moved.release()
             try moved.get()
         native.begin("UI pixel contracts")
@@ -74,7 +74,7 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
         # The white gutter's derived active/hover lifts remain neutral gray.
         pixel(scale, 3.0, 4.0, 215, 215, 215)
         pixel(scale, 3.0, 1.0 + font.value().line_height() + 2.0,
-            235 if phase == 2 else 255, 235 if phase == 2 else 255, 235 if phase == 2 else 255)
+              235 if phase == 2 else 255, 235 if phase == 2 else 255, 235 if phase == 2 else 255)
     let action = try interop.Reference[Command].adopt(new Command("Shadow") in memory.heap, ui.command_type, memory.heap)
     defer action.release()
     let menu = try interop.Reference[Menu].adopt(new Menu("File", [action], font = font) in memory.heap, ui.menu_type, memory.heap)
@@ -118,8 +118,8 @@ pub func headers(host: window.Window, surface: gpu.Surface) -> !:
     let root = pane.as_interface[Widget](pane.value())
     defer root.release()
     let theme = ui.Theme(background = gpu.Color(1.0, 1.0, 1.0), panel = gpu.Color(),
-        foreground = gpu.Color(1.0, 1.0, 1.0), border = gpu.Color(1.0, 0.0, 0.0),
-        active_border = gpu.Color(0.0, 0.0, 1.0))
+                         foreground = gpu.Color(1.0, 1.0, 1.0), border = gpu.Color(1.0, 0.0, 0.0),
+                         active_border = gpu.Color(0.0, 0.0, 1.0))
     let app = try interop.Reference[Application].adopt(new Application(root, theme = theme) in memory.heap, ui.application_type, memory.heap)
     defer app.release()
     let scale = (try host.size()).scale

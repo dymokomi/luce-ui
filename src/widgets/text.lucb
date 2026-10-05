@@ -21,7 +21,7 @@ pub struct Text: Widget:
     pub func init(text: str, font: interop.Reference[Font]? = none, muted: bool = false) -> !:
         var selected = try selected_font(font)
         errdefer selected.release()
-        discard(try selected.value().measure(text))
+        _ = try selected.value().measure(text)
         let box = try layout.make_layout()
         errdefer box.release()
         try box.value().set_shrink(vertical = 0.0)
@@ -36,26 +36,26 @@ pub struct Text: Widget:
     pub func text() -> interop.Owned[str]:
         return self.caption.clone()
 
-    pub mutating func set_text(text: str) -> !:
-        discard(try self.font.value().measure(text))
+    pub func set_text(text: str) -> !:
+        _ = try self.font.value().measure(text)
         let replacement = try interop.copy_text(text)
         let previous_caption = self.caption
         self.caption = replacement
         previous_caption.release()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
-    pub mutating func set_muted(muted: bool):
+    pub func set_muted(muted: bool):
         if muted == self.muted:
             return
         self.muted = muted
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         let width = self.font.value().measure(self.caption.value) catch failure:
             return result.failure[Size](failure.code, failure.message)
         return result.success[Size](Size(width, self.font.value().line_height()))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -80,10 +80,10 @@ pub struct Text: Widget:
         try painter.text(kept, 0.0, y, color = color, font = self.font)
         try painter.text(ellipsis, try self.font.value().measure(kept), y, color = color, font = self.font)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.font.release()
         self.caption.release()
         self.box.release()

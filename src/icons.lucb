@@ -83,10 +83,10 @@ func cached(name: str, width: u32, height: u32) -> const u8[]!:
             oldest = index
     let drawing = try svg.parse(icon_assets.source(name))
     defer drawing.release()
-    let coverage = try alloc u8[(usize)width * (usize)height] in memory.heap
+    let coverage = try new u8[(usize)width * (usize)height] --- in memory.heap
     errdefer free(coverage) in memory.heap
     try svg.rasterize(try drawing.get(), width, height, coverage)
-    let copied = try alloc u8[name.length] in memory.heap
+    let copied = try new u8[name.length] --- in memory.heap
     memory.copy(copied, name.bytes, name.length)
     if icon_cache[oldest].coverage.length > 0:
         free(icon_cache[oldest].coverage) in memory.heap

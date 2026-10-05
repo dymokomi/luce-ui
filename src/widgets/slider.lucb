@@ -40,7 +40,7 @@ pub struct Slider: Widget:
             error(result.invalid, "slider decimals must be 0..6")
         var selected = try selected_font(font)
         errdefer selected.release()
-        discard(try selected.value().measure(text))
+        _ = try selected.value().measure(text)
         let box = try layout.make_layout()
         errdefer box.release()
         try box.value().set_shrink(vertical = 0.0)
@@ -67,35 +67,35 @@ pub struct Slider: Widget:
         return self.current
 
     ## Set the value from code, clamped; no change signal.
-    pub mutating func set_value(value: f64) -> !:
+    pub func set_value(value: f64) -> !:
         if not math.is_finite(value):
             error(result.invalid, "slider values must be finite")
         self.current = math.clamp(value, self.minimum, self.maximum)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Change the bounds and re-clamp the value; no change signal.
-    pub mutating func set_range(minimum: f64, maximum: f64) -> !:
+    pub func set_range(minimum: f64, maximum: f64) -> !:
         if not math.is_finite(minimum) or not math.is_finite(maximum) or maximum <= minimum:
             error(result.invalid, "a slider needs finite bounds with maximum above minimum")
         self.minimum = minimum
         self.maximum = maximum
         self.current = math.clamp(self.current, minimum, maximum)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     pub func on_change(callback: interop.Callback[f64, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
 
-    mutating func change(value: f64) -> interop.Outcome[unit]:
+    func change(value: f64) -> interop.Outcome[unit]:
         let clamped = math.clamp(value, self.minimum, self.maximum)
         if clamped == self.current:
             return result.success[unit](())
         self.current = clamped
-        self.box.value().invalidate()
+        Layout.invalidate()
         return self.changed.emit(clamped)
 
     func label_width() -> f64:
         let width = self.font.value().measure(self.caption.value) catch failure:
-            discard(failure)
+            _ = failure
             recover 0.0
         return width + self.font.value().advance() if self.caption.value.length > 0 else 0.0
 
@@ -121,7 +121,7 @@ pub struct Slider: Widget:
         let width = self.label_width() + 120.0 + (self.value_width() + self.font.value().advance() if self.show_value else 0.0)
         return result.success[Size](Size(width, self.box.value().theme().row_height(self.font)))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -166,10 +166,10 @@ pub struct Slider: Widget:
     func increment() -> f64:
         return self.step if self.step > 0.0 else (self.maximum - self.minimum) * 0.1
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled:
             self.dragging = false
-            self.box.value().invalidate()
+            Layout.invalidate()
             return result.success[unit](())
         if not self.box.value().is_enabled():
             return result.success[unit](())
@@ -180,10 +180,10 @@ pub struct Slider: Widget:
         if event.kind == input.EventKind.pointer_moved:
             if self.dragging:
                 return self.change(self.value_at(event.x, bounds.width, bounds.height))
-            self.box.value().invalidate()
+            Layout.invalidate()
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
             self.dragging = false
-            self.box.value().invalidate()
+            Layout.invalidate()
         elif event.kind == input.EventKind.key_down:
             let amount = self.increment() * (10.0 if event.shift else 1.0)
             if event.key == input.Key.left or event.key == input.Key.down:
@@ -196,7 +196,7 @@ pub struct Slider: Widget:
                 return self.change(self.maximum)
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.font.release()
         self.changed.close()
         self.changed.release()
@@ -224,8 +224,8 @@ test "slider values clamp, snap and format":
     assert((try format_number(digits, -12.5, 1)) == "-12.5")
     assert((try format_number(digits, 0.0, 1)) == "0.0")
     var rejected = false
-    discard(Slider("Bad", 1.0, 1.0) catch failure:
+    _ = Slider("Bad", 1.0, 1.0) catch failure:
         assert(failure.code == result.invalid)
         rejected = true
-        recover try Slider())
+        recover try Slider()
     assert(rejected)

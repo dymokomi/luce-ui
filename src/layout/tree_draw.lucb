@@ -29,7 +29,7 @@ extend Tree:
                 # Shadows use the window target before popup clipping. They do
                 # not enlarge layout or hit bounds, and remain sharp at any scale.
                 if box.popup:
-                    self.draw_shadow(target, box.rectangle, box.appearance) catch failure:
+                    Tree.draw_shadow(target, box.rectangle, box.appearance) catch failure:
                         return result.failure[unit](failure.code, failure.message)
                 let clipped = native_target.clipped(box.clipping) catch failure:
                     return result.failure[unit](failure.code, failure.message)

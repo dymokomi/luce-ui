@@ -58,7 +58,7 @@ pub struct ConfirmDialog: Widget:
         return try self.chosen.connect(callback)
 
     ## Show the dialog. An empty `secondary` label hides the middle button.
-    pub mutating func open(message: str, confirm: str, secondary: str, cancel: str = "Cancel") -> !:
+    pub func open(message: str, confirm: str, secondary: str, cancel: str = "Cancel") -> !:
         let message_text = try interop.copy_text(message)
         errdefer message_text.release()
         let confirm_text = try interop.copy_text(confirm)
@@ -102,7 +102,7 @@ pub struct ConfirmDialog: Widget:
         let inset = self.box.value().theme().inset(self.font)
         return result.success[Size](Size(math.clamp(width + inset * 2.0, 420.0, 720.0), self.row_height() * 3.0))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -138,7 +138,7 @@ pub struct ConfirmDialog: Widget:
         try painter.rectangle(gpu.Rect(y = size.height - 1.0, width = size.width, height = 1.0), theme.active_border)
         try painter.rectangle(gpu.Rect(y = button_y - 1.0, width = size.width, height = 1.0), theme.border)
 
-    mutating func choose(role: i64) -> interop.Outcome[unit]:
+    func choose(role: i64) -> interop.Outcome[unit]:
         self.box.value().set_visible(false)
         self.pressed = -1
         return self.chosen.emit(role)
@@ -150,7 +150,7 @@ pub struct ConfirmDialog: Widget:
         let role = 2 - (i64)slot
         return role if self.has_role(role) else -1
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled or (event.kind == input.EventKind.key_down and event.key == input.Key.escape):
             return self.choose(2)
         elif event.kind == input.EventKind.key_down and event.key == input.Key.enter and not event.repeated:
@@ -164,10 +164,10 @@ pub struct ConfirmDialog: Widget:
             let bounds = self.box.value().bounds()
             if event.inside and event.y >= bounds.height - self.row_height() and pressed >= 0 and self.slot_role(event.x) == pressed:
                 return self.choose(pressed)
-        self.box.value().invalidate()
+        Layout.invalidate()
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.chosen.close()
         self.chosen.release()
         self.cancel.release()

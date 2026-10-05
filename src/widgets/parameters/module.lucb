@@ -359,7 +359,7 @@ pub struct ParameterPanel: Widget:
         let natural = self.controls_left(480.0) + self.font.value().advance() * 30.0 + self.margin
         return result.success[Size](Size(math.min(available.width, natural), self.content_height()))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.frame(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -367,18 +367,18 @@ pub struct ParameterPanel: Widget:
     ## Each frame: take what the popups chose, send the change a drag left
     ## waiting (one per frame however fast the pointer), show a tooltip that is
     ## due, then draw the rows that show.
-    mutating func frame(target: interop.View[gpu.RenderTarget]) -> !:
+    func frame(target: interop.View[gpu.RenderTarget]) -> !:
         try self.poll_popups()
         try self.flush()
         try self.show_due_tip()
         try self.paint(target)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         release_rows(self.rows, self.total)
         self.total = 0
         self.input.close()

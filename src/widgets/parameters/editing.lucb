@@ -7,7 +7,7 @@
 extend ParameterPanel:
     ## Type into field `component` of `row`: its value (every decimal it
     ## keeps) or its text, all selected, so typing replaces it.
-    mutating func begin_editing(row: i64, component: i64) -> !:
+    func begin_editing(row: i64, component: i64) -> !:
         if row < 0 or row >= (i64)self.total:
             return
         let index = (usize)row
@@ -26,18 +26,18 @@ extend ParameterPanel:
         # While typing, Tab moves to the next field of the panel, not out of it.
         self.box.value().set_accepts_tab(true)
         self.box.value().set_cursor(input.Cursor.text)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Stop typing. Kept, the text becomes the value: arithmetic and `+=`
     ## forms are worked out, anything unreadable leaves the value as it was.
-    mutating func end_editing(keep: bool) -> !:
+    func end_editing(keep: bool) -> !:
         let row = self.edit_row
         let component = self.edit_component
         self.edit_row = -1
         self.box.value().set_text_input(false)
         self.box.value().set_accepts_tab(false)
         self.box.value().set_cursor(self.cursor_for(self.hot_row, self.hot_part))
-        self.box.value().invalidate()
+        Layout.invalidate()
         if not keep or row < 0 or row >= (i64)self.total:
             return
         let index = (usize)row
@@ -53,7 +53,7 @@ extend ParameterPanel:
         try self.edit(index, values)
 
     ## An event while a field is typed in; true when the field took it.
-    mutating func editing_event(event: Event) -> bool!:
+    func editing_event(event: Event) -> bool!:
         let kind = event.kind
         let field = self.field_rect(self.rows[(usize)self.edit_row], self.edit_component)
         let inset = math.floor(self.font.value().advance() * 0.6)
@@ -68,7 +68,7 @@ extend ParameterPanel:
                 self.set_hot(row, part, component)
             try self.input.pointer(Event(kind = event.kind, x = event.x - field.x, y = event.y - field.y, button = event.button, shift = event.shift),
                                    self.font, inset, 0.0, field.width - inset * 2.0, field.height)
-            self.box.value().invalidate()
+            Layout.invalidate()
             return true
         if kind == input.EventKind.focus_lost:
             try self.end_editing(true)
@@ -97,13 +97,13 @@ extend ParameterPanel:
                 return true
         if kind == input.EventKind.key_down or kind == input.EventKind.text_input:
             if try self.input.event(event):
-                self.box.value().invalidate()
+                Layout.invalidate()
             return true
         return false
 
     ## Type into the field after (or, `backwards`, before) `row`'s `component`,
     ## over components, then rows that show and take input; round to the start.
-    mutating func edit_next(row: i64, component: i64, backwards: bool) -> !:
+    func edit_next(row: i64, component: i64, backwards: bool) -> !:
         let total = (i64)self.total
         if total == 0:
             return
@@ -114,19 +114,19 @@ extend ParameterPanel:
                 part -= 1
                 if part < 0:
                     at = at - 1 if at > 0 else total - 1
-                    part = self.field_count(self.rows[(usize)at]) - 1
+                    part = ParameterPanel.field_count(self.rows[(usize)at]) - 1
             else:
                 part += 1
-                if part >= self.field_count(self.rows[(usize)at]):
+                if part >= ParameterPanel.field_count(self.rows[(usize)at]):
                     at = at + 1 if at + 1 < total else 0
                     part = 0
-            let fields = self.field_count(self.rows[(usize)at])
+            let fields = ParameterPanel.field_count(self.rows[(usize)at])
             if part >= 0 and part < fields and self.rows[(usize)at].shown and self.enabled((usize)at):
                 try self.begin_editing(at, part)
                 return
 
     ## Move `row`'s `component` by one step up (1) or down (-1); Shift ten, Alt a tenth.
-    mutating func nudge(index: usize, component: i64, direction: f64, event: Event) -> !:
+    func nudge(index: usize, component: i64, direction: f64, event: Event) -> !:
         let row = self.rows[index]
         var values = row.values
         if row.kind == ParameterKind.toggle:
@@ -139,7 +139,7 @@ extend ParameterPanel:
             let at = between(parameter_text.item_of(items, row.values[0]) - (i64)direction, 0, count - 1)
             values[0] = parameter_text.item_value(items, (usize)at)
         elif numeric(row.kind):
-            values[(usize)component] = self.snapped(row, row.values[(usize)component] + direction * self.increment(row) * modifier(event))
+            values[(usize)component] = ParameterPanel.snapped(row, row.values[(usize)component] + direction * ParameterPanel.increment(row) * modifier(event))
         else:
             return
         try self.edit(index, values)
@@ -147,7 +147,7 @@ extend ParameterPanel:
     ## Keys on the focused panel, not typing: Up and Down nudge the current
     ## row (a menu moves through its items), Cmd/Ctrl with them moves between
     ## rows, Enter types into the row (or toggles, opens, presses), Space toggles.
-    mutating func key(event: Event) -> !:
+    func key(event: Event) -> !:
         if self.current < 0 or self.current >= (i64)self.total or not self.rows[(usize)self.current].shown:
             self.current = self.next_row(-1, false)
         let row = self.current
@@ -158,7 +158,7 @@ extend ParameterPanel:
             let moved = self.next_row(row, event.key == input.Key.up)
             if moved >= 0:
                 self.current = moved
-                self.box.value().invalidate()
+                Layout.invalidate()
             return
         if not self.enabled(index):
             return
@@ -175,8 +175,8 @@ extend ParameterPanel:
             elif kind == ParameterKind.menu:
                 try self.open_items(index)
             elif kind == ParameterKind.button:
-                try self.emit(self.activated, row)
-            elif self.field_count(self.rows[index]) > 0:
+                try ParameterPanel.emit(self.activated, row)
+            elif ParameterPanel.field_count(self.rows[index]) > 0:
                 try self.begin_editing(row, 0)
 
     ## The next row (or previous, `backwards`) after `row` that shows and takes input.
@@ -195,14 +195,14 @@ extend ParameterPanel:
 
     ## Take what an open popup chose once it closes: a menu item, a context
     ## menu command; a color while its editor is open, live.
-    mutating func poll_popups() -> !:
+    func poll_popups() -> !:
         if self.popup_mode != popup_none and not self.items_popup.value().is_open():
             let mode = self.popup_mode
             let row = self.popup_row
             let chosen = self.items_popup.value().take_chosen()
             self.popup_mode = popup_none
             self.popup_row = -1
-            self.box.value().invalidate()
+            Layout.invalidate()
             if chosen >= 0:
                 try self.chose(mode, row, chosen)
         if self.color_row >= 0:
@@ -224,7 +224,7 @@ extend ParameterPanel:
                 self.color_row = -1
                 try self.finish()
 
-    mutating func chose(mode: i64, row: i64, chosen: i64) -> !:
+    func chose(mode: i64, row: i64, chosen: i64) -> !:
         if mode == popup_items:
             if row < 0 or row >= (i64)self.total:
                 return
@@ -255,7 +255,7 @@ extend ParameterPanel:
     # -- Tooltips.
 
     ## The pointer rests on `row`: its doc shows after a moment.
-    mutating func schedule_tip(row: i64):
+    func schedule_tip(row: i64):
         if row == self.tip_row:
             return
         self.hide_tip()
@@ -264,14 +264,14 @@ extend ParameterPanel:
         if row >= 0 and self.rows[(usize)row].doc.value.length > 0:
             layout.wake_at(self.tip_since + self.tip_delay)
 
-    mutating func hide_tip():
+    func hide_tip():
         self.tip_row = -1
         if self.tip.value().is_open():
             self.tip.value().hide()
 
     ## Show the tooltip that is due, under its row: the doc, and the name to
     ## write in a condition or a script.
-    mutating func show_due_tip() -> !:
+    func show_due_tip() -> !:
         let row = self.tip_row
         if row < 0 or row >= (i64)self.total or self.tip.value().is_open():
             return

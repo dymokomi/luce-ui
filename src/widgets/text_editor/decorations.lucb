@@ -7,34 +7,34 @@
 extend TextEditor:
     ## Mark the 1-based line range the AI is working on; its gutter shows 45° stripes.
     ## Pass 0, 0 (or call clear_ai_lines) to remove the marking.
-    pub mutating func set_ai_lines(first: i64, last: i64):
+    pub func set_ai_lines(first: i64, last: i64):
         self.ai_first = first if first <= last else last
         self.ai_last = last if last >= first else first
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Remove the AI line marking; the same as `set_ai_lines(0, 0)`.
-    pub mutating func clear_ai_lines():
+    pub func clear_ai_lines():
         self.ai_first = 0
         self.ai_last = 0
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Replace every highlight with this complete, ordered set.
-    pub mutating func set_highlights(highlights: const Highlight[]) -> !:
+    pub func set_highlights(highlights: const Highlight[]) -> !:
         try self.highlights.replace(0, (i64)self.document.length(), highlights)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Publish a bounded analysis result: replace the highlights within
     ## `start..<end` with `highlights`, which lie inside it, computed against
     ## document `version`. A stale result (another version) is ignored before
     ## validation, so it cannot recolor newer text; returns whether it was applied.
     ## Highlights already applied shift with later edits on their own.
-    pub mutating func update_highlights(start: i64, end: i64, highlights: const Highlight[], version: i64) -> bool!:
+    pub func update_highlights(start: i64, end: i64, highlights: const Highlight[], version: i64) -> bool!:
         if version != self.version():
             return false
         if start < 0 or end < start or end > self.length():
             error(result.invalid, "highlight interval is outside the document")
         try self.highlights.replace(start, end, highlights)
-        self.box.value().invalidate()
+        Layout.invalidate()
         return true
 
     ## The color of the highlight covering scalar `offset`, or none.
@@ -43,9 +43,9 @@ extend TextEditor:
 
     ## Replace the color-chip set (offsets into the current document, ascending). A
     ## language service republishes this on each change, alongside the highlights.
-    pub mutating func set_swatches(marks: const Swatch[]) -> !:
+    pub func set_swatches(marks: const Swatch[]) -> !:
         try self.swatches.replace(marks)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## The chips that reserve layout columns. Only when soft-wrap is off, so wrapped
     ## rendering keeps the projection's scalar-based column layout; wrapped mode draws
@@ -99,7 +99,7 @@ extend TextEditor:
     ## chip before each leading `#`. A convenience over set_swatches for editing themes and
     ## stylesheets; call it after each change, next to syntax highlighting. Offsets come
     ## straight from scalar positions, so the chips stay aligned in non-ASCII documents.
-    pub mutating func set_hex_swatches() -> !:
+    pub func set_hex_swatches() -> !:
         let length = self.document.length()
         var count: usize = 0
         var index: usize = 0
@@ -110,7 +110,7 @@ extend TextEditor:
                 index += 1 + run
             else:
                 index += 1
-        let marks = try alloc Swatch[count] in memory.heap
+        let marks = try new Swatch[count] --- in memory.heap
         defer free(marks) in memory.heap
         var written: usize = 0
         index = 0
@@ -123,7 +123,7 @@ extend TextEditor:
             else:
                 index += 1
         try self.swatches.replace(marks[..<written])
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Consecutive hex digits following a `#` at `at` (0 when that scalar is not `#`),
     ## capped at seven so a run longer than six fails the 3/6-digit test.
@@ -155,7 +155,7 @@ extend TextEditor:
     ## are one-based, matching line(). Collapsing never edits source or history.
     ## Replaces every fold range; returns false, changing nothing, when `version`
     ## is stale.
-    pub mutating func set_folds(ranges: const FoldRange[], version: i64) -> bool!:
+    pub func set_folds(ranges: const FoldRange[], version: i64) -> bool!:
         if version != self.version():
             return false
         try self.folds.replace(ranges, &self.document)
@@ -165,7 +165,7 @@ extend TextEditor:
     ## Collapse or expand the fold whose header is on 1-based `line`, returning
     ## whether a fold starts there. A caret the collapse hides moves to the end of
     ## the header line.
-    pub mutating func set_folded(line: i64, collapsed: bool) -> bool!:
+    pub func set_folded(line: i64, collapsed: bool) -> bool!:
         try self.refresh_view()
         if line < 1 or line > (i64)self.projection.line_count():
             error(result.invalid, "fold line is outside the document")
@@ -175,7 +175,7 @@ extend TextEditor:
         return changed
 
     ## Flip the fold whose header is on 1-based `line`; see `set_folded`.
-    pub mutating func toggle_fold(line: i64) -> bool!:
+    pub func toggle_fold(line: i64) -> bool!:
         return try self.set_folded(line, not self.is_folded(line))
 
     ## Whether a collapsed fold starts on 1-based `line`.
@@ -185,32 +185,32 @@ extend TextEditor:
         let index = self.folds.at(self.projection.line((usize)(line - 1)).start) else return false
         return self.folds.values()[index].collapsed
 
-    pub mutating func fold_all() -> !:
+    pub func fold_all() -> !:
         self.folds.set_all(true)
         try self.finish_folding()
 
-    pub mutating func unfold_all() -> !:
+    pub func unfold_all() -> !:
         self.folds.set_all(false)
         try self.finish_folding()
 
     ## Set the saved text to diff against for gutter change bars, or clear it. The
     ## bars update as the buffer diverges from this baseline; pass the current text
     ## (for example after a save) to clear them.
-    pub mutating func set_baseline(text: str) -> !:
+    pub func set_baseline(text: str) -> !:
         let replacement = try interop.copy_text(text)
         if let previous = self.baseline:
             previous.release()
         self.baseline = replacement
         self.diff_version = -1
-        self.box.value().invalidate()
+        Layout.invalidate()
 
-    pub mutating func clear_baseline():
+    pub func clear_baseline():
         if let previous = self.baseline:
             previous.release()
         self.baseline = none
         self.diff.clear()
         self.diff_version = -1
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Whether the text differed from the baseline when the view last refreshed.
     pub func has_changes() -> bool:

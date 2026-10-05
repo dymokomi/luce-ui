@@ -27,9 +27,9 @@ func component(value: f64) -> bool:
 func over(destination: Pixel, source: Pixel) -> Pixel:
     let remaining = (f32)1.0 - source.alpha
     return Pixel(source.red + destination.red * remaining,
-        source.green + destination.green * remaining,
-        source.blue + destination.blue * remaining,
-        source.alpha + destination.alpha * remaining)
+                 source.green + destination.green * remaining,
+                 source.blue + destination.blue * remaining,
+                 source.alpha + destination.alpha * remaining)
 
 func quantize(value: f64) -> u32:
     return (u32)(math.clamp(value, 0.0, 1.0) * 255.0 + 0.5)
@@ -55,7 +55,7 @@ pub struct Raster:
     ## most 67108864 pixels in all.
     pub func init(width: i64, height: i64) -> !:
         try dimensions(width, height)
-        let pixels = try alloc Pixel[(usize)(width * height)] in memory.heap
+        let pixels = try new Pixel[(usize)(width * height)] --- in memory.heap
         for index in 0..<pixels.length:
             pixels[index] = Pixel()
         self.columns = width
@@ -80,7 +80,7 @@ pub struct Raster:
     ## zero at the edge. The mark is composited source-over in `color`, whose alpha
     ## is ignored; with `erase` it removes that much coverage instead, and `color`
     ## is validated but unused. Pixels outside the raster are skipped.
-    pub mutating func dab(x: f64, y: f64, diameter: f64, hardness: f64, color: gpu.Color, erase: bool = false) -> !:
+    pub func dab(x: f64, y: f64, diameter: f64, hardness: f64, color: gpu.Color, erase: bool = false) -> !:
         self.revision += 1
         try self.require_open()
         if not math.is_finite(x) or not math.is_finite(y):
@@ -116,13 +116,13 @@ pub struct Raster:
                     self.pixels[index] = over(previous, Pixel((f32)color.red * alpha, (f32)color.green * alpha, (f32)color.blue * alpha, alpha))
 
     ## Make every pixel transparent.
-    pub mutating func clear():
+    pub func clear():
         self.revision += 1
         for index in 0..<self.pixels.length:
             self.pixels[index] = Pixel()
 
     ## Write one opaque pixel in linear-light 0..1. Out of range coordinates fail.
-    pub mutating func set_pixel(x: i64, y: i64, color: gpu.Color) -> !:
+    pub func set_pixel(x: i64, y: i64, color: gpu.Color) -> !:
         self.revision += 1
         try self.require_open()
         if x < 0 or y < 0 or x >= self.columns or y >= self.rows:
@@ -132,7 +132,7 @@ pub struct Raster:
         self.pixels[(usize)(y * self.columns + x)] = Pixel((f32)color.red, (f32)color.green, (f32)color.blue, (f32)1.0)
 
     ## Write one opaque pixel by linear offset. The span bounds-check is the check.
-    pub mutating func put(offset: usize, color: gpu.Color) -> !:
+    pub func put(offset: usize, color: gpu.Color) -> !:
         self.revision += 1
         try self.require_open()
         if not component(color.red) or not component(color.green) or not component(color.blue):
@@ -140,7 +140,7 @@ pub struct Raster:
         self.pixels[offset] = Pixel((f32)color.red, (f32)color.green, (f32)color.blue, (f32)1.0)
 
     ## Set every pixel to opaque `color`.
-    pub mutating func fill(color: gpu.Color) -> !:
+    pub func fill(color: gpu.Color) -> !:
         self.revision += 1
         try self.require_open()
         if not component(color.red) or not component(color.green) or not component(color.blue):
@@ -150,7 +150,7 @@ pub struct Raster:
             self.pixels[index] = pixel
 
     ## Set the pixels of a rectangle to opaque `color`, clipped to the raster.
-    pub mutating func fill_rect(x: i64, y: i64, width: i64, height: i64, color: gpu.Color) -> !:
+    pub func fill_rect(x: i64, y: i64, width: i64, height: i64, color: gpu.Color) -> !:
         self.revision += 1
         try self.require_open()
         if not component(color.red) or not component(color.green) or not component(color.blue):
@@ -199,7 +199,7 @@ pub struct Raster:
 
     ## Composite `source`, scaled by `opacity`, over this raster. Both must have the
     ## same dimensions; `source` may be this raster itself.
-    pub mutating func composite(source: interop.Reference[Raster], opacity: f64 = 1.0) -> !:
+    pub func composite(source: interop.Reference[Raster], opacity: f64 = 1.0) -> !:
         self.revision += 1
         try self.require_open()
         if not component(opacity):
@@ -223,7 +223,7 @@ pub struct Raster:
 
     ## Draw the raster scaled onto `rectangle` of `target`, nearest-sampled so
     ## pixels stay crisp when magnified.
-    pub mutating func draw(target: interop.View[gpu.RenderTarget], rectangle: gpu.Rect, filter: gpu.Filter = gpu.Filter.nearest) -> !:
+    pub func draw(target: interop.View[gpu.RenderTarget], rectangle: gpu.Rect, filter: gpu.Filter = gpu.Filter.nearest) -> !:
         try self.require_open()
         let checked = try target.get()
         if not math.is_finite(rectangle.x) or not math.is_finite(rectangle.y) or not math.is_finite(rectangle.width) or not math.is_finite(rectangle.height) or not math.is_finite(rectangle.x + rectangle.width) or not math.is_finite(rectangle.y + rectangle.height):
@@ -235,12 +235,12 @@ pub struct Raster:
         try gpu.draw_image(checked, texture, rectangle, none, 1.0, filter)
 
     ## Make the texture match the pixels, on the device `target` draws on.
-    mutating func refresh(target: const gpu.RenderTarget*) -> gpu.Texture?!:
+    func refresh(target: const gpu.RenderTarget*) -> gpu.Texture?!:
         let texture = (try self.cache.texture_for(target, (u32)self.columns, (u32)self.rows, gpu.Format.rgba8_linear)) else return none
         if not self.cache.stale(self.revision):
             return texture
         let count = self.pixels.length
-        let bytes = try alloc u8[count * 4] in memory.heap
+        let bytes = try new u8[count * 4] --- in memory.heap
         defer free(bytes) in memory.heap
         for index in 0..<count:
             let packed = rgba(self.pixels[index])
@@ -254,7 +254,7 @@ pub struct Raster:
 
     ## Release the texture, the device reference and the pixels; later calls fail.
     ## Closing twice is harmless.
-    pub mutating func close():
+    pub func close():
         self.cache.release()
         if self.pixels.length > 0:
             free(self.pixels) in memory.heap
@@ -264,8 +264,9 @@ pub struct Raster:
         self.rows = 0
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
-        discard(visit)
-        discard(context)
+        _ = self
+        _ = visit
+        _ = context
 
 pub let raster_type: interop.Type[Raster] = interop.Type[Raster]("Raster", Raster.close, Raster.trace, closeable = true, main_thread = true)
 
@@ -274,7 +275,7 @@ struct AllocationTracker: memory.Allocator:
     var live: usize
     var remaining: usize?
 
-    pub mutating func allocate(size: usize, alignment: usize) -> u8[]?:
+    pub func allocate(size: usize, alignment: usize) -> u8[]?:
         if let remaining = self.remaining:
             if remaining == 0:
                 return none
@@ -283,10 +284,10 @@ struct AllocationTracker: memory.Allocator:
         self.live += 1
         return block
 
-    pub mutating func resize(block: u8[], size: usize) -> bool:
+    pub func resize(block: u8[], size: usize) -> bool:
         return self.upstream.resize(block, size)
 
-    pub mutating func release(block: u8[]):
+    pub func release(block: u8[]):
         assert(self.live > 0)
         self.live -= 1
         self.upstream.release(block)
@@ -475,10 +476,10 @@ test "raster rejects invalid dimensions, coordinates and brush parameters":
         assert(rejected)
     for coordinate in [-1, 1]:
         rejected = false
-        discard(raster.alpha_at(coordinate, 0) catch failure:
+        _ = raster.alpha_at(coordinate, 0) catch failure:
             assert(failure.code == result.invalid)
             rejected = true
-            recover 0.0)
+            recover 0.0
         assert(rejected)
     let other = try interop.Reference[Raster].adopt(new Raster(2, 1) in memory.heap, raster_type, memory.heap)
     defer other.release()
@@ -496,8 +497,8 @@ test "raster rejects invalid dimensions, coordinates and brush parameters":
     raster.close()
     raster.close()
     rejected = false
-    discard(raster.alpha_at(0, 0) catch failure:
+    _ = raster.alpha_at(0, 0) catch failure:
         assert(failure.code == result.invalid)
         rejected = true
-        recover 0.0)
+        recover 0.0
     assert(rejected)

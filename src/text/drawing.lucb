@@ -12,6 +12,7 @@ from text.projection import Projection
 from text.folding import Folding
 from text.diff import LineDiff, ChangeKind
 from text.style import Highlight, EditorTheme, Swatch, swatch_span
+import strings
 
 pub func vertical_padding(font: interop.Reference[Font]) -> f64:
     return (font.value().line_height() - font.value().height()) * 0.5
@@ -70,7 +71,7 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
             try painter.rectangle(gpu.Rect(0.0, row_top, gutter, font.value().line_height()), theme.gutter_hover)
         if ai_first > 0 and segment.physical + 1 >= ai_first and segment.physical + 1 <= ai_last and gutter > 0.0:
             try stripes(painter, 0.0, row_top, gutter, font.value().line_height(),
-                math.max(4.0, font.value().advance() * 0.8), theme.line_number)
+                        math.max(4.0, font.value().advance() * 0.8), theme.line_number)
         if focused and row == current:
             try painter.rectangle(gpu.Rect(gutter, row_top, math.max(0.0, width - gutter), font.value().line_height()), theme.current_line)
         if diff.present():
@@ -86,11 +87,11 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
         let number_color = theme.active_line_number if row == current or hovered_row == row else theme.line_number
         if numbers and segment.leading:
             var label: u8[32]
-            let text = try format(label, f"{segment.physical + 1}")
+            let text = try strings.format(label, f"{segment.physical + 1}")
             let extent = try font.value().measure(text)
             try painter.text(text, gutter - extent - font.value().advance() * (3.0 if folding else 1.0), y, number_color, font)
         try paint_line(document, painter, segment.start, segment.end, segment.column, segment.end == line.end,
-            y, width, scroll_x, gutter, focused, caret_visible, font, theme, highlights, &style, swatches, &swatch, reserve)
+                       y, width, scroll_x, gutter, focused, caret_visible, font, theme, highlights, &style, swatches, &swatch, reserve)
         if segment.leading:
             if let index = folds.at(line.start):
                 let fold = folds.values()[index]

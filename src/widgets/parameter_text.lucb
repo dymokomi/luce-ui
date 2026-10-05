@@ -14,12 +14,12 @@ struct Reader:
     var at: usize
     var failed: bool
 
-    mutating func peek() -> u8:
+    func peek() -> u8:
         while self.at < self.bytes.length and self.bytes[self.at] == ' ':
             self.at += 1
         return self.bytes[self.at] if self.at < self.bytes.length else 0
 
-    mutating func sum() -> f64:
+    func sum() -> f64:
         var total = self.product()
         while not self.failed:
             let sign = self.peek()
@@ -33,7 +33,7 @@ struct Reader:
                 break
         return total
 
-    mutating func product() -> f64:
+    func product() -> f64:
         var total = self.unary()
         while not self.failed:
             let sign = self.peek()
@@ -52,7 +52,7 @@ struct Reader:
         return total
 
     ## A sign applies after `^`, which binds right to left: -2^2 is -4.
-    mutating func unary() -> f64:
+    func unary() -> f64:
         let sign = self.peek()
         if sign == '-':
             self.at += 1
@@ -62,14 +62,14 @@ struct Reader:
             return self.unary()
         return self.power()
 
-    mutating func power() -> f64:
+    func power() -> f64:
         let base = self.primary()
         if not self.failed and self.peek() == '^':
             self.at += 1
             return math.pow(base, self.unary())
         return base
 
-    mutating func primary() -> f64:
+    func primary() -> f64:
         let first = self.peek()
         if first == '(':
             self.at += 1

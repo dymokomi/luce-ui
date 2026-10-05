@@ -19,7 +19,7 @@ pub struct Swatches:
     pub func values() -> const Swatch[]:
         return self.marks[..<self.count]
 
-    pub mutating func transform(change: TextChange):
+    pub func transform(change: TextChange):
         var count: usize = 0
         let delta = change.new_end - change.old_end
         for mark in self.marks[..<self.count]:
@@ -31,7 +31,7 @@ pub struct Swatches:
                 count += 1
         self.count = count
 
-    pub mutating func replace(marks: const Swatch[]) -> !:
+    pub func replace(marks: const Swatch[]) -> !:
         if marks.length > 131072:
             error(result.limit, "an editor supports at most 131072 color swatches")
         var previous: i64 = -1
@@ -41,14 +41,14 @@ pub struct Swatches:
             previous = mark.offset
         var copied: Swatch[]
         if marks.length > 0:
-            copied = try alloc Swatch[marks.length] in memory.heap
+            copied = try new Swatch[marks.length] --- in memory.heap
         for index in 0..<marks.length:
             copied[index] = marks[index]
         self.close()
         self.marks = copied
         self.count = marks.length
 
-    pub mutating func close():
+    pub func close():
         if self.marks.length > 0:
             free(self.marks) in memory.heap
         var empty: Swatch[]

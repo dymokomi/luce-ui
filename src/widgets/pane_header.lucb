@@ -22,8 +22,8 @@ pub struct PaneHeader: Widget:
     pub func init(text: str, icon: IconKind = IconKind.blank, detail: str = "", font: interop.Reference[Font]? = none) -> !:
         let selected = try selected_font(font)
         errdefer selected.release()
-        discard(try selected.value().measure(text))
-        discard(try selected.value().measure(detail))
+        _ = try selected.value().measure(text)
+        _ = try selected.value().measure(detail)
         let caption = try interop.copy_text(text)
         errdefer caption.release()
         let description = try interop.copy_text(detail)
@@ -46,31 +46,31 @@ pub struct PaneHeader: Widget:
     pub func detail() -> interop.Owned[str]:
         return self.description.clone()
 
-    pub mutating func set_text(text: str) -> !:
+    pub func set_text(text: str) -> !:
         if text == self.caption.value:
             return
-        discard(try self.font.value().measure(text))
+        _ = try self.font.value().measure(text)
         let replacement = try interop.copy_text(text)
         let previous_caption = self.caption
         self.caption = replacement
         previous_caption.release()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
-    pub mutating func set_detail(detail: str) -> !:
+    pub func set_detail(detail: str) -> !:
         if detail == self.description.value:
             return
-        discard(try self.font.value().measure(detail))
+        _ = try self.font.value().measure(detail)
         let replacement = try interop.copy_text(detail)
         let previous_description = self.description
         self.description = replacement
         previous_description.release()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
-    pub mutating func set_icon(icon: IconKind):
+    pub func set_icon(icon: IconKind):
         if icon == self.icon:
             return
         self.icon = icon
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     func inset() -> f64:
         return math.ceil(self.font.value().advance() * self.box.value().theme().header_inset_cells)
@@ -84,7 +84,7 @@ pub struct PaneHeader: Widget:
         let height = self.box.value().theme().row_height(self.font)
         return result.success[Size](Size(self.title_x() + width + self.inset(), height))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -104,10 +104,10 @@ pub struct PaneHeader: Widget:
         if detail_x < size.width - self.inset() and self.description.value.length > 0:
             try painter.text(self.description.value, detail_x, y, theme.muted, self.font)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.description.release()
         self.caption.release()
         self.font.release()

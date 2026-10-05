@@ -10,7 +10,7 @@ let scrub_rate: f64 = 0.5
 let ladder_pitch: f64 = 12.0
 
 extend ParameterPanel:
-    mutating func handle(event: Event) -> !:
+    func handle(event: Event) -> !:
         if event.cancelled:
             try self.cancel()
             return
@@ -41,7 +41,7 @@ extend ParameterPanel:
 
     ## The press is gone (focus moved, the window lost it): a drag keeps what
     ## it reached and commits; typing keeps what was typed, as a field left does.
-    mutating func cancel() -> !:
+    func cancel() -> !:
         let dragged = self.scrubbing or self.laddering or self.press_part == part_slider
         self.scrubbing = false
         self.laddering = false
@@ -53,18 +53,18 @@ extend ParameterPanel:
             try self.finish()
         if self.edit_row >= 0:
             try self.end_editing(true)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     # -- Hover.
 
-    mutating func set_hot(row: i64, part: i64, component: i64):
+    func set_hot(row: i64, part: i64, component: i64):
         if row == self.hot_row and part == self.hot_part and component == self.hot_component:
             return
         self.hot_row = row
         self.hot_part = part
         self.hot_component = component
         self.box.value().set_cursor(self.cursor_for(row, part))
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Scrubbable parts show the resize cursor, as every scrubber does; typing
     ## fields the text cursor; things to click the pointer.
@@ -82,12 +82,12 @@ extend ParameterPanel:
             return input.Cursor.arrow
         return input.Cursor.pointer
 
-    mutating func moved(event: Event) -> !:
+    func moved(event: Event) -> !:
         if self.press_part == part_divider:
             let advance = self.font.value().advance()
             self.fixed_label = math.clamp(self.press_label + event.x - self.press_x, advance * 3.0, math.max(advance * 3.0, self.placed_width - 80.0))
             self.stale = true
-            self.box.value().invalidate()
+            Layout.invalidate()
             return
         if self.laddering:
             try self.climb(event)
@@ -106,7 +106,7 @@ extend ParameterPanel:
 
     # -- Presses.
 
-    mutating func press(event: Event) -> !:
+    func press(event: Event) -> !:
         self.hide_tip()
         let (row, part, component) = self.hit(event.x, event.y)
         self.set_hot(row, part, component)
@@ -118,7 +118,7 @@ extend ParameterPanel:
             self.rows[index].open = open
             try self.remember_folder(self.rows[index].name.value, open)
             self.stale = true
-            self.box.value().invalidate()
+            Layout.invalidate()
             return
         if part == part_divider:
             self.press_part = part_divider
@@ -151,9 +151,9 @@ extend ParameterPanel:
         if part == part_slider:
             try self.begin(row)
             try self.slide(event.x)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
-    mutating func release(event: Event) -> !:
+    func release(event: Event) -> !:
         let row = self.press_row
         let part = self.press_part
         let component = self.press_component
@@ -161,7 +161,7 @@ extend ParameterPanel:
         self.press_row = -1
         self.press_part = part_none
         self.scrubbing = false
-        self.box.value().invalidate()
+        Layout.invalidate()
         if part == part_divider or row < 0 or row >= (i64)self.total:
             return
         if scrubbed or part == part_slider:
@@ -178,12 +178,12 @@ extend ParameterPanel:
         elif part == part_swatch:
             try self.open_color(index)
         elif part == part_browse or part == part_button:
-            try self.emit(self.activated, row)
+            try ParameterPanel.emit(self.activated, row)
 
     ## Scrubbing a field or its label: each point across moves the value by
     ## half a step (Shift ten times, Alt a tenth); the label moves every
     ## component of a vector together.
-    mutating func scrub(event: Event) -> !:
+    func scrub(event: Event) -> !:
         let row = self.press_row
         let index = (usize)row
         let travelled = event.x - self.press_x
@@ -192,12 +192,12 @@ extend ParameterPanel:
                 return
             self.scrubbing = true
             self.press_x = event.x
-            self.press_rate = self.increment(self.rows[index]) * scrub_rate * modifier(event)
+            self.press_rate = ParameterPanel.increment(self.rows[index]) * scrub_rate * modifier(event)
             try self.begin(row)
             return
         if row >= (i64)self.total:
             return
-        let rate = self.increment(self.rows[index]) * scrub_rate * modifier(event)
+        let rate = ParameterPanel.increment(self.rows[index]) * scrub_rate * modifier(event)
         if rate != self.press_rate:
             # A modifier pressed mid-drag goes on from here, rather than jumping.
             self.press_rate = rate
@@ -208,24 +208,24 @@ extend ParameterPanel:
         for component in 0..<self.rows[index].components:
             if self.press_part == part_field and component != self.press_component:
                 continue
-            values[(usize)component] = self.snapped(self.rows[index], self.press_values[(usize)component] + travelled * rate)
+            values[(usize)component] = ParameterPanel.snapped(self.rows[index], self.press_values[(usize)component] + travelled * rate)
         try self.set_live(index, values)
 
     ## A press on the slider jumps there, and the drag follows.
-    mutating func slide(x: f64) -> !:
+    func slide(x: f64) -> !:
         let index = (usize)self.press_row
         if index >= self.total:
             return
         let row = self.rows[index]
-        let range = self.slider_range(row) else return
+        let range = ParameterPanel.slider_range(row) else return
         let rect = self.slider_rect(row)
         let fraction = math.clamp((x - rect.x - 3.0) / math.max(1.0, rect.width - 6.0), 0.0, 1.0)
         var values = row.values
-        values[0] = self.snapped(row, range.0 + fraction * (range.1 - range.0))
+        values[0] = ParameterPanel.snapped(row, range.0 + fraction * (range.1 - range.0))
         try self.set_live(index, values)
 
     ## A live value during a drag: shown now, reported with the frame.
-    mutating func set_live(index: usize, values: f64[4]) -> !:
+    func set_live(index: usize, values: f64[4]) -> !:
         var kept = values
         for component in 0..<4:
             kept[component] = row_clamp(self.rows[index], kept[component])
@@ -240,7 +240,7 @@ extend ParameterPanel:
             return row.step
         if row.kind == ParameterKind.integer:
             return 1.0
-        if let range = self.slider_range(row):
+        if let range = ParameterPanel.slider_range(row):
             return nice_step((range.1 - range.0) / 100.0)
         return math.min(1.0, math.pow(10.0, 1.0 - (f64)row.decimals))
 
@@ -254,13 +254,13 @@ extend ParameterPanel:
     ## Houdini's value ladder: the middle button over a number opens a column
     ## of steps (100, 10, 1, 0.1 … around the row's own) centred on the
     ## pointer; up and down choose the step, left and right move the value by it.
-    mutating func start_ladder(event: Event) -> !:
+    func start_ladder(event: Event) -> !:
         let (row, part, component) = self.hit(event.x, event.y)
         if row < 0 or not self.enabled((usize)row) or not numeric(self.rows[(usize)row].kind) or (part != part_field and part != part_label and part != part_slider):
             return
         let index = (usize)row
         var rungs: f64[8]
-        let middle = self.increment(self.rows[index])
+        let middle = ParameterPanel.increment(self.rows[index])
         let smallest = 1.0 if self.rows[index].kind == ParameterKind.integer else math.pow(10.0, -(f64)self.rows[index].decimals)
         var count: usize = 0
         var start: usize = 0
@@ -284,9 +284,9 @@ extend ParameterPanel:
         let cell = self.row_height()
         try self.ladder.value().show(rungs, count, start, event.x - 40.0, event.y - cell * ((f64)start + 0.5))
         try self.begin(row)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
-    mutating func climb(event: Event) -> !:
+    func climb(event: Event) -> !:
         let index = (usize)self.press_row
         if index >= self.total:
             return
@@ -310,7 +310,7 @@ extend ParameterPanel:
     # -- Menus.
 
     ## A menu parameter's items in a popup under its face, the chosen one ticked.
-    mutating func open_items(index: usize) -> !:
+    func open_items(index: usize) -> !:
         let items = self.rows[index].items.value
         let count = (usize)between((i64)parameter_text.item_count(items), 0, 64)
         if count == 0:
@@ -323,15 +323,15 @@ extend ParameterPanel:
             commands[made] = try interop.Reference[Command].adopt(new Command(parameter_text.item_label(items, item)) in memory.heap, command_type, memory.heap)
             commands[made].value().set_checked((i64)item == chosen)
             made += 1
-        try self.show_popup(commands[..<made], self.span_rect(self.rows[index]), popup_items, (i64)index)
+        try self.show_popup(commands[..<made], ParameterPanel.span_rect(self.rows[index]), popup_items, (i64)index)
 
     ## The context menu, after Houdini's: revert this or every parameter, and
     ## copy one parameter's value to paste into another.
-    mutating func open_context(x: f64, y: f64) -> !:
+    func open_context(x: f64, y: f64) -> !:
         self.hide_tip()
         let (row, part, component) = self.hit(x, y)
-        discard(part)
-        discard(component)
+        _ = part
+        _ = component
         var valued = false
         var changed = false
         var pastes = false
@@ -356,9 +356,9 @@ extend ParameterPanel:
         commands[5].value().set_enabled(all)
         try self.show_popup(commands[..<made], Rect(x, y, 0.0, 0.0), popup_context, row)
 
-    mutating func show_popup(commands: const interop.Reference[Command][], under: Rect, mode: i64, row: i64) -> !:
+    func show_popup(commands: const interop.Reference[Command][], under: Rect, mode: i64, row: i64) -> !:
         try self.items_popup.value().set_commands(commands)
-        discard(self.items_popup.value().take_chosen())
+        _ = self.items_popup.value().take_chosen()
         let box = self.items_popup.value().layout()
         defer box.release()
         # A menu's items list at least as wide as the menu, as a dropdown's do.
@@ -367,10 +367,10 @@ extend ParameterPanel:
         try self.items_popup.value().open()
         self.popup_mode = mode
         self.popup_row = row
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## A color's editor under its swatch.
-    mutating func open_color(index: usize) -> !:
+    func open_color(index: usize) -> !:
         let row = self.rows[index]
         var buffer: u8[8]
         var channels = (0, 0, 0)
@@ -383,7 +383,7 @@ extend ParameterPanel:
         channels = self.color_popup.value().rgb()
         self.color_row = (i64)index
         self.color_shown = channels
-        self.box.value().invalidate()
+        Layout.invalidate()
 
 ## Whether a kind scrubs and takes the ladder.
 func numeric(kind: ParameterKind) -> bool:

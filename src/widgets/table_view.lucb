@@ -151,15 +151,15 @@ pub struct TableView: Widget:
         return (i64)self.picked.count()
 
     ## Select every row of a `multiple` table.
-    pub mutating func select_all():
+    pub func select_all():
         self.picked.all()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Add row `index` to the selection or take it out, keeping the lead: restoring
     ## a selection after `set_rows`. A single-selection table selects it alone.
-    pub mutating func mark(index: i64, on: bool) -> !:
+    pub func mark(index: i64, on: bool) -> !:
         try self.picked.mark(index, on)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     pub func scroll_offset() -> f64:
         return self.scroll
@@ -195,7 +195,7 @@ pub struct TableView: Widget:
                 return (i64)index
         return -1
 
-    pub mutating func set_rows(cells: const TableCell[]) -> !:
+    pub func set_rows(cells: const TableCell[]) -> !:
         let copies = try copy_cells(cells, self.columns.length, self.font)
         release_cells(self.cells)
         self.cells = copies
@@ -203,15 +203,15 @@ pub struct TableView: Widget:
         try self.picked.resize(self.rows)
         let limit = math.max(0.0, (f64)self.rows * self.row_height() - math.max(0.0, self.box.value().bounds().height - self.header_height()))
         self.scroll = math.clamp(self.scroll, 0.0, limit)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Select row `index` alone (-1 for none) and scroll it into view.
-    pub mutating func select(index: i64) -> !:
+    pub func select(index: i64) -> !:
         try self.picked.only(index)
         self.reveal(index)
 
     ## Scroll row `index` into view.
-    mutating func reveal(index: i64):
+    func reveal(index: i64):
         if index >= 0:
             let rh = self.row_height()
             let viewport = self.box.value().bounds().height - self.header_height()
@@ -222,7 +222,7 @@ pub struct TableView: Widget:
                 self.scroll = y
             elif y + rh > self.scroll + viewport:
                 self.scroll = math.max(0.0, y + rh - viewport)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     pub func on_activate(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
         return try self.activated.connect(callback)
@@ -230,7 +230,7 @@ pub struct TableView: Widget:
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(260.0, 260.0))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -331,14 +331,14 @@ pub struct TableView: Widget:
             draw_x = x + (width - measured) * 0.5
         try painter.text(label, draw_x, ty, color = color, font = self.font)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         let activate = self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
         if activate:
             return self.activated.emit(self.picked.lead)
         return result.success[unit](())
 
-    mutating func handle(event: Event) -> bool!:
+    func handle(event: Event) -> bool!:
         if event.cancelled:
             return false
         var widths: f64[16]
@@ -350,9 +350,9 @@ pub struct TableView: Widget:
             return false
         if self.drag_column >= 0 and event.kind == input.EventKind.pointer_moved:
             let width = math.max(self.columns[self.drag_column].minimum,
-                self.drag_start_width + self.drag_sign * (event.x - self.drag_start_x))
+                                 self.drag_start_width + self.drag_sign * (event.x - self.drag_start_x))
             self.columns[self.drag_column].width = width
-            self.box.value().invalidate()
+            Layout.invalidate()
             return false
         if event.kind == input.EventKind.pointer_moved:
             if self.show_header and event.y < hh and self.divider_at(event.x, widths) >= 0:
@@ -361,14 +361,14 @@ pub struct TableView: Widget:
                 self.box.value().set_cursor(input.Cursor.pointer)
             # Repaint on every move so the hovered row keeps up with the pointer;
             # set_cursor alone does not invalidate.
-            self.box.value().invalidate()
+            Layout.invalidate()
             return false
         if event.kind == input.EventKind.scroll:
             let scale = 1.0 if event.scroll_unit == input.ScrollUnit.points else rh * 3.0
             let viewport = math.max(0.0, self.box.value().bounds().height - hh)
             let limit = math.max(0.0, (f64)self.rows * rh - viewport)
             self.scroll = math.clamp(self.scroll - event.scroll_y * scale, 0.0, limit)
-            self.box.value().invalidate()
+            Layout.invalidate()
         elif event.kind == input.EventKind.pointer_down and (event.button == 0 or event.button == 1) and event.inside:
             if self.show_header and event.y < hh:
                 if event.button == 0:
@@ -422,7 +422,7 @@ pub struct TableView: Widget:
                     self.reveal(target)
         return false
 
-    pub mutating func close():
+    pub func close():
         self.font.release()
         self.activated.close()
         self.activated.release()
@@ -472,7 +472,7 @@ func fit(text: str, room: usize, buffer: u8[]) -> str:
     return (str)buffer[..<written]
 
 func copy_columns(columns: const TableColumn[]) -> StoredColumn[]!:
-    let copies = try alloc StoredColumn[columns.length] in memory.heap
+    let copies = try new StoredColumn[columns.length] --- in memory.heap
     var count: usize = 0
     errdefer release_columns_partial(copies, count)
     for column in columns:
@@ -485,11 +485,11 @@ func copy_cells(cells: const TableCell[], column_count: usize, font: interop.Ref
         error(result.invalid, "table cells must form whole rows of one cell per column")
     if cells.length // column_count > 65536:
         error(result.invalid, "a table supports at most 65536 rows")
-    let copies = try alloc StoredCell[cells.length] in memory.heap
+    let copies = try new StoredCell[cells.length] --- in memory.heap
     var count: usize = 0
     errdefer release_cells_partial(copies, count)
     for cell in cells:
-        discard(try font.value().measure(cell.text))
+        _ = try font.value().measure(cell.text)
         copies[count] = StoredCell(try interop.copy_text(cell.text), cell.icon, cell.tint, cell.muted, cell.emphasis)
         count += 1
     return copies

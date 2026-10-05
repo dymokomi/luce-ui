@@ -34,13 +34,13 @@ pub struct Viewport: Widget:
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size())
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         return self.rendering.emit(target)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.rendering.close()
         self.rendering.release()
         self.box.release()

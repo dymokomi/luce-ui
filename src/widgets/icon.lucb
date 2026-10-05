@@ -27,14 +27,14 @@ pub struct Icon: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
 
-    pub mutating func set_kind(kind: IconKind):
+    pub func set_kind(kind: IconKind):
         self.kind = kind
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(self.font.value().height(), self.font.value().line_height()))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -46,10 +46,10 @@ pub struct Icon: Widget:
         let extent = self.font.value().height()
         try icons.draw(&painter, self.kind, gpu.Rect((size.width - extent) * 0.5, (size.height - extent) * 0.5, extent, extent), self.box.value().theme().foreground)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.font.release()
         self.box.release()
 

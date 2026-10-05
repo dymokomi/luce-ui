@@ -64,18 +64,18 @@ pub struct HsbField: Widget:
         return self.brightness
 
     ## Set the shown color from code; no signal.
-    pub mutating func set_hsb(hue: f64, saturation: f64, brightness: f64) -> !:
+    pub func set_hsb(hue: f64, saturation: f64, brightness: f64) -> !:
         if not math.is_finite(hue) or not math.is_finite(saturation) or not math.is_finite(brightness):
             error(result.invalid, "HSB components must be finite")
         self.hue = wrap_hue(hue)
         self.saturation = math.clamp(saturation, 0.0, 1.0)
         self.brightness = math.clamp(brightness, 0.0, 1.0)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(self.side, self.side))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -86,9 +86,9 @@ pub struct HsbField: Widget:
         let size = try target.get().size()
         let cells: usize = 16
         let count = cells * cells * 6
-        var points = try alloc Point[count] in memory.heap
+        var points = try new Point[count] --- in memory.heap
         defer free(points) in memory.heap
-        var colors = try alloc gpu.Color[count] in memory.heap
+        var colors = try new gpu.Color[count] --- in memory.heap
         defer free(colors) in memory.heap
         var index: usize = 0
         for row in 0..<cells:
@@ -111,16 +111,16 @@ pub struct HsbField: Widget:
         try ring(&painter, mx, my, 6.0, 0.75, gpu.Color(0.0, 0.0, 0.0))
         try ring(&painter, mx, my, 5.25, 1.5, gpu.Color(1.0, 1.0, 1.0))
 
-    mutating func choose(x: f64, y: f64) -> interop.Outcome[unit]:
+    func choose(x: f64, y: f64) -> interop.Outcome[unit]:
         let bounds = self.box.value().bounds()
         if bounds.width <= 0.0 or bounds.height <= 0.0:
             return result.success[unit](())
         self.saturation = math.clamp(x / bounds.width, 0.0, 1.0)
         self.brightness = 1.0 - math.clamp(y / bounds.height, 0.0, 1.0)
-        self.box.value().invalidate()
+        Layout.invalidate()
         return self.changed.emit(())
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled:
             self.dragging = false
             return result.success[unit](())
@@ -133,7 +133,7 @@ pub struct HsbField: Widget:
             self.dragging = false
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.changed.close()
         self.changed.release()
         self.box.release()
@@ -181,16 +181,16 @@ pub struct HueStrip: Widget:
         return self.hue
 
     ## Set the hue from code, wrapped into 0..360; no signal.
-    pub mutating func set_hue(hue: f64) -> !:
+    pub func set_hue(hue: f64) -> !:
         if not math.is_finite(hue):
             error(result.invalid, "hue must be finite")
         self.hue = wrap_hue(hue)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(strip_width + arrow_room * 2.0, self.height))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -200,9 +200,9 @@ pub struct HueStrip: Widget:
         defer painter.close()
         let size = try target.get().size()
         let steps: usize = 24
-        var points = try alloc Point[steps * 6] in memory.heap
+        var points = try new Point[steps * 6] --- in memory.heap
         defer free(points) in memory.heap
-        var colors = try alloc gpu.Color[steps * 6] in memory.heap
+        var colors = try new gpu.Color[steps * 6] --- in memory.heap
         defer free(colors) in memory.heap
         let left = arrow_room
         let right = arrow_room + strip_width
@@ -226,17 +226,17 @@ pub struct HueStrip: Widget:
         try painter.triangle(Point(0.0, y - 5.0), Point(left - 1.0, y), Point(0.0, y + 5.0), ink)
         try painter.triangle(Point(size.width, y - 5.0), Point(right + 1.0, y), Point(size.width, y + 5.0), ink)
 
-    mutating func choose(y: f64) -> interop.Outcome[unit]:
+    func choose(y: f64) -> interop.Outcome[unit]:
         let bounds = self.box.value().bounds()
         if bounds.height <= 0.0:
             return result.success[unit](())
         self.hue = (1.0 - math.clamp(y / bounds.height, 0.0, 1.0)) * 360.0
         if self.hue >= 360.0:
             self.hue = 0.0
-        self.box.value().invalidate()
+        Layout.invalidate()
         return self.changed.emit(self.hue)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled:
             self.dragging = false
             return result.success[unit](())
@@ -249,7 +249,7 @@ pub struct HueStrip: Widget:
             self.dragging = false
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.changed.close()
         self.changed.release()
         self.box.release()

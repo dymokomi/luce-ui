@@ -30,14 +30,14 @@ pub struct Frame: Widget:
     pub func measure(available: layout.Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size())
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         let state = self.state.get() else return result.success[unit](())
         defer state.release()
         state.value().draw_float(self.slot, target, self.box.value().pointer_position(), self.box.value().contains_pointer()) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         let state = self.state.get() else return result.success[unit](())
         defer state.release()
         let stack = state.value().box.get() else return result.success[unit](())
@@ -48,7 +48,7 @@ pub struct Frame: Widget:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.state.release()
         self.box.release()
 
@@ -75,10 +75,11 @@ struct FrameCursor: CursorSource:
         let window = state.value().floats[self.slot]
         return state.value().float_cursor(self.slot, position.x + window.x, position.y + window.y)
 
-    pub mutating func close():
+    pub func close():
         self.state.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
-        discard(context)
+        _ = self
+        _ = context
 
 let frame_cursor_type: interop.Type[FrameCursor] = interop.Type[FrameCursor]("Floating frame cursor", FrameCursor.close, FrameCursor.trace, closeable = true, main_thread = true)

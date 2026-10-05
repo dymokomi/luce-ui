@@ -36,7 +36,7 @@ struct Divider: Widget:
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(self.thickness, self.thickness))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -54,15 +54,15 @@ struct Divider: Widget:
         let line = gpu.Rect(x = (size.width - 1.0) * 0.5, width = 1.0, height = size.height) if self.horizontal else gpu.Rect(y = (size.height - 1.0) * 0.5, width = size.width, height = 1.0)
         try painter.rectangle(line, theme.accent)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
-    mutating func handle(event: Event) -> !:
+    func handle(event: Event) -> !:
         if event.cancelled:
             self.dragging = false
-            self.box.value().invalidate()
+            Layout.invalidate()
             return
         let parent = self.parent.get() else return
         defer parent.release()
@@ -75,13 +75,13 @@ struct Divider: Widget:
         if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
             self.dragging = true
             self.grab = event.x if self.horizontal else event.y
-            self.box.value().invalidate()
+            Layout.invalidate()
         elif event.kind == input.EventKind.pointer_moved and self.dragging:
             let coordinate = event.x if self.horizontal else event.y
             try parent.value().set_split(math.clamp((position + coordinate - self.grab) / available, 0.0, 1.0))
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
             self.dragging = false
-            self.box.value().invalidate()
+            Layout.invalidate()
         elif event.kind == input.EventKind.key_down:
             let backward = event.key == input.Key.left if self.horizontal else event.key == input.Key.up
             let forward = event.key == input.Key.right if self.horizontal else event.key == input.Key.down
@@ -93,7 +93,7 @@ struct Divider: Widget:
             elif event.key == input.Key.end:
                 try parent.value().set_split(1.0)
 
-    pub mutating func close():
+    pub func close():
         self.parent.release()
         self.box.release()
 
@@ -134,7 +134,7 @@ pub struct SplitView: Widget:
     pub func fraction() -> f64:
         return self.box.value().split_fraction()
 
-    pub mutating func set_fraction(fraction: f64) -> !:
+    pub func set_fraction(fraction: f64) -> !:
         try self.box.value().set_split(fraction)
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
@@ -142,13 +142,13 @@ pub struct SplitView: Widget:
             return result.failure[Size](failure.code, failure.message)
         return result.success[Size](size)
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         return result.success[unit](())
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):

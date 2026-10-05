@@ -14,14 +14,14 @@ extend TextEditor:
 
     ## Soft wrap long lines to the viewport width, or restore horizontal scrolling.
     ## The caret keeps its place and is revealed on its new visual row.
-    pub mutating func set_wrap(enabled: bool) -> !:
+    pub func set_wrap(enabled: bool) -> !:
         if self.wrap == enabled:
             return
         self.wrap = enabled
         self.scroll_x = 0.0
         try self.refresh_view()
         try self.reveal_caret()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## The horizontal and vertical scroll in points, clamped to the content.
     pub func scroll_offset() -> Size:
@@ -35,13 +35,13 @@ extend TextEditor:
         let columns = (usize)(self.content_width() / self.font.value().advance())
         return columns if columns > 1 else 1
 
-    mutating func refresh_view() -> !:
+    func refresh_view() -> !:
         try self.projection.refresh(&self.document, &self.folds, self.wrap_columns())
         try self.refresh_diff()
         self.clamp_scroll()
 
     ## Recompute change bars only when the text changed since the last diff.
-    mutating func refresh_diff() -> !:
+    func refresh_diff() -> !:
         if let baseline = self.baseline:
             if self.diff_version != (i64)self.document.version():
                 let current = try self.document.text()
@@ -49,24 +49,24 @@ extend TextEditor:
                 try self.diff.compute(baseline.value, current.value, (i64)self.document.version())
                 self.diff_version = (i64)self.document.version()
 
-    mutating func finish_folding() -> !:
+    func finish_folding() -> !:
         try self.refresh_view()
         if self.projection.is_hidden(self.document.caret()):
             let row = self.projection.physical_row(self.projection.visual_row(self.document.caret()))
             let offset = self.projection.line(row).end
             try self.document.select(offset, offset)
         self.clamp_scroll()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(640.0, 360.0))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
-    mutating func paint(target: interop.View[gpu.RenderTarget]) -> !:
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
         try self.refresh_view()
         var painter = try Painter(target)
         defer painter.close()
@@ -80,14 +80,14 @@ extend TextEditor:
         if self.box.value().is_focused():
             layout.wake_at(time.now() + (600000000 - phase if phase < 600000000 else 1000000000 - phase))
         try drawing.paint(&self.document, &painter, size.width, size.height, self.scroll_x, self.scroll_y,
-            self.line_numbers, self.box.value().is_focused(), phase < 600000000,
-            self.font, (self.theme else self.box.value().theme().editor()), self.highlights.values(), &self.projection, &self.folds, &self.diff, hovered_row,
-            (usize)self.ai_first, (usize)self.ai_last, self.swatches.values(), not self.wrap)
+                          self.line_numbers, self.box.value().is_focused(), phase < 600000000,
+                          self.font, (self.theme else self.box.value().theme().editor()), self.highlights.values(), &self.projection, &self.folds, &self.diff, hovered_row,
+                          (usize)self.ai_first, (usize)self.ai_last, self.swatches.values(), not self.wrap)
 
     func maximum_scroll() -> f64:
         return math.max(0.0, (f64)self.projection.visible_count() * self.font.value().line_height() + drawing.vertical_padding(self.font) * 2.0 - self.box.value().bounds().height)
 
-    mutating func scroll_to_pointer(y: f64):
+    func scroll_to_pointer(y: f64):
         let height = self.box.value().bounds().height
         self.scroll_y = math.clamp(y / math.max(1.0, height), 0.0, 1.0) * self.maximum_scroll()
 
@@ -102,11 +102,11 @@ extend TextEditor:
             return 0.0
         return math.max(0.0, (f64)(self.projection.maximum_columns() + 1) * self.font.value().advance() - self.content_width())
 
-    mutating func clamp_scroll():
+    func clamp_scroll():
         self.scroll_x = math.clamp(self.scroll_x, 0.0, self.maximum_scroll_x())
         self.scroll_y = math.clamp(self.scroll_y, 0.0, self.maximum_scroll())
 
-    mutating func reveal_caret() -> !:
+    func reveal_caret() -> !:
         self.folds.reveal(self.document.caret())
         try self.refresh_view()
         if self.projection.is_hidden(self.document.caret()):

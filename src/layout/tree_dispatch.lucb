@@ -14,7 +14,7 @@ extend Tree:
     ## key and text input go to the popup's root widget, and a press outside it
     ## is swallowed after sending the popup a cancellation. A non-modal popup is
     ## only hit first.
-    pub mutating func dispatch(event: input.Event) -> interop.Outcome[unit]:
+    pub func dispatch(event: input.Event) -> interop.Outcome[unit]:
         # A move while a widget holds the pointer (a stroke, a drag) goes to it on
         # the arrangement already made: a fast pointer sends hundreds a frame, and
         # arranging the whole tree for each is what would slow the frame down.
@@ -200,7 +200,7 @@ extend Tree:
     ## picker opened over another dialog takes them first), to cancel or
     ## accept; true when one took it. A focused field first drops (Escape) or keeps
     ## (Enter) what was typed. Enter stays with a multi-line editor.
-    pub mutating func dialog_key(event: input.Event) -> interop.Outcome[bool]:
+    pub func dialog_key(event: input.Event) -> interop.Outcome[bool]:
         if event.kind != input.EventKind.key_down or event.repeated or (event.key != input.Key.escape and event.key != input.Key.enter):
             return result.success[bool](false)
         if event.modifiers.control or event.modifiers.alt or event.modifiers.super or event.modifiers.shift or self.has_popup():
@@ -222,16 +222,16 @@ extend Tree:
                 # A field left by Enter keeps its text, as focus moving away would.
                 let resolved = self.send(field, Event(kind = input.EventKind.focus_lost) if event.key == input.Key.enter else Event(kind = input.EventKind.key_down, key = input.Key.escape))
                 defer resolved.release()
-                discard(resolved.get() catch failure:
-                    return result.failure[bool](failure.code, failure.message))
+                _ = resolved.get() catch failure:
+                    return result.failure[bool](failure.code, failure.message)
         let delivered = self.send(dialog, Event(kind = input.EventKind.key_down, key = event.key))
         defer delivered.release()
-        discard(delivered.get() catch failure:
-            return result.failure[bool](failure.code, failure.message))
+        _ = delivered.get() catch failure:
+            return result.failure[bool](failure.code, failure.message)
         let arranged = self.arrange(self.width, self.height)
         defer arranged.release()
-        discard(arranged.get() catch failure:
-            return result.failure[bool](failure.code, failure.message))
+        _ = arranged.get() catch failure:
+            return result.failure[bool](failure.code, failure.message)
         return result.success[bool](true)
 
     ## The open modal popup, if any; a non-modal one does not hold input.
@@ -270,7 +270,7 @@ extend Tree:
                 return index
         return none
 
-    mutating func switch_menu(popup: usize, peer: usize) -> interop.Outcome[unit]:
+    func switch_menu(popup: usize, peer: usize) -> interop.Outcome[unit]:
         let cancelled = self.cancel(self.entries[popup].box.value().identifier)
         if not cancelled.is_success():
             return cancelled
@@ -289,7 +289,7 @@ extend Tree:
 
     ## Hover is derived from current geometry, including after layout changes
     ## beneath a stationary pointer. Updating it never remeasures the widget tree.
-    mutating func update_hover():
+    func update_hover():
         for entry in self.entries[..<self.count]:
             let box = entry.box.value()
             box.hovered = false
@@ -316,7 +316,6 @@ extend Tree:
         while ancestor >= 0:
             self.entries[(usize)ancestor].box.value().pointer_within = true
             ancestor = self.entries[(usize)ancestor].parent
-
 
     ## Whether `event` is a pointer move while a widget holds the pointer.
     pub func captured_move(event: input.Event) -> bool:

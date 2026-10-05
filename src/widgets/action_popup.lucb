@@ -92,7 +92,7 @@ pub struct ActionPopup: Widget:
 
     ## Replace the presented commands, for a context menu whose entries depend on
     ## what was clicked. Any open filtering and selection reset with the new set.
-    pub mutating func set_commands(commands: const interop.Reference[Command][]) -> !:
+    pub func set_commands(commands: const interop.Reference[Command][]) -> !:
         if commands.length == 0 or commands.length > 4096:
             error(result.invalid, "a menu takes 1..4096 actions")
         try self.commands.set(commands)
@@ -102,7 +102,7 @@ pub struct ActionPopup: Widget:
         self.selected = -1
         self.first = 0
         self.pressed = -1
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     pub func is_open() -> bool:
         return self.box.value().is_visible()
@@ -114,13 +114,13 @@ pub struct ActionPopup: Widget:
 
     ## The last choice's place, forgetting it: a host that polls the popup
     ## (a parameter panel's menus) tells a new choice from none.
-    pub mutating func take_chosen() -> i64:
+    pub func take_chosen() -> i64:
         let picked = self.picked
         self.picked = -1
         return picked
 
     ## Show the list with an empty query and the first enabled row selected.
-    pub mutating func open(held: bool = false) -> !:
+    pub func open(held: bool = false) -> !:
         self.held = held
         if held:
             self.box.value().claim_press()
@@ -150,7 +150,7 @@ pub struct ActionPopup: Widget:
     pub func result_count() -> i64:
         return (i64)self.count
 
-    mutating func filter() -> !:
+    func filter() -> !:
         let query = try self.query.text()
         defer query.release()
         self.count = 0
@@ -242,7 +242,7 @@ pub struct ActionPopup: Widget:
             width = math.max(width, measured)
         return result.success[Size](Size(600.0 if self.searchable else width + self.pad_x() * 2.0, self.header_height() + self.stack_height()))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.show_revealed()
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -298,7 +298,7 @@ pub struct ActionPopup: Widget:
         try painter.rectangle(gpu.Rect(width = 1.0, height = size.height), theme.border)
         try painter.rectangle(gpu.Rect(x = math.max(0.0, size.width - 1.0), width = 1.0, height = size.height), theme.border)
 
-    mutating func move(direction: i64):
+    func move(direction: i64):
         let count = (i64)self.count
         if count == 0:
             return
@@ -312,12 +312,12 @@ pub struct ActionPopup: Widget:
                     self.first = index
                 elif index >= self.first + rows:
                     self.first = index - rows + 1
-                self.box.value().invalidate()
+                Layout.invalidate()
                 return
 
     ## The wheel scrolls the rows, three to a notch (a trackpad's points by the
     ## row), and the row now under the pointer is the one selected.
-    mutating func scroll(event: Event):
+    func scroll(event: Event):
         self.wheel += event.scroll_y if event.scroll_unit == input.ScrollUnit.points else event.scroll_y * 3.0 * self.row_height()
         let rows = (i64)(self.wheel / self.row_height())
         if rows == 0:
@@ -327,10 +327,10 @@ pub struct ActionPopup: Widget:
         let index = self.index_at(event.y)
         let over = event.inside and index >= 0 and not self.commands.values()[self.matches[(usize)index]].value().is_divider() and self.commands.values()[self.matches[(usize)index]].value().is_enabled()
         self.selected = index if over else -1
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Scroll the row to reveal into the middle, now the popup is placed.
-    mutating func show_revealed():
+    func show_revealed():
         if self.reveal < 0 or self.box.value().bounds().height <= 0.0:
             return
         let rows = (i64)math.max(1.0, (self.box.value().bounds().height - self.top() - self.pad_y()) / self.row_height())
@@ -350,7 +350,7 @@ pub struct ActionPopup: Widget:
             index -= 1
         return 0
 
-    mutating func activate() -> interop.Outcome[unit]:
+    func activate() -> interop.Outcome[unit]:
         if self.selected < 0:
             return result.success[unit](())
         let action = self.commands.values()[self.matches[(usize)self.selected]].clone()
@@ -364,7 +364,7 @@ pub struct ActionPopup: Widget:
         self.picked = (i64)self.matches[(usize)self.selected]
         return action.value().trigger()
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         self.show_revealed()
         if self.searchable:
             let inset = self.pad_x()
@@ -375,7 +375,7 @@ pub struct ActionPopup: Widget:
             if changed:
                 self.filter() catch failure:
                     return result.failure[unit](failure.code, failure.message)
-            self.box.value().invalidate()
+            Layout.invalidate()
         if event.cancelled:
             self.box.value().set_visible(false)
             self.pressed = -1
@@ -401,7 +401,7 @@ pub struct ActionPopup: Widget:
                 # Hovering a divider or a gap between rows highlights nothing, so the
                 # last item does not linger as if still under the pointer.
                 self.selected = -1
-            self.box.value().invalidate()
+            Layout.invalidate()
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
             let index = self.index_at(event.y)
             let over = event.inside and index >= 0 and not self.commands.values()[self.matches[(usize)index]].value().is_divider()
@@ -413,7 +413,7 @@ pub struct ActionPopup: Widget:
                 return self.activate()
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.query.close()
         self.commands.close()
         self.font.release()
@@ -425,7 +425,6 @@ pub struct ActionPopup: Widget:
         self.box.trace(visit, context)
 
 pub let action_popup_type: interop.Type[ActionPopup] = interop.Type[ActionPopup]("Menu popup", ActionPopup.close, ActionPopup.trace, closeable = true, main_thread = true)
-
 
 ## Match query words case-insensitively in the caption. ASCII case folding keeps
 ## UTF-8 bytes intact; literal Unicode words still match without reinterpretation.

@@ -15,7 +15,7 @@ from luce_ui.ui import Application, Button, Viewport, HStack, Widget, Painter, R
 struct Paint:
     var saved: interop.View[gpu.RenderTarget]?
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         if let previous = self.saved:
             previous.release()
         self.saved = target.clone()
@@ -28,7 +28,7 @@ struct Paint:
             return interop.Outcome[unit].failure(failure.code, interop.copy_text(failure.message) catch exhausted: trap(exhausted.message))
         return interop.Outcome[unit].success(interop.Owned[unit](()))
 
-    mutating func close():
+    func close():
         if let saved = self.saved:
             saved.release()
 
@@ -60,7 +60,7 @@ func draw_coverage(target: interop.View[gpu.RenderTarget]) -> !:
 
 func frame(app: interop.Reference[Application], host: window.Window, surface: gpu.Surface) -> !:
     while let event = try host.poll():
-        discard(event)
+        _ = event
     native.begin("UI pixel contracts")
     defer native.end()
     let recording = try surface.frame()

@@ -20,7 +20,7 @@ pub struct CommandPalette: Widget:
     pub func layout() -> interop.Reference[Layout]:
         return self.popup.value().layout()
 
-    pub mutating func open() -> !:
+    pub func open() -> !:
         try self.popup.value().open()
 
     pub func is_open() -> bool:
@@ -35,13 +35,13 @@ pub struct CommandPalette: Widget:
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return self.popup.value().measure(available)
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         return self.popup.value().draw(target)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         return self.popup.value().event(event)
 
-    pub mutating func close():
+    pub func close():
         self.popup.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):

@@ -7,10 +7,10 @@
 extend ParameterPanel:
     ## Show `specs` instead: the rows are rebuilt with their defaults. Folders
     ## the user closed stay closed when a folder of that name comes back.
-    pub mutating func set_specs(specs: const ParameterSpec[]) -> !:
+    pub func set_specs(specs: const ParameterSpec[]) -> !:
         if specs.length > 4096:
             error(result.invalid, "a parameter panel takes at most 4096 parameters")
-        var rows = try alloc Row[specs.length] in memory.heap
+        var rows = try new Row[specs.length] --- in memory.heap
         var made: usize = 0
         errdefer release_rows(rows, made)
         var folder: i64 = -1
@@ -29,7 +29,7 @@ extend ParameterPanel:
         self.total = made
         self.apply_conditions()
         self.stale = true
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## How many parameters the panel holds.
     pub func count() -> i64:
@@ -68,12 +68,12 @@ extend ParameterPanel:
         return (try self.row(index)).text.clone()
 
     ## Set the first component from code, kept inside the range; no signal.
-    pub mutating func set_value(index: i64, value: f64) -> !:
+    pub func set_value(index: i64, value: f64) -> !:
         try self.set_component(index, 0, value)
 
     ## Set component `component` from code; no signal. A field being typed in
     ## keeps its text, and a row under the user's drag keeps what the drag set.
-    pub mutating func set_component(index: i64, component: i64, value: f64) -> !:
+    pub func set_component(index: i64, component: i64, value: f64) -> !:
         let row = try self.row(index)
         if component < 0 or component >= row.components:
             error(result.invalid, "no such parameter component")
@@ -82,56 +82,56 @@ extend ParameterPanel:
             return
         self.rows[(usize)index].values[(usize)component] = kept
         self.apply_conditions()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Set a text, path or info row's text from code; no signal.
-    pub mutating func set_text(index: i64, text: str) -> !:
-        discard(try self.row(index))
+    pub func set_text(index: i64, text: str) -> !:
+        _ = try self.row(index)
         if self.edit_row == index:
             return
         try replace_text(&self.rows[(usize)index].text, text)
         self.apply_conditions()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Change what the row shows as its label (a button's caption).
-    pub mutating func set_label(index: i64, label: str) -> !:
-        discard(try self.row(index))
+    pub func set_label(index: i64, label: str) -> !:
+        _ = try self.row(index)
         try replace_text(&self.rows[(usize)index].label, label)
         self.stale = true
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Offer `items` in a menu from now on (a choice that depends on another).
-    pub mutating func set_items(index: i64, items: str) -> !:
-        discard(try self.row(index))
+    pub func set_items(index: i64, items: str) -> !:
+        _ = try self.row(index)
         try replace_text(&self.rows[(usize)index].items, items)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Change the default a reset puts back, and the changed marker compares with.
-    pub mutating func set_default(index: i64, component: i64, value: f64) -> !:
+    pub func set_default(index: i64, component: i64, value: f64) -> !:
         let row = try self.row(index)
         if component < 0 or component >= row.components:
             error(result.invalid, "no such parameter component")
         self.rows[(usize)index].defaults[(usize)component] = row_clamp(row, value)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Hide the row, or show it again, whatever its conditions say.
-    pub mutating func set_hidden(index: i64, hidden: bool) -> !:
-        discard(try self.row(index))
+    pub func set_hidden(index: i64, hidden: bool) -> !:
+        _ = try self.row(index)
         if self.rows[(usize)index].hidden == hidden:
             return
         self.rows[(usize)index].hidden = hidden
         self.stale = true
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Dim the row and ignore its input, or enable it again.
-    pub mutating func set_enabled(index: i64, enabled: bool) -> !:
-        discard(try self.row(index))
+    pub func set_enabled(index: i64, enabled: bool) -> !:
+        _ = try self.row(index)
         self.rows[(usize)index].disabled = not enabled
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Whether the row shows: not hidden, its conditions do not hide it and its folder is open.
     pub func is_shown(index: i64) -> bool!:
-        discard(try self.row(index))
+        _ = try self.row(index)
         return self.visible((usize)index)
 
     ## Whether the row takes input: neither it nor a condition disables it, nor the panel.
@@ -145,8 +145,8 @@ extend ParameterPanel:
 
     ## Put the default back, as the context menu's Revert to Default does:
     ## begin, change and commit are reported.
-    pub mutating func reset(index: i64) -> !:
-        discard(try self.row(index))
+    pub func reset(index: i64) -> !:
+        _ = try self.row(index)
         try self.revert((usize)index)
 
     ## Whether the folder called `name` is open.
@@ -158,13 +158,13 @@ extend ParameterPanel:
 
     ## Open or close the folder called `name`, as a click on its heading does;
     ## remembered for a folder of that name that comes later.
-    pub mutating func set_folder_open(name: str, open: bool) -> !:
+    pub func set_folder_open(name: str, open: bool) -> !:
         try self.remember_folder(name, open)
         let index = self.find(name)
         if index >= 0 and self.rows[(usize)index].kind == ParameterKind.folder:
             self.rows[(usize)index].open = open
             self.stale = true
-            self.box.value().invalidate()
+            Layout.invalidate()
 
     ## The label column's width, as last placed.
     pub func label_width() -> f64:
@@ -172,12 +172,12 @@ extend ParameterPanel:
 
     ## Fix the label column at `width` points (a host restoring what the user
     ## dragged it to); 0 fits it to the labels again.
-    pub mutating func set_label_width(width: f64) -> !:
+    pub func set_label_width(width: f64) -> !:
         if not math.is_finite(width) or width < 0.0 or width > 4096.0:
             error(result.invalid, "a label column is 0..4096 points")
         self.fixed_label = width
         self.stale = true
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Row `index`'s line in the panel's points, as last placed; empty while it does not show.
     pub func row_bounds(index: i64) -> Rect!:
@@ -189,21 +189,21 @@ extend ParameterPanel:
     ## The field of `index`'s `component` in the panel's points; empty for rows without one.
     pub func field_bounds(index: i64, component: i64) -> Rect!:
         let row = try self.row(index)
-        if not row.shown or component < 0 or component >= self.field_count(row):
+        if not row.shown or component < 0 or component >= ParameterPanel.field_count(row):
             return Rect()
         return self.field_rect(row, component)
 
     ## Leave `margin` points left and right of the rows (half above and below):
     ## 8 in a pane, 0 for a row set inside another layout.
-    pub mutating func set_margin(margin: f64) -> !:
+    pub func set_margin(margin: f64) -> !:
         if not math.is_finite(margin) or margin < 0.0 or margin > 64.0:
             error(result.invalid, "a panel margin is 0..64 points")
         self.margin = margin
         self.stale = true
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## How long the pointer rests on a row before its tooltip shows, in seconds (0.6 unless set).
-    pub mutating func set_tip_delay(seconds: f64) -> !:
+    pub func set_tip_delay(seconds: f64) -> !:
         if not math.is_finite(seconds) or seconds < 0.0 or seconds > 60.0:
             error(result.invalid, "a tooltip delay is 0..60 seconds")
         self.tip_delay = (u64)(seconds * 1.0e9)
@@ -217,12 +217,12 @@ extend ParameterPanel:
         return self.edit_row >= 0
 
     ## Send a change a drag left waiting now, rather than at the next frame.
-    pub mutating func flush() -> !:
+    pub func flush() -> !:
         let row = self.pending
         if row < 0:
             return
         self.pending = -1
-        try self.emit(self.changed, row)
+        try ParameterPanel.emit(self.changed, row)
 
     ## Called with the parameter's index after each change the user makes:
     ## live while dragging, once per frame. Values set from code do not call it.
@@ -281,32 +281,32 @@ extend ParameterPanel:
         try outcome.get()
 
     ## Start an edit of `index`, ending another still open.
-    mutating func begin(index: i64) -> !:
+    func begin(index: i64) -> !:
         if self.gesture == index:
             return
         try self.finish()
         self.gesture = index
-        try self.emit(self.began, index)
+        try ParameterPanel.emit(self.began, index)
 
     ## A change to report: at the next frame, or now if another row waits.
-    mutating func touch(index: i64) -> !:
+    func touch(index: i64) -> !:
         if self.pending >= 0 and self.pending != index:
             try self.flush()
         self.pending = index
         self.apply_conditions()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## End the edit under way: its waiting change, then its commit.
-    mutating func finish() -> !:
+    func finish() -> !:
         try self.flush()
         let row = self.gesture
         if row < 0:
             return
         self.gesture = -1
-        try self.emit(self.committed, row)
+        try ParameterPanel.emit(self.committed, row)
 
     ## Set `values` on row `index` as one edit: begin, change, commit.
-    mutating func edit(index: usize, values: f64[4]) -> !:
+    func edit(index: usize, values: f64[4]) -> !:
         var kept = values
         for component in 0..<4:
             kept[component] = row_clamp(self.rows[index], kept[component])
@@ -319,7 +319,7 @@ extend ParameterPanel:
         try self.finish()
 
     ## Set the text of row `index` as one edit.
-    mutating func edit_text(index: usize, text: str) -> !:
+    func edit_text(index: usize, text: str) -> !:
         if self.rows[index].text.value == text:
             return
         try self.begin((i64)index)
@@ -328,7 +328,7 @@ extend ParameterPanel:
         try self.touch((i64)index)
         try self.finish()
 
-    mutating func revert(index: usize) -> !:
+    func revert(index: usize) -> !:
         let row = self.rows[index]
         if row.kind == ParameterKind.text or row.kind == ParameterKind.path:
             try self.edit_text(index, row.fallback.value)
@@ -336,7 +336,7 @@ extend ParameterPanel:
             try self.edit(index, row.defaults)
 
     ## Forget presses, typing and popups: the rows under them are going.
-    mutating func drop_interaction():
+    func drop_interaction():
         self.edit_row = -1
         self.press_row = -1
         self.press_part = part_none
@@ -362,7 +362,7 @@ extend ParameterPanel:
     # -- Conditions.
 
     ## Evaluate every row's hide and disable conditions against the values now.
-    mutating func apply_conditions():
+    func apply_conditions():
         var moved = false
         for index in 0..<self.total:
             let row = self.rows[index]
@@ -433,10 +433,10 @@ extend ParameterPanel:
             at += 1
         return false
 
-    mutating func remember_folder(name: str, open: bool) -> !:
+    func remember_folder(name: str, open: bool) -> !:
         if name.length == 0 or self.remembered_closed(name) == not open:
             return
-        var buffer = try alloc u8[self.closed.value.length + name.length + 2] in memory.heap
+        var buffer = try new u8[self.closed.value.length + name.length + 2] --- in memory.heap
         defer free(buffer) in memory.heap
         var length: usize = 0
         if open:

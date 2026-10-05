@@ -32,12 +32,12 @@ pub struct Catalog:
     var fixed: CommandSlot[]
     var position: DockPosition
 
-    static func make() -> Catalog!:
-        let entries = try alloc CommandSlot[catalog_limit] in memory.heap
+    func make() -> Catalog!:
+        let entries = try new CommandSlot[catalog_limit] --- in memory.heap
         errdefer free(entries) in memory.heap
-        let links = try alloc ConnectionSlot[catalog_limit] in memory.heap
+        let links = try new ConnectionSlot[catalog_limit] --- in memory.heap
         errdefer free(links) in memory.heap
-        let fixed = try alloc CommandSlot[4] in memory.heap
+        let fixed = try new CommandSlot[4] --- in memory.heap
         for index in 0..<catalog_limit:
             entries[index] = none
             links[index] = none
@@ -45,7 +45,7 @@ pub struct Catalog:
         return Catalog(entries = entries, links = links, count = 0, fixed = fixed, position = DockPosition.tab)
 
     ## Drop the catalog's commands and their connections, keeping the fixed ones.
-    mutating func clear():
+    func clear():
         for index in 0..<self.count:
             if let link = self.links[index]: link.release()
             if let command = self.entries[index]: command.release()
@@ -53,7 +53,7 @@ pub struct Catalog:
             self.entries[index] = none
         self.count = 0
 
-    mutating func release():
+    func release():
         self.clear()
         for slot in self.fixed:
             if let command = slot: command.release()
@@ -71,7 +71,7 @@ pub struct Catalog:
 extend State:
     ## Keep `commands` (divider, Split Right, Split Down and the heading shown
     ## before a split's list), whose triggers the owner has bound to `pick_from_menu`.
-    pub mutating func set_fixed(commands: const interop.Reference[Command][]) -> !:
+    pub func set_fixed(commands: const interop.Reference[Command][]) -> !:
         if commands.length != 4: error(result.invalid, "the add menu takes four fixed commands")
         for index in 0..<4:
             if let previous = self.catalog.fixed[index]: previous.release()
@@ -80,7 +80,7 @@ extend State:
     ## Offer the panels `ids` (names `titles`) in the add menu, in that order,
     ## replacing what it offered; `owner` is the state's own reference, which each
     ## entry's command calls back.
-    pub mutating func set_catalog(owner: interop.Reference[State], ids: const str[], titles: const str[]) -> !:
+    pub func set_catalog(owner: interop.Reference[State], ids: const str[], titles: const str[]) -> !:
         if ids.length != titles.length or ids.length > catalog_limit:
             error(result.invalid, "a catalog takes up to 64 ids with a title each")
         self.catalog.clear()
@@ -108,7 +108,7 @@ extend State:
 
     ## Show the add menu: the catalog with ticks for open panels, then the splits;
     ## `beside`, after a split was picked, the heading and the catalog alone.
-    mutating func show_menu(beside: bool) -> !:
+    func show_menu(beside: bool) -> !:
         let popup = self.popup else error(result.invalid, "dynamic stack has no add menu")
         var shown: interop.Reference[Command][68] = ---
         var count: usize = 0
@@ -133,7 +133,7 @@ extend State:
 
     ## Every add menu command lands here: read which row was chosen, then dock the
     ## picked panel, or list the panels again after a split was picked.
-    pub mutating func pick_from_menu(argument: unit) -> interop.Outcome[unit]:
+    pub func pick_from_menu(argument: unit) -> interop.Outcome[unit]:
         let popup = self.popup else return result.success[unit](())
         let chosen = popup.value().chosen()
         let count = (i64)self.catalog.count
@@ -155,7 +155,7 @@ extend State:
 
     ## Put catalog entry `entry` at `position` beside the menu's target: moved
     ## there and selected when open, else asked of the application.
-    mutating func dock_entry(entry: usize, position: DockPosition) -> !:
+    func dock_entry(entry: usize, position: DockPosition) -> !:
         let command = self.catalog.entries[entry] else return
         let id = command.value().id()
         let open = self.catalog_slot(id)
@@ -184,7 +184,7 @@ extend State:
     ## Open the add menu below `group`'s add button (the empty stack's button when
     ## `group` is 0), aimed at that group's selected panel: the catalog's panels,
     ## then the ways to split.
-    pub mutating func open_menu(group: usize) -> !:
+    pub func open_menu(group: usize) -> !:
         let popup = self.popup else error(result.invalid, "dynamic stack has no add menu")
         let geometry = self.geometry(self.size())
         let bounds = self.strip(group, geometry.panes[group]).add if group != 0 else gpu.Rect(math.max(0.0, self.size().width - self.height()), 0.0, self.height(), self.height())

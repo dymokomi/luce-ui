@@ -21,7 +21,7 @@ struct Scroll: Arrangement:
     ## The child full width but the bar's, as tall as it measured (at least the
     ## room), moved up by the offset (never past its end).
     pub func place(child: i64, available: Size) -> interop.Outcome[gpu.Rect]:
-        discard(child)
+        _ = child
         let tall = math.max(available.height, self.content.value().measured_size().height)
         let offset = math.clamp(self.offset, 0.0, math.max(0.0, tall - available.height))
         return result.success[gpu.Rect](gpu.Rect(0.0, -offset, math.max(0.0, available.width - bar_room), tall))
@@ -30,7 +30,7 @@ struct Scroll: Arrangement:
     func overflow(room: f64) -> f64:
         return math.max(0.0, self.content.value().measured_size().height - room)
 
-    pub mutating func close():
+    pub func close():
         self.content.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
@@ -81,14 +81,14 @@ pub struct ScrollView: Widget:
     ## Scroll to `offset` points from the content's top. It is kept within the
     ## content when placed, so an offset asked for while the content is still
     ## growing (a section opening) is reached once it has room.
-    pub mutating func scroll_to(offset: f64):
+    pub func scroll_to(offset: f64):
         self.scroll.value().offset = math.max(0.0, offset)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     func overflow() -> f64:
         return self.scroll.value().overflow(self.box.value().bounds().height)
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -108,14 +108,14 @@ pub struct ScrollView: Widget:
         let top = (size.height - thumb) * self.offset() / overflow
         try painter.rectangle(gpu.Rect(size.width - bar_room + 2.0, top, bar_room - 4.0, thumb), theme.border)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if event.kind == input.EventKind.scroll:
             # A notched wheel moves in lines of 24 points, a touchpad by its points.
             let step = 24.0 if event.scroll_unit == input.ScrollUnit.lines else 1.0
             self.scroll_to(self.offset() - event.scroll_y * step)
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.scroll.release()
         self.box.release()
 

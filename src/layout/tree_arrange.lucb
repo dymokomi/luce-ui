@@ -6,7 +6,7 @@
 
 extend Tree:
     ## Arrange again at the last size; see `arrange`.
-    pub mutating func refresh() -> interop.Outcome[unit]:
+    pub func refresh() -> interop.Outcome[unit]:
         return self.arrange(self.width, self.height)
 
     ## Rebuild the arrangement for a `width` by `height` window, unless neither the
@@ -15,7 +15,7 @@ extend Tree:
     ## popups, and settles focus, capture and hover. A popup that opens takes
     ## focus and hands it back when it closes. On failure the previous arrangement
     ## stays in effect; a widget that invalidates while measuring fails it.
-    pub mutating func arrange(width: f64, height: f64) -> interop.Outcome[unit]:
+    pub func arrange(width: f64, height: f64) -> interop.Outcome[unit]:
         extent(width) catch failure:
             return result.failure[unit](failure.code, failure.message)
         extent(height) catch failure:
@@ -23,7 +23,7 @@ extend Tree:
         if self.count > 0 and self.width == width and self.height == height and self.version == epoch():
             return result.success[unit](())
         self.animating = false
-        let replacement = alloc Entry[1024] in memory.heap catch failure:
+        let replacement = new Entry[1024] --- in memory.heap catch failure:
             return result.failure[unit](failure.code, failure.message)
         var count: usize = 0
         var committed = false
@@ -39,7 +39,7 @@ extend Tree:
             entry.box.value().appearance = entry.box.value().local_theme else inherited
         # Inside a box that takes scroll (a scroll view) a box measures its
         # natural height, unbounded; parents come before their children.
-        let unbounded = alloc bool[count + 1] in memory.heap catch _:
+        let unbounded = new bool[count + 1] --- in memory.heap catch _:
             return result.failure[unit](result.limit, "out of memory measuring the tree")
         defer free(unbounded) in memory.heap
         for position in 0..<count:

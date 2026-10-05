@@ -62,7 +62,7 @@ pub struct Dialog: Widget:
         return self.box.clone()
 
     ## Replace the card's rows.
-    pub mutating func set_children(children: const interop.Interface[Widget][]) -> !:
+    pub func set_children(children: const interop.Interface[Widget][]) -> !:
         try self.box.value().set_children(children)
 
     ## Escape pressed while the dialog is open: what its Cancel button does.
@@ -76,10 +76,10 @@ pub struct Dialog: Widget:
     pub func is_open() -> bool:
         return self.box.value().is_visible()
 
-    pub mutating func open():
+    pub func open():
         self.box.value().set_visible(true)
 
-    pub mutating func hide():
+    pub func hide():
         self.box.value().set_visible(false)
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
@@ -88,7 +88,7 @@ pub struct Dialog: Widget:
             return result.failure[Size](failure.code, failure.message)
         return result.success[Size](Size(self.width, size.height))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -103,7 +103,7 @@ pub struct Dialog: Widget:
         try painter.rounded_rectangle(gpu.Rect(1.0, 1.0, size.width - 2.0, size.height - 2.0), theme.raised, math.max(0.0, radius - 1.0))
 
     ## The tree hands an open dialog Escape and Enter (see `set_dialog`).
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         # Positions in the window: the face moves under the pointer as it drags.
         let bounds = self.box.value().bounds()
         let x = bounds.x + event.x
@@ -128,7 +128,7 @@ pub struct Dialog: Widget:
                 return self.accepted.emit(())
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.cancelled.close()
         self.cancelled.release()
         self.accepted.close()
@@ -152,10 +152,10 @@ test "a dialog starts hidden, opens and hides":
     card.hide()
     assert(not card.is_open())
     var rejected = false
-    discard(Dialog(empty, 10.0) catch failure:
+    _ = Dialog(empty, 10.0) catch failure:
         assert(failure.code == result.invalid)
         rejected = true
-        recover try Dialog(empty))
+        recover try Dialog(empty)
     assert(rejected)
 
 test "a dialog dragged by its face keeps its offset from the centre":
@@ -163,11 +163,11 @@ test "a dialog dragged by its face keeps its offset from the centre":
     var card = try Dialog(empty, 340.0)
     defer card.close()
     card.open()
-    discard(card.event(Event(kind = input.EventKind.pointer_down, x = 10.0, y = 10.0, button = 0, inside = true)))
-    discard(card.event(Event(kind = input.EventKind.pointer_moved, x = 30.0, y = 25.0, inside = true)))
-    discard(card.event(Event(kind = input.EventKind.pointer_up, x = 30.0, y = 25.0, button = 0, inside = true)))
+    _ = card.event(Event(kind = input.EventKind.pointer_down, x = 10.0, y = 10.0, button = 0, inside = true))
+    _ = card.event(Event(kind = input.EventKind.pointer_moved, x = 30.0, y = 25.0, inside = true))
+    _ = card.event(Event(kind = input.EventKind.pointer_up, x = 30.0, y = 25.0, button = 0, inside = true))
     let offset = card.layout().value().popup_offset()
     assert(offset.x == 20.0 and offset.y == 15.0)
     # Moves after letting go leave it where it is.
-    discard(card.event(Event(kind = input.EventKind.pointer_moved, x = 90.0, y = 90.0, inside = true)))
+    _ = card.event(Event(kind = input.EventKind.pointer_moved, x = 90.0, y = 90.0, inside = true))
     assert(card.layout().value().popup_offset().x == 20.0)

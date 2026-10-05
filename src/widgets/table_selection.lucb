@@ -13,7 +13,7 @@ pub struct RowSelection:
     let multiple: bool
 
     pub func init(rows: usize, multiple: bool) -> !:
-        let marked = try alloc bool[rows] in memory.heap
+        let marked = try new bool[rows] --- in memory.heap
         for at in 0..<rows:
             marked[at] = false
         self.marked = marked
@@ -34,8 +34,8 @@ pub struct RowSelection:
         return total
 
     ## Follow a new row count. Rows still in range keep their state.
-    pub mutating func resize(rows: usize) -> !:
-        let grown = try alloc bool[rows] in memory.heap
+    pub func resize(rows: usize) -> !:
+        let grown = try new bool[rows] --- in memory.heap
         for at in 0..<rows:
             grown[at] = at < self.marked.length and self.marked[at]
         free(self.marked) in memory.heap
@@ -46,7 +46,7 @@ pub struct RowSelection:
             self.anchor = -1
 
     ## Select only row `index`, or nothing for -1.
-    pub mutating func only(index: i64) -> !:
+    pub func only(index: i64) -> !:
         try self.check(index)
         for at in 0..<self.marked.length:
             self.marked[at] = false
@@ -57,7 +57,7 @@ pub struct RowSelection:
 
     ## Add row `index` to the selection or take it out (command-click). It becomes
     ## the lead and the anchor either way. A single selection selects it alone.
-    pub mutating func toggle(index: i64) -> !:
+    pub func toggle(index: i64) -> !:
         if not self.multiple or index < 0:
             return try self.only(index)
         try self.check(index)
@@ -67,7 +67,7 @@ pub struct RowSelection:
 
     ## Select the range from the anchor to row `index` (shift-click), which becomes
     ## the lead. Rows marked before outside the range are dropped, as in Finder.
-    pub mutating func extend(index: i64) -> !:
+    pub func extend(index: i64) -> !:
         if not self.multiple or self.anchor < 0 or index < 0:
             return try self.only(index)
         try self.check(index)
@@ -78,7 +78,7 @@ pub struct RowSelection:
         self.lead = index
 
     ## Select every row; the lead stays where it is, or goes to the first row.
-    pub mutating func all():
+    pub func all():
         if not self.multiple or self.marked.length == 0:
             return
         for at in 0..<self.marked.length:
@@ -89,7 +89,7 @@ pub struct RowSelection:
 
     ## Mark row `index` on or off without moving the lead: restoring a selection
     ## after the rows were rebuilt.
-    pub mutating func mark(index: i64, on: bool) -> !:
+    pub func mark(index: i64, on: bool) -> !:
         try self.check(index)
         if index < 0:
             return
@@ -101,7 +101,7 @@ pub struct RowSelection:
         if index < -1 or index >= (i64)self.marked.length:
             error(result.invalid, "table selection is outside its rows")
 
-    pub mutating func close():
+    pub func close():
         free(self.marked) in memory.heap
 
 test "a single selection holds one row":

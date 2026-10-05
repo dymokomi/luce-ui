@@ -33,7 +33,7 @@ pub struct Rule: Widget:
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(1.0, 0.0) if self.vertical else Size(0.0, 1.0))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -45,10 +45,10 @@ pub struct Rule: Widget:
         let theme = self.box.value().theme()
         try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.background if self.structural else theme.border)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):

@@ -125,79 +125,79 @@ pub struct Layout:
         return self.visible
 
     ## A hidden box and its subtree leave layout, drawing and input entirely.
-    pub mutating func set_visible(visible: bool):
+    pub func set_visible(visible: bool):
         self.visible = visible
-        self.invalidate()
+        Layout.invalidate()
 
     ## A popup is measured normally, placed beside its parent and clipped to
     ## the window. Its subtree is drawn last and hit first; a modal popup (see
     ## `set_modal`) also holds all input while open.
-    pub mutating func set_popup(popup: bool):
+    pub func set_popup(popup: bool):
         self.popup = popup
-        self.invalidate()
+        Layout.invalidate()
 
     ## A modal popup (the default: menus, prompts) takes focus while open, gets
     ## every key, and swallows a press outside it after cancelling itself. A
     ## non-modal one (a floating panel such as Dialog) is placed and drawn on
     ## top the same way, but the rest of the window keeps working: focus moves
     ## into and out of it by clicks, and presses outside reach what is there.
-    pub mutating func set_modal(modal: bool):
+    pub func set_modal(modal: bool):
         self.modal = modal
-        self.invalidate()
+        Layout.invalidate()
 
     ## A dialog card: while it is open, Escape and Enter go to its widget (to
     ## cancel or accept) before any shortcut sees them.
-    pub mutating func set_dialog(dialog: bool):
+    pub func set_dialog(dialog: bool):
         self.dialog = dialog
 
     ## A point is local to the popup's parent. Window placement clamps every
     ## edge; centered command surfaces stay independent of surrounding flow.
-    pub mutating func set_popup_point(x: f64, y: f64) -> !:
+    pub func set_popup_point(x: f64, y: f64) -> !:
         if not math.is_finite(x) or not math.is_finite(y):
             error(result.invalid, "popup coordinates must be finite")
         self.popup_placement = PopupPlacement.point
         self.popup_point = Point(x, y)
-        self.invalidate()
+        Layout.invalidate()
 
     ## Move a window-centred popup by (`x`, `y`) from the centre: a dialog
     ## dragged aside stays there while it opens and closes.
-    pub mutating func set_popup_offset(x: f64, y: f64) -> !:
+    pub func set_popup_offset(x: f64, y: f64) -> !:
         if not math.is_finite(x) or not math.is_finite(y):
             error(result.invalid, "popup offsets must be finite")
         self.popup_point = Point(x, y)
-        self.invalidate()
+        Layout.invalidate()
 
     pub func popup_offset() -> Point:
         return self.popup_point
 
     ## Choose how the tree places this popup. Unlike the other setters it does not
     ## invalidate; the placement applies at the next arrangement.
-    pub mutating func set_popup_placement(placement: PopupPlacement):
+    pub func set_popup_placement(placement: PopupPlacement):
         self.popup_placement = placement
 
     ## Let this popup ease to its placement instead of snapping. begin_open restarts
     ## the entrance each time it is shown; a size or position change while open eases too.
-    pub mutating func set_animate_open(value: bool):
+    pub func set_animate_open(value: bool):
         self.animate_open = value
 
     ## Restart an animated popup's entrance at its next placement; call it each
     ## time the popup is shown.
-    pub mutating func begin_open():
+    pub func begin_open():
         self.opening = true
-        self.invalidate()
+        Layout.invalidate()
 
     ## Context providers receive a secondary-click request after its target has
     ## selected the clicked content. The nearest enabled ancestor handles it.
-    pub mutating func set_context_menu(enabled: bool):
+    pub func set_context_menu(enabled: bool):
         self.context_menu = enabled
         self.accepts_pointer = enabled or self.accepts_pointer
-        self.invalidate()
+        Layout.invalidate()
 
     ## Sibling triggers form one menu group. Only an already-open menu enables
     ## pointer switching; context menus and other modal popups remain isolated.
-    pub mutating func set_menu_trigger(enabled: bool):
+    pub func set_menu_trigger(enabled: bool):
         self.menu_trigger = enabled
-        self.invalidate()
+        Layout.invalidate()
 
     ## The theme resolved at the last arrangement: this box's own, or else the one
     ## it inherited from its parent (the application's at the root).
@@ -206,16 +206,16 @@ pub struct Layout:
 
     ## Give this box its own theme, inherited by descendants that set none. It is
     ## seen at once here and by descendants from the next arrangement.
-    pub mutating func set_theme(theme: Theme) -> !:
+    pub func set_theme(theme: Theme) -> !:
         try theme.validate()
         self.local_theme = theme
         self.appearance = theme
-        self.invalidate()
+        Layout.invalidate()
 
     ## Drop this box's own theme; it inherits its parent's from the next arrangement.
-    pub mutating func inherit_theme():
+    pub func inherit_theme():
         self.local_theme = none
-        self.invalidate()
+        Layout.invalidate()
 
     ## A process-unique identity, stable for the box's lifetime.
     pub func id() -> i64:
@@ -241,9 +241,9 @@ pub struct Layout:
 
     ## Resolve to the first eligible descendant after the next arrangement.
     ## Containers can reveal a tab and focus its content in the same operation.
-    pub mutating func request_focus():
+    pub func request_focus():
         self.focus_requested = true
-        self.invalidate()
+        Layout.invalidate()
 
     ## Hover follows the topmost visible, enabled branch, independently of
     ## keyboard focus and pointer capture. Ancestors can style their whole pane.
@@ -266,10 +266,10 @@ pub struct Layout:
     ## `drop_count`/`drop_path`, and may refuse them with `set_drop_accepted`.
     ## The innermost drop area under the pointer takes the drag. With `overlay`
     ## the area is lit in the accent while a drop would be taken there.
-    pub mutating func set_drop_target(enabled: bool, overlay: bool = true):
+    pub func set_drop_target(enabled: bool, overlay: bool = true):
         self.drop_target = enabled
         self.drop_overlay = overlay
-        self.invalidate()
+        Layout.invalidate()
 
     pub func is_drop_target() -> bool:
         return self.drop_target
@@ -281,10 +281,10 @@ pub struct Layout:
     ## Take or refuse the drag over this area, answered from its drag events;
     ## an area takes a drag unless it says otherwise. A refused drag is not lit
     ## and the OS shows that dropping does nothing.
-    pub mutating func set_drop_accepted(accepted: bool):
+    pub func set_drop_accepted(accepted: bool):
         if self.drop_accepted != accepted:
             self.drop_accepted = accepted
-            self.invalidate()
+            Layout.invalidate()
 
     pub func is_drop_accepted() -> bool:
         return self.drop_accepted
@@ -301,12 +301,12 @@ pub struct Layout:
 
     ## Cursor changes do not invalidate geometry. The application resolves the
     ## current hit or capture after dispatch and after each layout refresh.
-    pub mutating func set_cursor(cursor: input.Cursor):
+    pub func set_cursor(cursor: input.Cursor):
         self.pointer_cursor = cursor
 
     ## Let `source` choose the cursor over this box by position, in place of the
     ## fixed `set_cursor` one. The box retains it, replacing any previous source.
-    pub mutating func set_cursor_source(source: interop.Interface[CursorSource]) -> !:
+    pub func set_cursor_source(source: interop.Interface[CursorSource]) -> !:
         try source.enter()
         defer source.leave()
         let retained = source.clone()
@@ -319,51 +319,51 @@ pub struct Layout:
 
     ## A disabled box and its whole subtree take no pointer, focus or hover, and
     ## lose focus and capture at the next arrangement.
-    pub mutating func set_enabled(enabled: bool):
+    pub func set_enabled(enabled: bool):
         self.active = enabled
-        self.invalidate()
+        Layout.invalidate()
 
     ## Take keyboard focus from Tab and from clicks. Enabling it also makes the box
     ## interactive; disabling it leaves pointer input on.
-    pub mutating func set_focusable(focusable: bool):
+    pub func set_focusable(focusable: bool):
         self.accepts_focus = focusable
         if focusable:
             self.accepts_pointer = true
-        self.invalidate()
+        Layout.invalidate()
 
     ## Receive pointer events without taking focus. A box that is neither
     ## interactive nor focusable is never hit: a press goes to the topmost
     ## interactive box beneath it, usually an ancestor. A press on a box that is
     ## interactive but not focusable clears focus.
-    pub mutating func set_interactive(interactive: bool):
+    pub func set_interactive(interactive: bool):
         self.accepts_pointer = interactive
-        self.invalidate()
+        Layout.invalidate()
 
     ## A decorative layer that lies over content, such as a drag preview, opts out
     ## of hover so the interactive widgets beneath it still light up under the pointer.
-    pub mutating func set_hover_transparent(value: bool):
+    pub func set_hover_transparent(value: bool):
         self.hover_transparent = value
-        self.invalidate()
+        Layout.invalidate()
 
     ## Take over the press under way (a button held open a flyout): until the
     ## button is let go, the pointer's moves and its release come here.
-    pub mutating func claim_press():
+    pub func claim_press():
         self.claims_press = true
-        self.invalidate()
+        Layout.invalidate()
 
     ## Keep Tab for this box while it has focus, rather than moving focus on:
     ## a canvas that steps its tool's modes with it. Control-Tab still moves on.
-    pub mutating func set_accepts_tab(accepts: bool):
+    pub func set_accepts_tab(accepts: bool):
         self.accepts_tab = accepts
 
     ## Text controls receive committed Unicode and may reserve Tab for indentation.
     ## Control-Tab always remains available for moving focus out of an editor.
-    pub mutating func set_text_input(enabled: bool, tabs: bool = false):
+    pub func set_text_input(enabled: bool, tabs: bool = false):
         self.accepts_text = enabled
         self.accepts_tab = enabled and tabs
         if enabled:
             self.set_focusable(true)
-        self.invalidate()
+        Layout.invalidate()
 
     ## Announce a change the next frame must show. It moves the global layout epoch,
     ## so the next arrangement regathers, remeasures and places the whole tree and
@@ -373,7 +373,7 @@ pub struct Layout:
 
     ## Clamp the measured size to `minimum`..`maximum` (each extent in 0..16384); a
     ## stack grows or shrinks the box only within them.
-    pub mutating func set_limits(minimum: Size, maximum: Size) -> !:
+    pub func set_limits(minimum: Size, maximum: Size) -> !:
         try extent(minimum.width)
         try extent(minimum.height)
         try extent(maximum.width)
@@ -382,27 +382,27 @@ pub struct Layout:
             error(result.invalid, "layout minimum exceeds maximum")
         self.minimum = minimum
         self.maximum = maximum
-        self.invalidate()
+        Layout.invalidate()
 
     ## Fix the size: equal minimum and maximum.
-    pub mutating func set_size(width: f64, height: f64) -> !:
+    pub func set_size(width: f64, height: f64) -> !:
         try self.set_limits(Size(width, height), Size(width, height))
 
     ## Shrink weights are independent of growth. Fixed-height chrome can keep
     ## its line while flexible content absorbs a smaller window.
-    pub mutating func set_shrink(horizontal: f64 = 1.0, vertical: f64 = 1.0) -> !:
+    pub func set_shrink(horizontal: f64 = 1.0, vertical: f64 = 1.0) -> !:
         try extent(horizontal)
         try extent(vertical)
         self.shrink = Size(horizontal, vertical)
-        self.invalidate()
+        Layout.invalidate()
 
     ## Growth weights: the share of a stack's spare room this box takes along each
     ## axis. The default, 0, keeps its measured size.
-    pub mutating func set_flex(horizontal: f64 = 1.0, vertical: f64 = 1.0) -> !:
+    pub func set_flex(horizontal: f64 = 1.0, vertical: f64 = 1.0) -> !:
         try extent(horizontal)
         try extent(vertical)
         self.growth = Size(horizontal, vertical)
-        self.invalidate()
+        Layout.invalidate()
 
     ## The size this box measured at the last arrangement: its content's own
     ## size, what a scroll view scrolls over.
@@ -412,7 +412,7 @@ pub struct Layout:
     ## Take the wheel for what is inside: a scroll event over any box inside
     ## goes to the nearest box that takes it (a scroll view, a list), or to the
     ## box under the pointer when none does.
-    pub mutating func set_takes_scroll(takes: bool):
+    pub func set_takes_scroll(takes: bool):
         self.scrolls = takes
 
     pub func takes_scroll() -> bool:
@@ -426,30 +426,30 @@ pub struct Layout:
 
     ## Decorators can preserve a content widget's sizing policy while owning a
     ## separate layout for popup children or framing.
-    pub mutating func copy_sizing_from(source: interop.Reference[Layout]) -> !:
+    pub func copy_sizing_from(source: interop.Reference[Layout]) -> !:
         let value = try source.get()
         self.minimum = value.minimum
         self.maximum = value.maximum
         self.growth = value.growth
         self.shrink = value.shrink
-        self.invalidate()
+        Layout.invalidate()
 
     ## Split layouts contain first pane, divider and second pane, in that order.
     ## The fraction is a preference; placement enforces the children's limits.
-    pub mutating func set_split(fraction: f64) -> !:
+    pub func set_split(fraction: f64) -> !:
         if self.axis == Axis.overlay or not math.is_finite(fraction) or fraction < 0.0 or fraction > 1.0:
             error(result.invalid, "a split needs a horizontal/vertical axis and a fraction in 0..1")
         if self.items.length != 3:
             error(result.invalid, "a split needs two panes and one divider")
         self.split = fraction
-        self.invalidate()
+        Layout.invalidate()
 
     pub func split_fraction() -> f64:
         return self.split else 0.5
 
     ## Place the children with a custom Arrangement instead of stacking them. Only
     ## an overlay box without a split takes one; the box retains it.
-    pub mutating func set_arrangement(arrangement: interop.Interface[Arrangement]) -> !:
+    pub func set_arrangement(arrangement: interop.Interface[Arrangement]) -> !:
         if self.axis != Axis.overlay or self.split != none:
             error(result.invalid, "custom arrangement needs an overlay layout")
         try arrangement.enter()
@@ -460,7 +460,7 @@ pub struct Layout:
         self.arrangement = replacement
         if let old = previous:
             old.release()
-        self.invalidate()
+        Layout.invalidate()
 
     pub func child_count() -> i64:
         return (i64)self.items.length
@@ -473,7 +473,7 @@ pub struct Layout:
     ## Replacement is transactional: validate and allocate before changing edges.
     ## At most 1024 children, each without another parent or application, with no
     ## duplicates or cycles; a split keeps exactly three.
-    pub mutating func set_children(children: const interop.Interface[Widget][]) -> !:
+    pub func set_children(children: const interop.Interface[Widget][]) -> !:
         if self.editing:
             error(result.busy, "child replacement cannot reenter the same layout")
         if self.split != none and children.length != 3:
@@ -506,7 +506,7 @@ pub struct Layout:
             index += 1
         var replacement: interop.Interface[Widget][]
         if children.length > 0:
-            replacement = try alloc interop.Interface[Widget][children.length] in memory.heap
+            replacement = try new interop.Interface[Widget][children.length] --- in memory.heap
         index = 0
         for child in children:
             replacement[index] = child.clone()
@@ -517,7 +517,7 @@ pub struct Layout:
             let layout = try widget_layout(child)
             defer layout.release()
             layout.value().parent = self.identifier
-        self.invalidate()
+        Layout.invalidate()
 
     ## The children's natural size from their last measurement: summed along the
     ## axis with spacing, the largest across it, plus padding, and capped to
@@ -548,17 +548,17 @@ pub struct Layout:
         return Size(math.min(size.width, available.width), math.min(size.height, available.height))
 
     ## Pad the box by `horizontal` points left and right and `vertical` above and below.
-    pub mutating func set_padding(horizontal: f64, vertical: f64) -> !:
+    pub func set_padding(horizontal: f64, vertical: f64) -> !:
         try extent(horizontal)
         try extent(vertical)
         self.padding_x = horizontal
         self.padding_y = vertical
         bump_revision()
 
-    mutating func finish_edit():
+    func finish_edit():
         self.editing = false
 
-    mutating func detach():
+    func detach():
         let previous = self.items
         var empty: interop.Interface[Widget][]
         self.items = empty
@@ -577,12 +577,12 @@ pub struct Layout:
         if previous.length > 0:
             free(previous) in memory.heap
 
-    mutating func dispose():
+    func dispose():
         self.detach()
         if let source = self.cursor_source: source.release()
         if let arrangement = self.arrangement:
             arrangement.release()
-        self.invalidate()
+        Layout.invalidate()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
         if let source = self.cursor_source: source.trace(visit, context)

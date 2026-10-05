@@ -21,13 +21,13 @@ struct Child: Widget:
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return interop.Outcome[Size].success(interop.Owned[Size](Size()))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         return interop.Outcome[unit].success(interop.Owned[unit](()))
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         return interop.Outcome[unit].success(interop.Owned[unit](()))
 
-    pub mutating func close():
+    pub func close():
         self.box.release()
         self.retained_parent.release()
 
@@ -55,7 +55,7 @@ pub func collect() -> !:
 struct Holder:
     let widget: interop.Interface[Widget]
 
-    pub mutating func close():
+    pub func close():
         self.widget.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
@@ -101,7 +101,7 @@ func relayout_once(prefill: usize) -> !:
     app_alias.release()
     let holder_alias = holder.clone()
     holder_alias.release()
-    let fillers = try alloc interop.Reference[Spacer][prefill + 1] in memory.heap
+    let fillers = try new interop.Reference[Spacer][prefill + 1] --- in memory.heap
     defer free(fillers) in memory.heap
     var index: usize = 0
     while index < prefill:

@@ -200,7 +200,7 @@ pub func normalize_lines(text: str) -> interop.Owned[str]!:
                 if index + 1 < text.length and text.bytes[index + 1] == 10:
                     index += 1
             else:
-                discard(try value.write(text.bytes[index..<index + 1]))
+                _ = try value.write(text.bytes[index..<index + 1])
             index += 1
         return try interop.copy_text(value.view())
 
@@ -208,8 +208,7 @@ func whitespace(scalar: u32) -> bool:
     return scalar == 32 or scalar == 9 or scalar == 10 or scalar == 13
 
 func word_character(scalar: u32) -> bool:
-    return ((scalar >= 65 and scalar <= 90) or (scalar >= 97 and scalar <= 122) or
-        (scalar >= 48 and scalar <= 57) or scalar == 95 or scalar >= 128)
+    return ((scalar >= 65 and scalar <= 90) or (scalar >= 97 and scalar <= 122) or (scalar >= 48 and scalar <= 57) or scalar == 95 or scalar >= 128)
 
 test "indentation and deletion restore selections on undo":
     var document = try Document("alpha\n    beta\ngamma")

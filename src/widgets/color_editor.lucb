@@ -65,7 +65,7 @@ pub struct ColorEditor: Widget:
         return self.box.value().is_visible()
 
     ## Show the editor at (x, y) in the parent's coordinates, seeded from `value`.
-    pub mutating func open_at(value: str, x: f64, y: f64) -> !:
+    pub func open_at(value: str, x: f64, y: f64) -> !:
         self.parse(value)
         try self.field.set_text(value)
         self.dragging = -1
@@ -73,7 +73,7 @@ pub struct ColorEditor: Widget:
         try self.box.value().set_popup_point(x, y)
         self.box.value().set_visible(true)
 
-    pub mutating func hide():
+    pub func hide():
         self.box.value().set_visible(false)
         self.dragging = -1
 
@@ -90,7 +90,7 @@ pub struct ColorEditor: Widget:
     func track_width(width: f64, inset: f64) -> f64:
         return math.max(20.0, width - self.track_x(inset) - inset - self.font.value().advance() * 4.0)
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -134,16 +134,16 @@ pub struct ColorEditor: Widget:
         try painter.rectangle(gpu.Rect(width = 1.0, height = size.height), theme.active_border)
         try painter.rectangle(gpu.Rect(x = size.width - 1.0, width = 1.0, height = size.height), theme.active_border)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         let handled = self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
-        self.box.value().invalidate()
+        Layout.invalidate()
         if handled:
             var buffer: u8[8]
             return self.changed.emit(self.hex_string_into(buffer))
         return result.success[unit](())
 
-    mutating func handle(event: Event) -> bool!:
+    func handle(event: Event) -> bool!:
         if event.cancelled or (event.kind == input.EventKind.key_down and event.key == input.Key.escape):
             self.hide()
             return false
@@ -155,7 +155,7 @@ pub struct ColorEditor: Widget:
         let hy = rh * 4.0
         # Slider drag.
         if self.dragging >= 0 and event.kind == input.EventKind.pointer_moved:
-            return try self.set_channel(self.dragging, self.value_at(event.x, tx, tw))
+            return try self.set_channel(self.dragging, ColorEditor.value_at(event.x, tx, tw))
         if event.kind == input.EventKind.pointer_up:
             self.dragging = -1
             return false
@@ -165,7 +165,7 @@ pub struct ColorEditor: Widget:
                 let channel = (i64)((event.y - rh) / rh)
                 if channel >= 0 and channel < 3:
                     self.dragging = channel
-                    return try self.set_channel(channel, self.value_at(event.x, tx, tw))
+                    return try self.set_channel(channel, ColorEditor.value_at(event.x, tx, tw))
         # Route keyboard and pointer to the hex field.
         if self.editing_hex or event.kind == input.EventKind.text_input:
             self.field.pointer(event, self.font, inset + self.font.value().advance() * 0.5, hy, width - inset * 2.0, rh) catch failure:
@@ -178,7 +178,7 @@ pub struct ColorEditor: Widget:
 
     ## Read the (possibly incomplete) field text; when it is a valid hex, update the
     ## channels and report a change so the host writes exactly what was typed.
-    mutating func adopt_field() -> bool!:
+    func adopt_field() -> bool!:
         let text = try self.field.text()
         defer text.release()
         if parse_hex(text.value, &self.red, &self.green, &self.blue):
@@ -189,7 +189,7 @@ pub struct ColorEditor: Widget:
         let fraction = math.clamp((x - tx) / math.max(1.0, tw), 0.0, 1.0)
         return (i64)(fraction * 255.0 + 0.5)
 
-    mutating func set_channel(channel: i64, value: i64) -> bool!:
+    func set_channel(channel: i64, value: i64) -> bool!:
         let clamped = value if value >= 0 else 0
         let bounded = clamped if clamped <= 255 else 255
         if channel == 0:
@@ -221,10 +221,10 @@ pub struct ColorEditor: Widget:
         buffer[6] = hex_digits.bytes[(usize)(self.blue & 15)]
         return (str)buffer[..<7]
 
-    mutating func parse(value: str):
-        discard(parse_hex(value, &self.red, &self.green, &self.blue))
+    func parse(value: str):
+        _ = parse_hex(value, &self.red, &self.green, &self.blue)
 
-    pub mutating func close():
+    pub func close():
         self.changed.close()
         self.changed.release()
         self.field.close()

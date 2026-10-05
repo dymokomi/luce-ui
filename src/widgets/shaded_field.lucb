@@ -66,20 +66,20 @@ pub struct ShadedField: Widget:
         return self.marker_v
 
     ## Place the marker from code; no signal.
-    pub mutating func set_marker(u: f64, v: f64) -> !:
+    pub func set_marker(u: f64, v: f64) -> !:
         if not math.is_finite(u) or not math.is_finite(v):
             error(result.invalid, "marker coordinates must be finite")
         self.marker_u = math.clamp(u, 0.0, 1.0)
         self.marker_v = math.clamp(v, 0.0, 1.0)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## The colors at the grid's corners, row-major, `columns` per row: the
     ## field is shaded between them. The widget keeps its own copy. A strip is
     ## a grid one column (vertical) or one row (horizontal) wide.
-    pub mutating func set_grid(colors: const gpu.Color[], columns: i64) -> !:
+    pub func set_grid(colors: const gpu.Color[], columns: i64) -> !:
         if columns < 2 or colors.length % (usize)columns != 0 or colors.length // (usize)columns < 2:
             error(result.invalid, "a shaded grid needs at least two columns and two rows of colors")
-        let copied = try alloc gpu.Color[colors.length] in memory.heap
+        let copied = try new gpu.Color[colors.length] --- in memory.heap
         for index in 0..<colors.length:
             copied[index] = colors[index]
         if self.grid.length > 0:
@@ -87,12 +87,12 @@ pub struct ShadedField: Widget:
         self.grid = copied
         self.columns = (usize)columns
         self.rows = colors.length // (usize)columns
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(self.width, self.height))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -106,9 +106,9 @@ pub struct ShadedField: Widget:
             try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.sunken)
             return
         let cells = (self.columns - 1) * (self.rows - 1)
-        var points = try alloc Point[cells * 6] in memory.heap
+        var points = try new Point[cells * 6] --- in memory.heap
         defer free(points) in memory.heap
-        var colors = try alloc gpu.Color[cells * 6] in memory.heap
+        var colors = try new gpu.Color[cells * 6] --- in memory.heap
         defer free(colors) in memory.heap
         var index: usize = 0
         for row in 0..<(self.rows - 1):
@@ -141,16 +141,16 @@ pub struct ShadedField: Widget:
         try ring(&painter, mx, my, 6.0, 0.75, gpu.Color(0.0, 0.0, 0.0))
         try ring(&painter, mx, my, 5.25, 1.5, gpu.Color(1.0, 1.0, 1.0))
 
-    mutating func choose(x: f64, y: f64) -> interop.Outcome[unit]:
+    func choose(x: f64, y: f64) -> interop.Outcome[unit]:
         let bounds = self.box.value().bounds()
         if bounds.width <= 0.0 or bounds.height <= 0.0:
             return result.success[unit](())
         self.marker_u = math.clamp(x / bounds.width, 0.0, 1.0)
         self.marker_v = math.clamp(y / bounds.height, 0.0, 1.0)
-        self.box.value().invalidate()
+        Layout.invalidate()
         return self.changed.emit(())
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled:
             self.dragging = false
             return result.success[unit](())
@@ -163,7 +163,7 @@ pub struct ShadedField: Widget:
             self.dragging = false
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         if self.grid.length > 0:
             free(self.grid) in memory.heap
         self.changed.close()

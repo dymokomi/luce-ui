@@ -7,7 +7,7 @@
 extend State:
     ## Attach the preview overlay and the add menu and rebuild the stack's
     ## children; the DStack does this once, before adding panels.
-    pub mutating func install(overlay: interop.Interface[Widget], popup: interop.Reference[ActionPopup]) -> !:
+    pub func install(overlay: interop.Interface[Widget], popup: interop.Reference[ActionPopup]) -> !:
         self.overlay = overlay.clone()
         self.popup = popup.clone()
         try self.children()
@@ -15,7 +15,7 @@ extend State:
     ## Dock `panel` in the first free slot relative to `relative`, or to the active
     ## panel when there is none; a floating relative stands for the model's active
     ## panel. Cancels any gesture, then selects and focuses the new panel.
-    pub mutating func add(panel: interop.Reference[Panel], relative: interop.Reference[Panel]?, position: DockPosition) -> !:
+    pub func add(panel: interop.Reference[Panel], relative: interop.Reference[Panel]?, position: DockPosition) -> !:
         self.cancel()
         var slot: usize = 0
         for index in 1..<self.panels.length:
@@ -30,7 +30,7 @@ extend State:
             if self.floating(target): target = self.model.active
         let caption = (try panel.get()).text()
         defer caption.release()
-        discard(try self.font.value().measure(caption.value))
+        _ = try self.font.value().measure(caption.value)
         var next = self.model
         try next.add(slot, target, position)
         try self.children(slot, panel)
@@ -41,7 +41,7 @@ extend State:
     ## Show slot `index`: raise its window when it floats, else make it its
     ## group's tab and the active panel. With `focus`, also request focus for its
     ## content and emit `selected`.
-    pub mutating func select(index: usize, focus: bool = true) -> !:
+    pub func select(index: usize, focus: bool = true) -> !:
         if self.floating(index):
             try self.raise_window(index)
         else:
@@ -60,7 +60,7 @@ extend State:
 
     ## Redock `panel` relative to `relative` and select it. A floating panel docks
     ## back, beside the model's active panel when `relative` floats too.
-    pub mutating func move(panel: interop.Reference[Panel], relative: interop.Reference[Panel], position: DockPosition) -> !:
+    pub func move(panel: interop.Reference[Panel], relative: interop.Reference[Panel], position: DockPosition) -> !:
         self.cancel()
         let index = try self.index(panel)
         let target = try self.index(relative)
@@ -76,7 +76,7 @@ extend State:
 
     ## Take `panel` out, docked or floating, release it, select the new active
     ## panel and emit `closed`. The close handler is not consulted here.
-    pub mutating func remove(panel: interop.Reference[Panel]) -> !:
+    pub func remove(panel: interop.Reference[Panel]) -> !:
         self.cancel()
         let index = try self.index(panel)
         let removed = panel.clone()
@@ -100,12 +100,12 @@ extend State:
         try delivered.get()
 
     ## Consulted before a user close; returning false keeps the panel.
-    pub mutating func set_close_handler(callback: interop.Callback[interop.Reference[Panel], bool]):
+    pub func set_close_handler(callback: interop.Callback[interop.Reference[Panel], bool]):
         let replacement = callback.clone()
         if let previous = self.close_handler: previous.release()
         self.close_handler = replacement
 
-    mutating func request_close(index: usize) -> !:
+    func request_close(index: usize) -> !:
         let panel = try self.panel(index)
         defer panel.release()
         if not panel.value().is_closable(): return

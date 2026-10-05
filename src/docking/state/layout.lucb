@@ -20,13 +20,15 @@
 #
 #==============================================================================================
 
+import strings
+
 ## Text appended to a fixed buffer; running out of room is an error rather
 ## than a cut-off arrangement.
 struct LayoutWriter:
     var bytes: u8[]
     var length: usize
 
-    mutating func put(text: str) -> !:
+    func put(text: str) -> !:
         if self.length + text.length > self.bytes.length:
             error(result.limit, "the dock arrangement is too long to write")
         memory.copy(self.bytes[self.length..<self.length + text.length], text.bytes, text.length)
@@ -35,7 +37,7 @@ struct LayoutWriter:
 extend State:
     ## The arrangement as text.
     pub func arrangement_text() -> interop.Owned[str]!:
-        let bytes = try alloc u8[(usize)1 << 16] in memory.heap
+        let bytes = try new u8[(usize)1 << 16] --- in memory.heap
         defer free(bytes) in memory.heap
         var writer = LayoutWriter(bytes = bytes, length = 0)
         try writer.put("luce-dock 1\n")
@@ -45,7 +47,7 @@ extend State:
             let index = self.stacking[order]
             let window = self.floats[index]
             var number: u8[96]
-            try writer.put(try format(number, f"float {window.x} {window.y} {window.width} {window.height} "))
+            try writer.put(try strings.format(number, f"float {window.x} {window.y} {window.width} {window.height} "))
             try self.write_id(&writer, index)
             try writer.put("\n")
         return try interop.copy_text((str)bytes[..<writer.length])
@@ -57,14 +59,14 @@ extend State:
         if current.first == 0:
             let count = self.model.tab_count(node)
             let selected = self.model.tabs[current.selected].order if current.selected != 0 else 0
-            try writer.put(try format(number, f"group {selected}"))
+            try writer.put(try strings.format(number, f"group {selected}"))
             for order in 0..<count:
                 try writer.put(" ")
                 try self.write_id(writer, self.model.at(node, order))
             try writer.put("\n")
             return
         let axis = "h" if current.horizontal else "v"
-        try writer.put(try format(number, f"split {axis} {current.fraction}\n"))
+        try writer.put(try strings.format(number, f"split {axis} {current.fraction}\n"))
         try self.write_node(writer, current.first)
         try self.write_node(writer, current.second)
 

@@ -26,7 +26,7 @@ pub struct Menu: Widget:
     pub func init(text: str, actions: const interop.Reference[Command][], font: interop.Reference[Font]? = none) -> !:
         let selected = try selected_font(font)
         errdefer selected.release()
-        discard(try selected.value().measure(text))
+        _ = try selected.value().measure(text)
         let caption = try interop.copy_text(text)
         errdefer caption.release()
         let box = try layout.make_layout()
@@ -50,22 +50,22 @@ pub struct Menu: Widget:
         return self.box.clone()
 
     ## Retitle the menu, for one whose title names the current choice.
-    pub mutating func set_text(text: str) -> !:
+    pub func set_text(text: str) -> !:
         if text == self.caption.value:
             return
-        discard(try self.font.value().measure(text))
+        _ = try self.font.value().measure(text)
         let replacement = try interop.copy_text(text)
         let previous_caption = self.caption
         self.caption = replacement
         previous_caption.release()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Offer `actions` from now on, as a menu whose choices depend on another
     ## (a font's styles on its family).
-    pub mutating func set_actions(actions: const interop.Reference[Command][]) -> !:
+    pub func set_actions(actions: const interop.Reference[Command][]) -> !:
         try self.popup.value().set_commands(actions)
 
-    pub mutating func open() -> !:
+    pub func open() -> !:
         try self.popup.value().open()
 
     pub func is_open() -> bool:
@@ -77,7 +77,7 @@ pub struct Menu: Widget:
         let theme = self.box.value().theme()
         return result.success[Size](Size(width + theme.inset(self.font) * 2.0, theme.row_height(self.font)))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -96,7 +96,7 @@ pub struct Menu: Widget:
         let ink = theme.accent_text if self.is_open() and theme.menu_selection == theme.accent else (theme.foreground if self.box.value().is_enabled() else theme.muted)
         try painter.text(self.caption.value, theme.inset(self.font), (size.height - self.font.value().height()) * 0.5, ink, self.font)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if event.menu_requested:
             self.open() catch failure:
                 return result.failure[unit](failure.code, failure.message)
@@ -115,7 +115,7 @@ pub struct Menu: Widget:
                 return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.popup.release()
         self.font.release()
         self.caption.release()

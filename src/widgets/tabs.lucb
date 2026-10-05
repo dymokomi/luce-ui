@@ -32,7 +32,7 @@ pub struct TabBar: Widget:
         box.value().set_cursor(input.Cursor.pointer)
         # clickable: a box receives pointer events only once it says so
         box.value().set_interactive(true)
-        var copies = try alloc interop.Owned[str][titles.length] in memory.heap
+        var copies = try new interop.Owned[str][titles.length] --- in memory.heap
         for index in 0..<titles.length:
             copies[index] = try interop.copy_text(titles[index])
         self.box = box
@@ -49,19 +49,19 @@ pub struct TabBar: Widget:
 
     ## Mark tab `index` (clamped to the tabs) selected; the panel's pages are
     ## unaffected.
-    pub mutating func select(index: i64):
+    pub func select(index: i64):
         self.selected = math.iclamp(index, 0, (i64)self.titles.length - 1)
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## The tab clicked since the last take, or -1.
-    pub mutating func take_click() -> i64:
+    pub func take_click() -> i64:
         let was = self.pending
         self.pending = -1
         return was
 
     func tab_width(index: usize) -> f64:
         let text = self.font.value().measure(self.titles[index].value) catch failure:
-            discard(failure)
+            _ = failure
             recover 0.0
         return text + self.font.value().advance() * 2.5
 
@@ -71,7 +71,7 @@ pub struct TabBar: Widget:
             width += self.tab_width(index) + 2.0
         return result.success[Size](Size(width, self.box.value().theme().row_height(self.font) + 4.0))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -92,7 +92,7 @@ pub struct TabBar: Widget:
             try painter.text(self.titles[index].value, x + self.font.value().advance() * 1.25, text_y, color = theme.foreground if current else theme.muted, font = self.font)
             x += width + 2.0
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled or event.kind != input.EventKind.pointer_down or event.button != 0 or not event.inside:
             return result.success[unit](())
         var x = 0.0
@@ -100,12 +100,12 @@ pub struct TabBar: Widget:
             let width = self.tab_width(index)
             if event.x >= x and event.x < x + width:
                 self.pending = (i64)index
-                self.box.value().invalidate()
+                Layout.invalidate()
                 return result.success[unit](())
             x += width + 2.0
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         for index in 0..<self.titles.length:
             self.titles[index].release()
         if self.titles.length > 0:
@@ -140,8 +140,8 @@ pub struct Tabs: Widget:
         errdefer bar.release()
         let changed = try interop.Signal[i64]()
         errdefer changed.release()
-        var boxes = try alloc interop.Reference[Layout][pages.length] in memory.heap
-        var children = try alloc interop.Interface[Widget][pages.length + 1] in memory.heap
+        var boxes = try new interop.Reference[Layout][pages.length] --- in memory.heap
+        var children = try new interop.Interface[Widget][pages.length + 1] --- in memory.heap
         defer free(children) in memory.heap
         children[0] = bar.as_interface[Widget](bar.value())
         let chosen = math.iclamp(selected, 0, (i64)pages.length - 1)
@@ -169,7 +169,7 @@ pub struct Tabs: Widget:
         return try self.changed.connect(callback)
 
     ## Show page `index`, clamped to the pages.
-    pub mutating func select(index: i64) -> interop.Outcome[unit]:
+    pub func select(index: i64) -> interop.Outcome[unit]:
         let chosen = math.iclamp(index, 0, (i64)self.pages.length - 1)
         if chosen == self.selected:
             return result.success[unit](())
@@ -177,7 +177,7 @@ pub struct Tabs: Widget:
         self.bar.value().select(chosen)
         for which in 0..<self.pages.length:
             self.pages[which].value().set_visible((i64)which == chosen)
-        self.box.value().invalidate()
+        Layout.invalidate()
         return self.changed.emit(chosen)
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
@@ -186,16 +186,16 @@ pub struct Tabs: Widget:
         return result.success[Size](size)
 
     ## Each frame: take a click on the bar.
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         let clicked = self.bar.value().take_click()
         if clicked >= 0:
             return self.select(clicked)
         return result.success[unit](())
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         for index in 0..<self.pages.length:
             self.pages[index].release()
         if self.pages.length > 0:

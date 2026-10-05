@@ -49,10 +49,10 @@ pub struct ShortcutField: Widget:
         return self.binding
 
     ## Set the shown chord from code; stops recording, no signal.
-    pub mutating func set_shortcut(shortcut: Shortcut):
+    pub func set_shortcut(shortcut: Shortcut):
         self.binding = shortcut
         self.recording = false
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     pub func is_recording() -> bool:
         return self.recording
@@ -64,7 +64,7 @@ pub struct ShortcutField: Widget:
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(self.font.value().advance() * self.cells, self.box.value().theme().row_height(self.font)))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -91,48 +91,48 @@ pub struct ShortcutField: Widget:
         else:
             try painter.text("None", inset, text_y, color = theme.muted, font = self.font)
 
-    mutating func record(event: Event) -> interop.Outcome[unit]:
+    func record(event: Event) -> interop.Outcome[unit]:
         if event.key == input.Key.escape:
             self.recording = false
-            self.box.value().invalidate()
+            Layout.invalidate()
             return result.success[unit](())
         if event.key == input.Key.backspace or event.key == input.Key.delete:
             self.binding = Shortcut()
             self.recording = false
-            self.box.value().invalidate()
+            Layout.invalidate()
             return self.changed.emit(())
         let code = (u16)event.key
         if event.key == input.Key.unknown or (code >= (u16)input.Key.left_control and code <= (u16)input.Key.right_super):
             return result.success[unit](())
         self.binding = Shortcut(key = event.key, primary = event.control or event.meta, shift = event.shift, alt = event.alt)
         self.recording = false
-        self.box.value().invalidate()
+        Layout.invalidate()
         return self.changed.emit(())
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled or not self.box.value().is_enabled():
             self.recording = false
             return result.success[unit](())
         if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
             self.box.value().request_focus()
             self.recording = true
-            self.box.value().invalidate()
+            Layout.invalidate()
             return result.success[unit](())
         if event.kind == input.EventKind.focus_lost:
             self.recording = false
-            self.box.value().invalidate()
+            Layout.invalidate()
             return result.success[unit](())
         if event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_left:
-            self.box.value().invalidate()
+            Layout.invalidate()
         if event.kind == input.EventKind.key_down and not event.repeated:
             if self.recording:
                 return self.record(event)
             if event.key == input.Key.enter or event.key == input.Key.space:
                 self.recording = true
-                self.box.value().invalidate()
+                Layout.invalidate()
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.font.release()
         self.changed.close()
         self.changed.release()

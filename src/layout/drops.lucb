@@ -4,7 +4,6 @@
 #
 #==============================================================================================
 
-
 ## The files of the drag in progress, or of the last drop, copied from the window
 ## (or given by a test); read through a drop area's `drop_path`. UI thread only.
 var drop_payload: str[16]
@@ -22,7 +21,7 @@ pub func set_drop_payload(paths: const str[]) -> !:
     for path in paths:
         if drop_payload_count >= drop_payload.length:
             break
-        let copy = try alloc u8[path.length + 1] in memory.heap
+        let copy = try new u8[path.length + 1] --- in memory.heap
         for index in 0..<path.length:
             copy[index] = path.bytes[index]
         copy[path.length] = 0
@@ -49,7 +48,7 @@ extend Tree:
 
     ## Route a drag: the area under the pointer gets entered/moved, the one it
     ## left gets left, and a drop goes to the area that takes it.
-    mutating func dispatch_drag(event: input.Event) -> interop.Outcome[unit]:
+    func dispatch_drag(event: input.Event) -> interop.Outcome[unit]:
         let target = 0 if event.kind == input.EventKind.drag_left else self.drop_at(event.x, event.y)
         if target != self.drop_hover:
             let left = self.leave_drop()
@@ -60,7 +59,7 @@ extend Tree:
                 let box = self.entries[index].box.value()
                 box.drop_accepted = true
                 box.drop_hovered = true
-                box.invalidate()
+                Layout.invalidate()
                 self.drop_hover = target
                 let entered = self.send_drag(index, input.EventKind.drag_entered, event.x, event.y)
                 if not entered.is_success():
@@ -76,13 +75,13 @@ extend Tree:
             if let index = self.find(self.drop_hover):
                 let box = self.entries[index].box.value()
                 box.drop_hovered = false
-                box.invalidate()
+                Layout.invalidate()
                 self.drop_hover = 0
                 if box.drop_accepted:
                     return self.send_drag(index, input.EventKind.drop, event.x, event.y)
         return result.success[unit](())
 
-    mutating func leave_drop() -> interop.Outcome[unit]:
+    func leave_drop() -> interop.Outcome[unit]:
         let found = self.find(self.drop_hover)
         if found == none:
             self.drop_hover = 0
@@ -90,7 +89,7 @@ extend Tree:
         let index = found else return result.success[unit](())
         let box = self.entries[index].box.value()
         box.drop_hovered = false
-        box.invalidate()
+        Layout.invalidate()
         self.drop_hover = 0
         return self.send_drag(index, input.EventKind.drag_left, 0.0, 0.0)
 

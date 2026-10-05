@@ -25,7 +25,7 @@ pub struct Checkbox: Widget:
     pub func init(text: str = "", checked: bool = false, font: interop.Reference[Font]? = none) -> !:
         var selected = try selected_font(font)
         errdefer selected.release()
-        discard(try selected.value().measure(text))
+        _ = try selected.value().measure(text)
         let box = try layout.make_layout()
         errdefer box.release()
         try box.value().set_shrink(vertical = 0.0)
@@ -46,28 +46,28 @@ pub struct Checkbox: Widget:
         return self.checked
 
     ## Set the state from code; no change signal.
-    pub mutating func set_checked(checked: bool):
+    pub func set_checked(checked: bool):
         if checked == self.checked:
             return
         self.checked = checked
-        self.box.value().invalidate()
+        Layout.invalidate()
 
-    pub mutating func set_text(text: str) -> !:
-        discard(try self.font.value().measure(text))
+    pub func set_text(text: str) -> !:
+        _ = try self.font.value().measure(text)
         let replacement = try interop.copy_text(text)
         let previous_caption = self.caption
         self.caption = replacement
         previous_caption.release()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## Called with the new state after each user toggle; `set_checked` does not
     ## call it.
     pub func on_change(callback: interop.Callback[bool, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
 
-    mutating func toggle() -> interop.Outcome[unit]:
+    func toggle() -> interop.Outcome[unit]:
         self.checked = not self.checked
-        self.box.value().invalidate()
+        Layout.invalidate()
         return self.changed.emit(self.checked)
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
@@ -76,7 +76,7 @@ pub struct Checkbox: Widget:
         let gap = self.font.value().advance() * 0.75 if self.caption.value.length > 0 else 0.0
         return result.success[Size](Size(box_side + gap + label, self.box.value().theme().row_height(self.font)))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -104,19 +104,19 @@ pub struct Checkbox: Widget:
             let x = box_side + self.font.value().advance() * 0.75
             try painter.text(self.caption.value, x, math.max(0.0, (size.height - self.font.value().height()) * 0.5), color = theme.foreground if enabled else theme.muted, font = self.font)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled or not self.box.value().is_enabled():
             return result.success[unit](())
         if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
             self.box.value().request_focus()
             return self.toggle()
         if event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_left:
-            self.box.value().invalidate()
+            Layout.invalidate()
         elif event.kind == input.EventKind.key_down and not event.repeated and (event.key == input.Key.space or event.key == input.Key.enter):
             return self.toggle()
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.font.release()
         self.changed.close()
         self.changed.release()

@@ -63,20 +63,20 @@ pub struct LineDiff:
 
     ## Diff the current text against the baseline, classifying every current line.
     ## `revision` is stored so the caller can skip recomputing an unchanged version.
-    pub mutating func compute(baseline: str, current: str, revision: i64) -> !:
+    pub func compute(baseline: str, current: str, revision: i64) -> !:
         var scan_a: Row[]
         var scan_b: Row[]
         let n = split_rows(baseline, scan_a)
         let m = split_rows(current, scan_b)
-        let a = try alloc Row[n if n > 0 else 1] in memory.heap
+        let a = try new Row[n if n > 0 else 1] --- in memory.heap
         defer free(a) in memory.heap
-        let b = try alloc Row[m if m > 0 else 1] in memory.heap
+        let b = try new Row[m if m > 0 else 1] --- in memory.heap
         defer free(b) in memory.heap
-        discard(split_rows(baseline, a))
-        discard(split_rows(current, b))
-        let marks = try alloc u8[m if m > 0 else 1] in memory.heap
+        _ = split_rows(baseline, a)
+        _ = split_rows(current, b)
+        let marks = try new u8[m if m > 0 else 1] --- in memory.heap
         errdefer free(marks) in memory.heap
-        let gaps = try alloc u8[m if m > 0 else 1] in memory.heap
+        let gaps = try new u8[m if m > 0 else 1] --- in memory.heap
         errdefer free(gaps) in memory.heap
         for i in 0..<m:
             marks[i] = 0
@@ -115,7 +115,7 @@ pub struct LineDiff:
                 changed = true
         self.changed = changed
 
-    pub mutating func clear():
+    pub func clear():
         self.free_data()
         self.count = 0
         self.tail = false
@@ -123,7 +123,7 @@ pub struct LineDiff:
         self.changed = false
         self.revision = -1
 
-    mutating func free_data():
+    func free_data():
         if self.marks.length > 0:
             free(self.marks) in memory.heap
             free(self.gaps) in memory.heap
@@ -132,7 +132,7 @@ pub struct LineDiff:
         self.marks = marks
         self.gaps = gaps
 
-    pub mutating func close():
+    pub func close():
         self.free_data()
 
 ## Split `text` into line rows with a digest of each line's bytes, or count the
@@ -176,10 +176,10 @@ func fill_middle(a: const Row[], b: const Row[], at: str, bt: str, offset: usize
             marks[offset + j] = (u8)ChangeKind.modified
         return
     let max = (i64)(n + m)
-    let trace = try alloc i32[(usize)((distance + 1) * (distance + 1))] in memory.heap
+    let trace = try new i32[(usize)((distance + 1) * (distance + 1))] --- in memory.heap
     defer free(trace) in memory.heap
     try myers_trace(a, b, at, bt, distance, trace, max)
-    let ops = try alloc u8[n + m + 1] in memory.heap
+    let ops = try new u8[n + m + 1] --- in memory.heap
     defer free(ops) in memory.heap
     let steps = backtrack(a, b, distance, trace, ops, max)
     if steps > 1:
@@ -224,7 +224,7 @@ func myers_distance(a: const Row[], b: const Row[], at: str, bt: str, cap: i64) 
     let n = (i64)a.length
     let m = (i64)b.length
     let max = n + m
-    let v = try alloc i32[(usize)(2 * max + 1)] in memory.heap
+    let v = try new i32[(usize)(2 * max + 1)] --- in memory.heap
     defer free(v) in memory.heap
     for i in 0..<(usize)(2 * max + 1):
         v[i] = 0
@@ -257,7 +257,7 @@ func myers_distance(a: const Row[], b: const Row[], at: str, bt: str, cap: i64) 
 func myers_trace(a: const Row[], b: const Row[], at: str, bt: str, distance: i64, trace: i32[], max: i64) -> !:
     let n = (i64)a.length
     let m = (i64)b.length
-    let v = try alloc i32[(usize)(2 * max + 1)] in memory.heap
+    let v = try new i32[(usize)(2 * max + 1)] --- in memory.heap
     defer free(v) in memory.heap
     for i in 0..<(usize)(2 * max + 1):
         v[i] = 0

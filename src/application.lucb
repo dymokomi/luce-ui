@@ -85,7 +85,7 @@ pub struct Application:
 
     ## Present every frame and cap the loop to `fps` (0 is uncapped). This is a
     ## run-loop mode, not a game engine: the application still owns simulation.
-    pub mutating func set_game(game: bool):
+    pub func set_game(game: bool):
         self.game = game
         if game:
             self.dirty = true
@@ -93,7 +93,7 @@ pub struct Application:
     pub func is_game() -> bool:
         return self.game
 
-    pub mutating func set_fps(fps: f64) -> !:
+    pub func set_fps(fps: f64) -> !:
         try check_fps(fps)
         self.target_fps = fps
 
@@ -101,7 +101,7 @@ pub struct Application:
         return self.target_fps
 
     ## Applied on the next run, or immediately while the native window exists.
-    pub mutating func set_fullscreen(enabled: bool) -> !:
+    pub func set_fullscreen(enabled: bool) -> !:
         try self.check()
         self.fullscreen = enabled
         if self.running:
@@ -113,39 +113,39 @@ pub struct Application:
                 recover self.fullscreen
         return self.fullscreen
 
-    mutating func begin_operation() -> !:
+    func begin_operation() -> !:
         try self.check()
         if self.operating:
             error(result.busy, "layout, drawing and input dispatch cannot reenter themselves")
         self.operating = true
 
-    mutating func end_operation():
+    func end_operation():
         self.operating = false
 
     ## Request that the next loop iteration present a frame, for a change that no
     ## input event announced — a timer, a background result, or a script mutation.
-    pub mutating func invalidate():
+    pub func invalidate():
         self.dirty = true
 
     ## Run a callback once, `seconds` from now, on the main loop. A UI change it
     ## makes is presented on its own, since mutating a widget marks the tree dirty.
-    pub mutating func after(seconds: f64, callback: interop.Callback[unit, unit]) -> i64!:
+    pub func after(seconds: f64, callback: interop.Callback[unit, unit]) -> i64!:
         try self.check()
         return try self.timers.after(seconds, callback)
 
     ## Run a callback every `seconds` on the main loop, until it is canceled. Drives
     ## periodic work — polling a file, checking a background task — without spinning.
-    pub mutating func every(seconds: f64, callback: interop.Callback[unit, unit]) -> i64!:
+    pub func every(seconds: f64, callback: interop.Callback[unit, unit]) -> i64!:
         try self.check()
         return try self.timers.every(seconds, callback)
 
     ## Run a callback on the next serviced turn, to defer work back to the main loop.
-    pub mutating func post(callback: interop.Callback[unit, unit]) -> i64!:
+    pub func post(callback: interop.Callback[unit, unit]) -> i64!:
         try self.check()
         return try self.timers.post(callback)
 
     ## Stop a scheduled callback by the handle after/every/post returned.
-    pub mutating func cancel(id: i64):
+    pub func cancel(id: i64):
         self.timers.cancel(id)
 
     ## Frame callbacks receive elapsed seconds since the preceding iteration.
@@ -155,7 +155,7 @@ pub struct Application:
 
     ## Returning false keeps the native window open, for example while unsaved
     ## documents await an explicit Save or Discard action in the application.
-    pub mutating func set_close_handler(callback: interop.Callback[unit, bool]) -> !:
+    pub func set_close_handler(callback: interop.Callback[unit, bool]) -> !:
         try self.check()
         let replacement = callback.clone()
         # Replace, then release: a release can run the cycle collector, which traces this.
@@ -166,7 +166,7 @@ pub struct Application:
 
     ## Recoverable input errors can be reported without discarding an editing
     ## session. Without a handler, run preserves its normal failure behavior.
-    pub mutating func set_error_handler(callback: interop.Callback[str, unit]) -> !:
+    pub func set_error_handler(callback: interop.Callback[str, unit]) -> !:
         try self.check()
         let replacement = callback.clone()
         let previous = self.error_handler
@@ -176,7 +176,7 @@ pub struct Application:
 
     ## Replace the registered commands whose shortcuts `dispatch` and `run` match
     ## before the widget tree sees a key.
-    pub mutating func set_commands(commands: const interop.Reference[Command][]) -> !:
+    pub func set_commands(commands: const interop.Reference[Command][]) -> !:
         try self.check()
         try self.commands.set(commands)
 
@@ -203,17 +203,17 @@ pub struct Application:
     pub func command(id: str) -> interop.Reference[Command]?:
         return self.commands.find(id)
 
-    pub mutating func set_theme(theme: Theme) -> !:
+    pub func set_theme(theme: Theme) -> !:
         try self.check()
         try self.tree.set_theme(theme)
 
-    pub mutating func focus(target: interop.Reference[layout.Layout]) -> !:
+    pub func focus(target: interop.Reference[layout.Layout]) -> !:
         try self.check()
         self.tree.focus_layout(target)
 
     ## The cursor the widget under the pointer (or the capturing widget) asks for,
     ## after refreshing the layout.
-    pub mutating func cursor() -> input.Cursor!:
+    pub func cursor() -> input.Cursor!:
         try self.begin_operation()
         defer self.end_operation()
         let refreshed = self.tree.refresh()
@@ -221,11 +221,11 @@ pub struct Application:
         try refreshed.get()
         return try self.tree.cursor()
 
-    mutating func update_cursor(host: window.Window) -> !:
+    func update_cursor(host: window.Window) -> !:
         try host.set_cursor(try self.cursor())
 
     ## Arrange the widget tree for a window of this size.
-    pub mutating func layout(width: f64, height: f64) -> interop.Outcome[unit]:
+    pub func layout(width: f64, height: f64) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer self.end_operation()
@@ -234,7 +234,7 @@ pub struct Application:
     ## Portable entry points allow embedding and deterministic input/drawing tests.
     ## An event with `cancelled` set becomes focus loss; otherwise command
     ## shortcuts see the event first (unless a popup is open), then the tree.
-    pub mutating func dispatch(event: Event) -> interop.Outcome[unit]:
+    pub func dispatch(event: Event) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer self.end_operation()
@@ -250,7 +250,7 @@ pub struct Application:
                                                                                              control = event.control, alt = event.alt, super = event.meta), codepoint = (u32)event.codepoint,
                                       scroll_x = event.scroll_x, scroll_y = event.scroll_y, scroll_unit = event.scroll_unit), false)
 
-    mutating func dispatch_native(event: input.Event) -> interop.Outcome[unit]:
+    func dispatch_native(event: input.Event) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer self.end_operation()
@@ -258,7 +258,7 @@ pub struct Application:
 
     ## `native` events come from the window; the others from `dispatch`, whose
     ## drags carry the files given to `set_drop_paths`.
-    mutating func route(event: input.Event, native: bool) -> interop.Outcome[unit]:
+    func route(event: input.Event, native: bool) -> interop.Outcome[unit]:
         if not self.tree.captured_move(event):
             let arranged = self.tree.refresh()
             if not arranged.is_success():
@@ -295,7 +295,7 @@ pub struct Application:
     ## Files dragged from another application: the window's paths become what the
     ## drop areas read, the tree routes the drag, and the window learns whether a
     ## drop would be taken so the OS can say so.
-    mutating func route_drag(event: input.Event, native: bool) -> interop.Outcome[unit]:
+    func route_drag(event: input.Event, native: bool) -> interop.Outcome[unit]:
         if event.kind == input.EventKind.drag_entered and native and self.running:
             let paths = self.session_host.drop_paths() catch failure:
                 return result.failure[unit](failure.code, failure.message)
@@ -317,7 +317,7 @@ pub struct Application:
 
     ## Arrange the tree at the target's size and draw it into the target. The
     ## caller acquires and presents the frame.
-    pub mutating func render(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func render(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer self.end_operation()
@@ -334,7 +334,7 @@ pub struct Application:
     ## Repaint one frame at the current window size during a live resize, when the OS
     ## modal resize loop starves the event pump. Best effort: reentrancy or a
     ## transient surface fault simply leaves the last frame until the loop resumes.
-    mutating func draw_resized(surface: gpu.Surface*) -> interop.Outcome[unit]:
+    func draw_resized(surface: gpu.Surface*) -> interop.Outcome[unit]:
         if not self.running:
             return result.success[unit](())
         let frame = surface.frame() catch failure:
@@ -347,15 +347,15 @@ pub struct Application:
         if not rendered.is_success():
             return rendered
         rendered.release()
-        discard(frame.value().present(self.tree.theme().background) catch failure:
-            return result.failure[unit](failure.code, failure.message))
+        _ = frame.value().present(self.tree.theme().background) catch failure:
+            return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
     ## Open the window and GPU surface and drive the loop until `stop`, `close` or
     ## an allowed close request. A positive `frame_limit` stops after that many
     ## iterations and never blocks waiting for input, for deterministic tests; 0
     ## runs until stopped. Fails when the application is already running.
-    pub mutating func run(frame_limit: i64 = 0) -> interop.Outcome[unit]:
+    pub func run(frame_limit: i64 = 0) -> interop.Outcome[unit]:
         self.check() catch failure:
             return result.failure[unit](failure.code, failure.message)
         if self.running:
@@ -366,7 +366,7 @@ pub struct Application:
         # name and version, report crashes under the window title.
         if not core.crash_reports_enabled():
             crash.enable(self.title.value) catch failure:
-                discard(failure)
+                _ = failure
         self.session_host = window.Window.open(window.Options(title = self.title.value, width = (u32)self.width, height = (u32)self.height, fullscreen = self.fullscreen)) catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer self.session_host.destroy()
@@ -477,10 +477,10 @@ pub struct Application:
                     # A widget that could not draw (a document too big for some pass)
                     # is reported, not fatal: the app and its unsaved work go on.
                     let handler = self.error_handler else return rendered
-                    let digest = self.failure_digest(rendered)
+                    let digest = Application.failure_digest(rendered)
                     if digest != self.render_failure:
                         self.render_failure = digest
-                        let reported = self.report_input_failure(rendered, handler)
+                        let reported = Application.report_input_failure(rendered, handler)
                         if not reported.is_success():
                             return reported
                         reported.release()
@@ -490,11 +490,11 @@ pub struct Application:
                 self.update_cursor(self.session_host) catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 var resized = false
-                discard(frame.value().present(self.tree.theme().background) catch failure:
+                _ = frame.value().present(self.tree.theme().background) catch failure:
                     if failure.code != gpu.frame_resized:
                         return result.failure[unit](failure.code, failure.message)
                     resized = true
-                    recover gpu.PresentResult.skipped)
+                    recover gpu.PresentResult.skipped
                 self.dirty = resized
                 self.last_epoch = epoch_now
                 self.last_render = moment
@@ -507,22 +507,22 @@ pub struct Application:
 
     ## A digest of a failed outcome's message; never 0.
     func failure_digest(outcome: interop.Outcome[unit]) -> u64:
-        discard(outcome.get() catch failure:
+        _ = outcome.get() catch failure:
             var digest: u64 = 1469598103934665603
             for byte in failure.message.bytes:
                 digest = (digest ^ (u64)byte) *% 1099511628211
-            return digest if digest != 0 else 1)
+            return digest if digest != 0 else 1
         return 1
 
     func report_input_failure(outcome: interop.Outcome[unit], handler: interop.Callback[str, unit]) -> interop.Outcome[unit]:
-        discard(outcome.get() catch failure:
-            return handler.invoke(failure.message))
+        _ = outcome.get() catch failure:
+            return handler.invoke(failure.message)
         return result.success[unit](())
 
     ## Apply one event: request a close (honoring the close handler), re-layout on a
     ## resize, or dispatch it to the tree — routing a dispatch failure to the error
     ## handler when one is set. Every event marks the frame dirty so it is presented.
-    mutating func handle_event(host: window.Window, event: input.Event) -> interop.Outcome[unit]:
+    func handle_event(host: window.Window, event: input.Event) -> interop.Outcome[unit]:
         self.dirty = true
         if event.kind == input.EventKind.close_requested:
             if let handler = self.close_handler:
@@ -544,7 +544,7 @@ pub struct Application:
             return dispatched
         if let handler = self.error_handler:
             # Copy the message into the handler before releasing its owner.
-            let notified = self.report_input_failure(dispatched, handler)
+            let notified = Application.report_input_failure(dispatched, handler)
             dispatched.release()
             return notified
         return dispatched
@@ -594,16 +594,16 @@ pub struct Application:
         return budget
 
     ## End the run loop after the current iteration; the application stays usable.
-    pub mutating func stop():
+    pub func stop():
         self.running = false
 
     ## Closing during a callback requests loop termination. Owned fields remain
     ## alive under the active invocation guard until that callback and run return.
-    pub mutating func close():
+    pub func close():
         self.stop()
         self.closed = true
 
-    mutating func dispose():
+    func dispose():
         self.close()
         if let handler = self.close_handler:
             self.close_handler = none

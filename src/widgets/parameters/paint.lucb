@@ -8,7 +8,7 @@ extend ParameterPanel:
     ## Place the rows for the width given, then draw those inside the part of
     ## the panel the window shows: in a scroll view, a hundred rows cost what
     ## the dozen showing do.
-    mutating func paint(target: interop.View[gpu.RenderTarget]) -> !:
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
         var painter = try Painter(target)
         defer painter.close()
         let size = try target.get().size()
@@ -27,7 +27,7 @@ extend ParameterPanel:
                 continue
             try self.paint_row(&painter, index, theme, size.width)
 
-    mutating func paint_row(painter: Painter*, index: usize, theme: Theme, width: f64) -> !:
+    func paint_row(painter: Painter*, index: usize, theme: Theme, width: f64) -> !:
         let row = self.rows[index]
         let enabled = self.enabled(index)
         let kind = row.kind
@@ -71,13 +71,13 @@ extend ParameterPanel:
             if kind == ParameterKind.path:
                 let browse = self.browse_rect(row)
                 let hot = enabled and self.hot_row == (i64)index and self.hot_part == part_browse
-                try self.paint_raised(painter, browse, theme, hot, self.press_row == (i64)index and self.press_part == part_browse)
+                try ParameterPanel.paint_raised(painter, browse, theme, hot, self.press_row == (i64)index and self.press_part == part_browse)
                 let icon = math.floor(browse.height * 0.62)
                 try icons.draw_named(painter, "folder", Rect(browse.x + math.floor((browse.width - icon) * 0.5), browse.y + math.floor((browse.height - icon) * 0.5), icon, icon), ink)
         elif kind == ParameterKind.button:
-            let rect = self.span_rect(row)
+            let rect = ParameterPanel.span_rect(row)
             let hot = enabled and self.hot_row == (i64)index and self.hot_part == part_button
-            try self.paint_raised(painter, rect, theme, hot, self.press_row == (i64)index and self.press_part == part_button)
+            try ParameterPanel.paint_raised(painter, rect, theme, hot, self.press_row == (i64)index and self.press_part == part_button)
             let caption = row.label.value
             let caption_width = text_width(self.font, caption)
             try painter.text(caption, rect.x + math.max(4.0, math.floor((rect.width - caption_width) * 0.5)), self.text_y(row), ink, self.font)
@@ -136,14 +136,14 @@ extend ParameterPanel:
 
     ## One numeric field: typed text while edited, else the value (as many
     ## decimals as fit) and its unit, muted.
-    mutating func paint_number(painter: Painter*, index: usize, component: i64, theme: Theme, enabled: bool) -> !:
+    func paint_number(painter: Painter*, index: usize, component: i64, theme: Theme, enabled: bool) -> !:
         let row = self.rows[index]
         let rect = self.field_rect(row, component)
         let editing = self.edit_row == (i64)index and self.edit_component == component
         let scrubbed = (self.scrubbing or self.laddering) and self.press_row == (i64)index and (self.press_part == part_label or self.press_component == component)
         let hot = enabled and self.hot_row == (i64)index and (self.hot_part == part_field or self.hot_part == part_label) and (self.hot_component == component or self.hot_part == part_label)
         let current = self.box.value().is_focused() and self.current == (i64)index and component == 0
-        try self.paint_well(painter, rect, theme, hot, editing or scrubbed, current)
+        try ParameterPanel.paint_well(painter, rect, theme, hot, editing or scrubbed, current)
         let inset = math.floor(self.font.value().advance() * 0.6)
         let y = self.text_y(row)
         if editing:
@@ -174,7 +174,7 @@ extend ParameterPanel:
     ## A thin track filled to the value in the accent, with a square knob.
     func paint_slider(painter: Painter*, row: Row, theme: Theme, enabled: bool) -> !:
         let rect = self.slider_rect(row)
-        let range = self.slider_range(row) else return
+        let range = ParameterPanel.slider_range(row) else return
         if rect.width < 12.0:
             return
         let knob = 6.0
@@ -209,10 +209,10 @@ extend ParameterPanel:
     ## The chosen item on a raised face, a chevron at the right.
     func paint_menu(painter: Painter*, index: usize, theme: Theme, enabled: bool) -> !:
         let row = self.rows[index]
-        let rect = self.span_rect(row)
+        let rect = ParameterPanel.span_rect(row)
         let hot = enabled and self.hot_row == (i64)index
         let open = self.popup_mode == popup_items and self.popup_row == (i64)index
-        try self.paint_raised(painter, rect, theme, hot or open, open)
+        try ParameterPanel.paint_raised(painter, rect, theme, hot or open, open)
         let chosen = parameter_text.item_of(row.items.value, row.values[0])
         let caption = parameter_text.item_label(row.items.value, (usize)chosen) if chosen >= 0 else ""
         let inset = math.floor(self.font.value().advance() * 0.6)
@@ -227,7 +227,7 @@ extend ParameterPanel:
         let editing = self.edit_row == (i64)index
         let hot = enabled and self.hot_row == (i64)index and self.hot_part == part_field
         let current = self.box.value().is_focused() and self.current == (i64)index
-        try self.paint_well(painter, rect, theme, hot, editing, current)
+        try ParameterPanel.paint_well(painter, rect, theme, hot, editing, current)
         let inset = math.floor(self.font.value().advance() * 0.6)
         let y = self.text_y(row)
         if editing:
@@ -248,7 +248,7 @@ extend ParameterPanel:
     ## A folder's heading: a chevron, open or closed, and its label.
     func paint_folder(painter: Painter*, index: usize, theme: Theme) -> !:
         let row = self.rows[index]
-        let rect = self.span_rect(row)
+        let rect = ParameterPanel.span_rect(row)
         let hot = self.hot_row == (i64)index
         try painter.rounded_rectangle(rect, theme.hover() if hot else theme.raised, math.min(theme.control_radius, 3.0))
         let cx = rect.x + 11.0

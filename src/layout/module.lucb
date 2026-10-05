@@ -111,9 +111,9 @@ pub interface Widget:
 
     func measure(available: Constraints) -> interop.Outcome[Size]
 
-    mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]
+    func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]
 
-    mutating func event(event: Event) -> interop.Outcome[unit]
+    func event(event: Event) -> interop.Outcome[unit]
 
 var serial: u64 = 0
 var revision: u64 = 0

@@ -63,28 +63,28 @@ pub struct Panel: Widget:
     pub func is_closable() -> bool:
         return self.closable
 
-    pub mutating func set_text(text: str) -> !:
+    pub func set_text(text: str) -> !:
         if text == self.caption.value: return
         let replacement = try interop.copy_text(text)
         let previous_caption = self.caption
         self.caption = replacement
         previous_caption.release()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
-    pub mutating func set_detail(detail: str) -> !:
+    pub func set_detail(detail: str) -> !:
         if detail == self.description.value: return
         let replacement = try interop.copy_text(detail)
         let previous_description = self.description
         self.description = replacement
         previous_description.release()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
-    pub mutating func set_icon(icon: IconKind):
+    pub func set_icon(icon: IconKind):
         if icon == self.symbol: return
         self.symbol = icon
-        self.box.value().invalidate()
+        Layout.invalidate()
 
-    pub mutating func set_content(content: interop.Interface[Widget]) -> !:
+    pub func set_content(content: interop.Interface[Widget]) -> !:
         if let bar = self.footer:
             try self.box.value().set_children([content, bar])
         else:
@@ -95,13 +95,13 @@ pub struct Panel: Widget:
             return result.failure[Size](failure.code, failure.message)
         return result.success[Size](size)
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         return result.success[unit](())
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.name.release()
         self.description.release()
         self.caption.release()

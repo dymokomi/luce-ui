@@ -125,7 +125,7 @@ pub struct Projection:
     pub func is_hidden(offset: usize) -> bool:
         return self.physical_row(self.visual_row(offset)) != self.row_at(offset)
 
-    pub mutating func refresh(document: const Document*, folds: const Folding*, wrap: usize = 0) -> !:
+    pub func refresh(document: const Document*, folds: const Folding*, wrap: usize = 0) -> !:
         let revision = (i64)document.version()
         let edited = self.text_version != revision
         if edited:
@@ -157,12 +157,12 @@ pub struct Projection:
         if wrap > 0 and (self.wrapped_text != self.text_version or self.wrapped_fold != self.fold_version or self.wrapped_columns_for != wrap):
             try self.build_wrapped(document, folds, wrap)
 
-    mutating func build_wrapped(document: const Document*, folds: const Folding*, wrap: usize) -> !:
+    func build_wrapped(document: const Document*, folds: const Folding*, wrap: usize) -> !:
         var empty: Visual[]
         let total = self.lay_wrapped(document, folds, wrap, empty)
-        let buffer = try alloc Visual[total if total > 0 else 1] in memory.heap
+        let buffer = try new Visual[total if total > 0 else 1] --- in memory.heap
         errdefer free(buffer) in memory.heap
-        discard(self.lay_wrapped(document, folds, wrap, buffer))
+        _ = self.lay_wrapped(document, folds, wrap, buffer)
         if self.wrapped.length > 0:
             free(self.wrapped) in memory.heap
         self.wrapped = buffer
@@ -202,7 +202,7 @@ pub struct Projection:
                         break
         return n
 
-    mutating func update_lines(document: const Document*) -> !:
+    func update_lines(document: const Document*) -> !:
         let change = document.last_change()
         let incremental = self.text_version >= 0 and change.version == self.text_version + 1
         let first = self.row_at((usize)change.start) if incremental else 0
@@ -220,9 +220,9 @@ pub struct Projection:
             if document.scalar(index) == 10:
                 changed += 1
         let count = first + changed + self.lines.length - suffix
-        let lines = try alloc Line[count] in memory.heap
+        let lines = try new Line[count] --- in memory.heap
         errdefer free(lines) in memory.heap
-        let visible = try alloc usize[count] in memory.heap
+        let visible = try new usize[count] --- in memory.heap
         for index in 0..<first:
             lines[index] = self.lines[index]
         var row = first
@@ -249,7 +249,7 @@ pub struct Projection:
         self.visible = visible
         self.text_version = (i64)document.version()
 
-    mutating func free_lines():
+    func free_lines():
         if self.lines.length > 0:
             free(self.lines) in memory.heap
             free(self.visible) in memory.heap
@@ -258,7 +258,7 @@ pub struct Projection:
         self.lines = lines
         self.visible = visible
 
-    pub mutating func close():
+    pub func close():
         self.free_lines()
         if self.wrapped.length > 0:
             free(self.wrapped) in memory.heap

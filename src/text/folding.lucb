@@ -42,15 +42,15 @@ pub struct Folding:
                 high = middle
         return low if low < self.count and self.items[low].header == header else none
 
-    pub mutating func replace(ranges: const FoldRange[], document: const Document*) -> !:
+    pub func replace(ranges: const FoldRange[], document: const Document*) -> !:
         if ranges.length > 65536:
             error(result.limit, "an editor supports at most 65536 fold ranges")
         var copied: Fold[]
         var stack: usize[]
         if ranges.length > 0:
-            copied = try alloc Fold[ranges.length] in memory.heap
+            copied = try new Fold[ranges.length] --- in memory.heap
             errdefer free(copied) in memory.heap
-            stack = try alloc usize[ranges.length] in memory.heap
+            stack = try new usize[ranges.length] --- in memory.heap
         defer release_stack(stack)
         var published = false
         defer discard_copy(copied, &published)
@@ -84,18 +84,18 @@ pub struct Folding:
         self.revision += 1
         published = true
 
-    pub mutating func set(header: usize, collapsed: bool) -> bool:
+    pub func set(header: usize, collapsed: bool) -> bool:
         let index = self.at(header) else return false
         self.items[index].collapsed = collapsed
         self.revision += 1
         return true
 
-    pub mutating func set_all(collapsed: bool):
+    pub func set_all(collapsed: bool):
         for index in 0..<self.count:
             self.items[index].collapsed = collapsed
         self.revision += 1
 
-    pub mutating func reveal(offset: usize, include_end: bool = false):
+    pub func reveal(offset: usize, include_end: bool = false):
         for index in 0..<self.count:
             let fold = &self.items[index]
             if fold.collapsed and offset >= fold.hidden and (offset < fold.end or (include_end and offset == fold.end)):
@@ -104,7 +104,7 @@ pub struct Folding:
 
     ## Header edits invalidate a fold. Other edits transform its bounds before
     ## the language service publishes the next validated range set.
-    pub mutating func transform(change: TextChange):
+    pub func transform(change: TextChange):
         var count: usize = 0
         let delta = change.new_end - change.old_end
         for fold in self.values():
@@ -127,7 +127,7 @@ pub struct Folding:
         self.count = count
         self.revision += 1
 
-    pub mutating func close():
+    pub func close():
         if self.items.length > 0:
             free(self.items) in memory.heap
         var empty: Fold[]

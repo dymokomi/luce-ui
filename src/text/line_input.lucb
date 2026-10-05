@@ -36,7 +36,7 @@ pub struct LineInput:
         if not self.masked:
             return try self.document.text(start, end)
         let count = end - start if end > start else 0
-        let bullets = try alloc u8[count * 3] in memory.heap
+        let bullets = try new u8[count * 3] --- in memory.heap
         defer free(bullets) in memory.heap
         for at in 0..<count:
             bullets[at * 3] = (u8)0xE2
@@ -59,13 +59,13 @@ pub struct LineInput:
     pub func text() -> interop.Owned[str]!:
         return try self.document.text()
 
-    pub mutating func set_text(text: str) -> !:
-        discard(try validate(text))
+    pub func set_text(text: str) -> !:
+        _ = try validate(text)
         try self.document.set_text(text)
         try self.document.select(0, self.document.length())
         self.dragging = false
 
-    pub mutating func event(event: Event) -> bool!:
+    pub func event(event: Event) -> bool!:
         let before = self.document.version()
         let command = event.control or event.meta
         if event.cancelled:
@@ -100,7 +100,7 @@ pub struct LineInput:
                 defer text.release()
                 # Pasted text is made one line first: a path copied with its line
                 # break (PowerShell's Set-Clipboard adds one) still pastes.
-                let line = try alloc u8[text.value.length] in memory.heap
+                let line = try new u8[text.value.length] --- in memory.heap
                 defer free(line) in memory.heap
                 let pasted = (str)line[..<single_line(text.value, line)]
                 let scalars = try validate(pasted)
@@ -108,7 +108,7 @@ pub struct LineInput:
                     error(result.limit, "single-line input is limited to 1024 characters")
                 try self.document.insert(pasted)
             elif command and event.key == input.Key.z:
-                discard(try self.document.redo() if event.shift else try self.document.undo())
+                _ = try self.document.redo() if event.shift else try self.document.undo()
             elif event.key == input.Key.backspace or event.key == input.Key.delete:
                 try editing.erase(&self.document, event.key == input.Key.backspace, command or event.alt)
             elif event.key == input.Key.home:
@@ -130,7 +130,7 @@ pub struct LineInput:
                 try editing.move(&self.document, self.document.last() if not event.shift and self.document.first() != self.document.last() else offset, event.shift)
         return before != self.document.version()
 
-    pub mutating func pointer(event: Event, font: interop.Reference[Font], x: f64, y: f64, width: f64, height: f64) -> !:
+    pub func pointer(event: Event, font: interop.Reference[Font], x: f64, y: f64, width: f64, height: f64) -> !:
         if event.kind == input.EventKind.pointer_up or event.cancelled:
             self.dragging = false
             return
@@ -189,7 +189,7 @@ pub struct LineInput:
         try painter.text(text.value, x, y, theme.foreground, font)
         try painter.rectangle(gpu.Rect(x + (f64)self.span(start, caret) * advance, y, 1.0, font.value().height()), theme.accent)
 
-    pub mutating func close():
+    pub func close():
         self.document.close()
 
 ## How many cells a field `width` points wide shows, keeping one for the caret.
@@ -280,7 +280,7 @@ test "a masked input gives every scalar one cell and copies nothing":
     assert(shown.value == "•••••")
     try line.document.select(0, 5)
     # Copy and cut leave the text where it is; the clipboard is not touched.
-    discard(try line.event(Event(kind = input.EventKind.key_down, key = input.Key.x, meta = true)))
+    _ = try line.event(Event(kind = input.EventKind.key_down, key = input.Key.x, meta = true))
     let kept = try line.text()
     defer kept.release()
     assert(kept.value == "田中abc")

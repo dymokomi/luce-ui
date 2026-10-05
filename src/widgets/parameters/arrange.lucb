@@ -44,7 +44,7 @@ extend ParameterPanel:
             if kind == ParameterKind.folder:
                 y += (4.0 if y > self.margin * 0.5 else 0.0) + self.folder_height() + line_gap
             elif kind == ParameterKind.separator:
-                y += self.separator_height()
+                y += ParameterPanel.separator_height()
             else:
                 y += self.row_height() + line_gap
             previous = (i64)index
@@ -81,7 +81,7 @@ extend ParameterPanel:
 
     ## Place every shown row for a panel `width` wide: its line, height and
     ## the span its control takes. Joined rows share a line and its span.
-    mutating func arrange(width: f64):
+    func arrange(width: f64):
         if not self.stale and width == self.placed_width:
             return
         self.stale = false
@@ -116,11 +116,11 @@ extend ParameterPanel:
                 y += self.folder_height() + line_gap
             elif kind == ParameterKind.separator:
                 self.rows[index].y = y
-                self.rows[index].height = self.separator_height()
+                self.rows[index].height = ParameterPanel.separator_height()
                 self.rows[index].control_x = self.margin
                 self.rows[index].control_width = math.max(0.0, width - self.margin * 2.0)
                 self.rows[index].label_x = -1.0
-                y += self.separator_height()
+                y += ParameterPanel.separator_height()
             else:
                 line_y = y
                 members[0] = index
@@ -133,7 +133,7 @@ extend ParameterPanel:
     ## Share one line's control span among its `members`: toggles and buttons
     ## take what they need, the rest share what is left; every member after
     ## the first shows its label inline before its control.
-    mutating func place_line(members: const usize[], y: f64, width: f64):
+    func place_line(members: const usize[], y: f64, width: f64):
         let left = self.controls_left(width)
         let right = math.max(left + 20.0, width - self.margin)
         let advance = self.font.value().advance()

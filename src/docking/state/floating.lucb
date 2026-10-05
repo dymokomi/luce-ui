@@ -11,7 +11,7 @@
 
 extend State:
     ## Give the state its own reference, for the frames it makes.
-    pub mutating func set_owner(owner: interop.Reference[State]):
+    pub func set_owner(owner: interop.Reference[State]):
         if let previous = self.me: previous.release()
         self.me = interop.WeakReference[State](owner)
 
@@ -42,7 +42,7 @@ extend State:
         let window = self.floats[index]
         let top = self.height() + 1.0
         return gpu.Rect(window.x + float_border, window.y + top, math.max(0.0, window.width - float_border * 2.0),
-            math.max(0.0, window.height - top - float_border))
+                        math.max(0.0, window.height - top - float_border))
 
     ## The smallest window that holds the panel's content.
     func float_minimum(index: usize) -> Size:
@@ -61,7 +61,7 @@ extend State:
         let width = math.min(math.max(window.width, minimum.width), math.max(minimum.width, size.width))
         let height = math.min(math.max(window.height, minimum.height), math.max(minimum.height, size.height))
         return gpu.Rect(math.clamp(window.x, 0.0, math.max(0.0, size.width - width)),
-            math.clamp(window.y, 0.0, math.max(0.0, size.height - height)), width, height)
+                        math.clamp(window.y, 0.0, math.max(0.0, size.height - height)), width, height)
 
     ## The window a tab floats into when let go at `pointer`: about its pane's
     ## size, with the title under the pointer.
@@ -83,7 +83,7 @@ extend State:
         let height = size.height * 0.7
         return self.fitted(index, gpu.Rect((size.width - width) * 0.5, (size.height - height) * 0.5, width, height))
 
-    mutating func unstack(index: usize):
+    func unstack(index: usize):
         var kept: usize = 0
         for order in 0..<self.float_count:
             if self.stacking[order] != index:
@@ -91,19 +91,19 @@ extend State:
                 kept += 1
         self.float_count = kept
 
-    mutating func stack_on_top(index: usize):
+    func stack_on_top(index: usize):
         self.unstack(index)
         self.stacking[self.float_count] = index
         self.float_count += 1
 
     ## Bring a floating window to the front.
-    mutating func raise_window(index: usize) -> !:
+    func raise_window(index: usize) -> !:
         if self.float_count > 0 and self.stacking[self.float_count - 1] == index: return
         self.stack_on_top(index)
         try self.children()
         self.invalidate()
 
-    mutating func ensure_frame(index: usize) -> !:
+    func ensure_frame(index: usize) -> !:
         if self.frames[index] != none: return
         let me = self.me else error(result.invalid, "dynamic stack state has no owner")
         let owner = me.get() else error(result.invalid, "dynamic stack is closed")
@@ -111,7 +111,7 @@ extend State:
         self.frames[index] = try make_frame(owner, index)
 
     ## Float a docked panel in `window`, or move a floating one there.
-    pub mutating func make_floating(index: usize, window: gpu.Rect) -> !:
+    pub func make_floating(index: usize, window: gpu.Rect) -> !:
         self.cancel()
         if self.floating(index):
             self.floats[index] = self.fitted(index, window)
@@ -129,7 +129,7 @@ extend State:
 
     ## Add a panel that is not in the stack yet as a floating window: in
     ## `window`, or centered when none.
-    pub mutating func add_floating(panel: interop.Reference[Panel], window: gpu.Rect?) -> !:
+    pub func add_floating(panel: interop.Reference[Panel], window: gpu.Rect?) -> !:
         self.cancel()
         var slot: usize = 0
         for index in 1..<self.panels.length:
@@ -148,7 +148,7 @@ extend State:
         try self.select(slot)
 
     ## Dock a floating panel: `next` is the model with it already added.
-    mutating func dock(index: usize, next: Model) -> !:
+    func dock(index: usize, next: Model) -> !:
         self.unstack(index)
         errdefer self.stack_on_top(index)
         try self.children()
@@ -173,7 +173,7 @@ extend State:
     ## the title moves the window and, let go over a header or a pane's edge,
     ## docks it there; a double press on the title docks it with the active
     ## group; the border resizes it.
-    pub mutating func float_event(index: usize, event: Event, x: f64, y: f64) -> !:
+    pub func float_event(index: usize, event: Event, x: f64, y: f64) -> !:
         if event.cancelled:
             if self.gesture == Gesture.moving and self.float_pressed == index: self.floats[index] = self.float_origin
             self.gesture = Gesture.idle

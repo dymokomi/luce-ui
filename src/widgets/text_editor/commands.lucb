@@ -23,7 +23,7 @@ extend TextEditor:
     pub func can_redo() -> bool:
         return not self.read_only and self.document.can_redo()
 
-    pub mutating func select_all() -> !:
+    pub func select_all() -> !:
         try self.set_selection(0, self.length())
 
     ## Copy the selection to the clipboard; nothing without a selection.
@@ -38,7 +38,7 @@ extend TextEditor:
 
     ## Copy the selection and delete it. Does nothing when read-only or when
     ## nothing is selected.
-    pub mutating func cut() -> interop.Outcome[unit]:
+    pub func cut() -> interop.Outcome[unit]:
         if self.read_only or not self.has_selection():
             return result.success[unit](())
         self.copy() catch failure:
@@ -47,7 +47,7 @@ extend TextEditor:
 
     ## Replace the selection with the clipboard's text, newlines normalized. Does
     ## nothing when read-only.
-    pub mutating func paste() -> interop.Outcome[unit]:
+    pub func paste() -> interop.Outcome[unit]:
         if self.read_only:
             return result.success[unit](())
         let text = clipboard.read_text() catch failure:
@@ -93,7 +93,7 @@ extend TextEditor:
 
     ## Load new text: newlines are normalized, history is cleared, the caret goes
     ## to the start and scrolling resets. Notifies `on_change`.
-    pub mutating func set_text(text: str) -> interop.Outcome[unit]:
+    pub func set_text(text: str) -> interop.Outcome[unit]:
         let normalized = editing.normalize_lines(text) catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer normalized.release()
@@ -104,14 +104,14 @@ extend TextEditor:
         return self.notify_changed()
 
     ## Select scalar offsets `anchor` to `caret` and scroll the caret into view.
-    pub mutating func set_selection(anchor: i64, caret: i64) -> !:
+    pub func set_selection(anchor: i64, caret: i64) -> !:
         if anchor < 0 or caret < 0:
             error(result.invalid, "selection offsets must be nonnegative")
         # A programmatic selection interrupts any in-progress multi-click gesture.
         self.clicks = 0
         try self.document.select((usize)anchor, (usize)caret)
         try self.reveal_caret()
-        self.box.value().invalidate()
+        Layout.invalidate()
 
     ## The latest change to the text, for incremental reanalysis: the replaced
     ## range, the new end and the version it produced.
@@ -145,7 +145,7 @@ extend TextEditor:
 
     ## Replace the selection with `text` (newlines normalized) as one undoable
     ## edit. Unlike the other editing calls, this fails on a read-only editor.
-    pub mutating func insert(text: str) -> interop.Outcome[unit]:
+    pub func insert(text: str) -> interop.Outcome[unit]:
         if self.read_only:
             return result.failure[unit](result.invalid, "the text editor is read only")
         let normalized = editing.normalize_lines(text) catch failure:
@@ -157,7 +157,7 @@ extend TextEditor:
         return self.notify_changed() if before != self.document.version() else result.success[unit](())
 
     ## Undo the latest edit; nothing when read-only or there is none.
-    pub mutating func undo() -> interop.Outcome[unit]:
+    pub func undo() -> interop.Outcome[unit]:
         if self.read_only:
             return result.success[unit](())
         let changed = self.document.undo() catch failure:
@@ -165,14 +165,14 @@ extend TextEditor:
         return self.notify_changed() if changed else result.success[unit](())
 
     ## Redo the next undone edit; nothing when read-only or there is none.
-    pub mutating func redo() -> interop.Outcome[unit]:
+    pub func redo() -> interop.Outcome[unit]:
         if self.read_only:
             return result.success[unit](())
         let changed = self.document.redo() catch failure:
             return result.failure[unit](failure.code, failure.message)
         return self.notify_changed() if changed else result.success[unit](())
 
-    mutating func notify_changed() -> interop.Outcome[unit]:
+    func notify_changed() -> interop.Outcome[unit]:
         self.highlights.transform(self.document.last_change())
         self.swatches.transform(self.document.last_change())
         self.folds.transform(self.document.last_change())
@@ -180,5 +180,5 @@ extend TextEditor:
         self.active_since = time.now()
         self.reveal_caret() catch failure:
             return result.failure[unit](failure.code, failure.message)
-        self.box.value().invalidate()
+        Layout.invalidate()
         return self.changed.emit(())

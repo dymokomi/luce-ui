@@ -54,9 +54,9 @@ pub struct TextPrompt: Widget:
     pub func on_submit(callback: interop.Callback[str, unit]) -> interop.Reference[interop.Connection]!:
         return try self.submitted.connect(callback)
 
-    pub mutating func open(title: str, text: str = "", accept: str = "OK", editable: bool = true) -> !:
-        discard(try self.font.value().measure(title))
-        discard(try self.font.value().measure(accept))
+    pub func open(title: str, text: str = "", accept: str = "OK", editable: bool = true) -> !:
+        _ = try self.font.value().measure(title)
+        _ = try self.font.value().measure(accept)
         let caption = try interop.copy_text(title)
         errdefer caption.release()
         let label = try interop.copy_text(accept)
@@ -85,7 +85,7 @@ pub struct TextPrompt: Widget:
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(600.0, self.row_height() * (4.0 if self.editable else 3.0)))
 
-    pub mutating func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
@@ -111,7 +111,7 @@ pub struct TextPrompt: Widget:
         try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.active_border)
         try painter.rectangle(gpu.Rect(y = size.height - 1.0, width = size.width, height = 1.0), theme.active_border)
 
-    mutating func submit() -> interop.Outcome[unit]:
+    func submit() -> interop.Outcome[unit]:
         let text = self.text.text() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer text.release()
@@ -119,7 +119,7 @@ pub struct TextPrompt: Widget:
         self.pressed = -1
         return self.submitted.emit(text.value)
 
-    pub mutating func event(event: Event) -> interop.Outcome[unit]:
+    pub func event(event: Event) -> interop.Outcome[unit]:
         if self.editable:
             let inset = self.box.value().theme().inset(self.font)
             self.text.pointer(event, self.font, inset, self.row_height(), self.box.value().bounds().width - inset * 2.0, self.row_height()) catch failure:
@@ -142,12 +142,12 @@ pub struct TextPrompt: Widget:
                     return self.submit()
                 self.box.value().set_visible(false)
         elif self.editable:
-            discard(self.text.event(event) catch failure:
-                return result.failure[unit](failure.code, failure.message))
-        self.box.value().invalidate()
+            _ = self.text.event(event) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+        Layout.invalidate()
         return result.success[unit](())
 
-    pub mutating func close():
+    pub func close():
         self.submitted.close()
         self.submitted.release()
         self.text.close()
