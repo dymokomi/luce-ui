@@ -2,7 +2,7 @@
 ## focus are deliberately absent, so the same commands work in other text controls.
 import interop
 import memory
-import strings
+from luce_std import collections
 from text.cells import grid
 from text.document import Document
 from text.style import Swatch, swatch_span
@@ -78,13 +78,13 @@ pub func newline(document: Document*) -> !:
     let indentation = try document.text(start, end)
     defer indentation.release()
     with memory.heap:
-        var value = try strings.Builder.create()
+        var value: collections.Buffer
         defer value.destroy()
-        try value.put("\n")
-        try value.put(indentation.value)
+        try value.put_text("\n")
+        try value.put_text(indentation.value)
         if position > start and document.scalar(position - 1) == 58:
-            try value.put("    ")
-        try document.insert(value.view())
+            try value.put_text("    ")
+        try document.insert(value.text())
 
 pub func indent(document: Document*, backwards: bool) -> !:
     let selected = document.first() != document.last()
@@ -101,7 +101,7 @@ pub func indent(document: Document*, backwards: bool) -> !:
     let original_anchor = document.anchor()
     let original_caret = document.caret()
     with memory.heap:
-        var value = try strings.Builder.create()
+        var value: collections.Buffer
         defer value.destroy()
         var row = start
         var first_removed: usize = 0
@@ -117,15 +117,15 @@ pub func indent(document: Document*, backwards: bool) -> !:
                 if row == start:
                     first_removed = content - row
             else:
-                try value.put("    ")
+                try value.put_text("    ")
             let line = try document.text(content, finish)
             defer line.release()
-            try value.put(line.value)
+            try value.put_text(line.value)
             if finish >= end:
                 break
-            try value.put("\n")
+            try value.put_text("\n")
             row = finish + 1
-        try document.replace(start, end, value.view())
+        try document.replace(start, end, value.text())
         let replacement_end = document.caret()
         if selected:
             try document.complete_selection(start, replacement_end)
@@ -191,18 +191,18 @@ func has_swatch(swatches: const Swatch[], offset: usize) -> bool:
 
 pub func normalize_lines(text: str) -> interop.Owned[str]!:
     with memory.heap:
-        var value = try strings.Builder.create(text.length)
+        var value: collections.Buffer
         defer value.destroy()
         var index: usize = 0
         while index < text.length:
             if text.bytes[index] == 13:
-                try value.put("\n")
+                try value.put_text("\n")
                 if index + 1 < text.length and text.bytes[index + 1] == 10:
                     index += 1
             else:
                 _ = try value.write(text.bytes[index..<index + 1])
             index += 1
-        return try interop.copy_text(value.view())
+        return try interop.copy_text(value.text())
 
 func whitespace(scalar: u32) -> bool:
     return scalar == 32 or scalar == 9 or scalar == 10 or scalar == 13
