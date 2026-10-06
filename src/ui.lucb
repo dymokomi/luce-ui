@@ -157,6 +157,12 @@ pub type TableColumn = table_view.TableColumn
 pub type TableCell = table_view.TableCell
 pub type CellAlign = table_view.CellAlign
 pub let table_view_type = table_view.table_view_type
+import widgets.thumbnail_grid
+pub type ThumbnailGrid = thumbnail_grid.ThumbnailGrid
+pub let thumbnail_grid_type = thumbnail_grid.thumbnail_grid_type
+## A color label's swatch (1–7: red, orange, yellow, green, blue, purple, grey).
+pub func label_color(label: i64) -> gpu.Color:
+    return thumbnail_grid.label_color((u8)label) if label >= 0 and label <= 7 else gpu.Color(0.0, 0.0, 0.0, 0.0)
 
 import text.document
 pub type TextChange = document.TextChange
