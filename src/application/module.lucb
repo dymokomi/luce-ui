@@ -57,8 +57,10 @@ pub struct Application:
     ## it here, in a window of its own, and ends: the program's own window never opens.
     pub func init(content: interop.Interface[Widget], title: str = "Luce", width: i64 = 800, height: i64 = 600, theme: Theme = Theme(), game: bool = false, fps: f64 = 70.0, fullscreen: bool = false) -> !:
         if not showing_crash:
-            if let report = crash.report_to_show():
-                show_crash_report(report)
+            let report = try crash.report_to_show()
+            if report.value != "":
+                show_crash_report(report.value)
+            report.release()
         if not thread.is_main():
             error(interop.wrong_thread, "UI applications require the main thread")
         if width < 1 or width > 10000 or height < 1 or height > 10000 or not utf8.valid(title.bytes):
