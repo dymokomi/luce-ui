@@ -135,6 +135,12 @@ extend ParameterPanel:
             values[0] = 0.0 if values[0] != 0.0 else 1.0
             try self.edit(index, values)
             return
+        if part == part_chip:
+            var values = self.rows[index].values
+            if component >= 0 and (f64)component != values[0]:
+                values[0] = (f64)component
+                try self.edit(index, values)
+            return
         if (part == part_field or part == part_label) and numeric(kind) and (event.control or event.meta):
             # Cmd/Ctrl-click puts the default back, as the number field does.
             try self.revert(index)

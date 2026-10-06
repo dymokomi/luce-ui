@@ -120,6 +120,10 @@ pub let hue_strip_type = hsb_field.hue_strip_type
 pub let shortcut_field_type = shortcut_field.shortcut_field_type
 pub let shaded_field_type = shaded_field.shaded_field_type
 pub let color_wheel_type = color_wheel.color_wheel_type
+## ColorWheel shapes: a hue ring around a triangle or a square, or a disc.
+pub let wheel_triangle = color_wheel.wheel_triangle
+pub let wheel_square = color_wheel.wheel_square
+pub let wheel_disc = color_wheel.wheel_disc
 pub let accordion_type = accordion.accordion_type
 pub let section_header_type = accordion.section_header_type
 pub let tabs_type = tabs.tabs_type

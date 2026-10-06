@@ -55,7 +55,8 @@ import icons
 ## `menu` a choice of `items`, `text` a line of text, `path` a file path with a
 ## browse button, `color` an RGB swatch with three fields, `button` an action,
 ## `separator` a rule, `folder` a collapsible heading over the rows after it,
-## and `info` read-only text.
+## `info` read-only text, and `swatches` a row of color chips choosing one of
+## `items` (`label=#RRGGBB` each; the value is the chip's index).
 pub enum ParameterKind as u8:
     number = 0
     integer = 1
@@ -69,6 +70,7 @@ pub enum ParameterKind as u8:
     separator = 9
     folder = 10
     info = 11
+    swatches = 12
 
 ## One parameter as the host describes it. Only `name` and `kind` are needed;
 ## every other field has a default. Texts are copied when the panel takes it.
@@ -99,6 +101,10 @@ pub struct ParameterSpec:
     pub var suffix: str = ""
     ## A slider beside the field (numbers and integers).
     pub var slider: bool = false
+    ## The slider's track as a gradient instead of a fill: sRGB stops, `|`
+    ## between them, spread evenly from the low end ("#3B7DD8|#FFFFFF|#E7A03F"
+    ## for a white balance's temperature); at most eight.
+    pub var gradient: str = ""
     ## A menu's items, `|` between them, each `label` or `label=value`.
     pub var items: str = ""
     ## A text or path's default, an info row's text.
@@ -135,6 +141,9 @@ struct Row:
     var hide_when: interop.Owned[str]
     var disable_when: interop.Owned[str]
     var components: i64
+    ## The slider's gradient stops (linear light) and how many there are.
+    var stops: gpu.Color[8]
+    var stop_count: usize
     var values: f64[4]
     var defaults: f64[4]
     var minimum: f64
@@ -177,6 +186,7 @@ let part_swatch: i64 = 7
 let part_button: i64 = 8
 let part_folder: i64 = 9
 let part_divider: i64 = 10
+let part_chip: i64 = 11
 
 ## Which popup is open for which row: none, a menu parameter's items, the context menu.
 let popup_none: i64 = 0
@@ -444,7 +454,8 @@ func make_row(spec: ParameterSpec) -> Row!:
                   decimals = 0 if spec.kind == ParameterKind.integer else spec.decimals,
                   slider = spec.slider, join = spec.join, linear = spec.linear, tag = spec.tag, resettable = spec.resettable,
                   hidden = false, disabled = false, hidden_when = false, disabled_when = false,
-                  folder = -1, open = spec.open, shown = false, y = 0.0, height = 0.0, control_x = 0.0, control_width = 0.0, label_x = -1.0)
+                  folder = -1, open = spec.open, shown = false, y = 0.0, height = 0.0, control_x = 0.0, control_width = 0.0, label_x = -1.0,
+                  stops = gradient_stops(spec.gradient), stop_count = stop_count(spec.gradient))
     errdefer release_row(row)
     row.label = try interop.copy_text(spec.label if spec.label.length > 0 else spec.name)
     row.suffix = try interop.copy_text(spec.suffix)
@@ -458,6 +469,54 @@ func make_row(spec: ParameterSpec) -> Row!:
         row.defaults[component] = row_clamp(row, row.defaults[component])
     row.values = row.defaults
     return row
+
+## The color of `#RRGGBB` (linear light), or none.
+pub func color_of_hex(text: str) -> gpu.Color?:
+    let bytes = text.bytes
+    if bytes.length != 7 or bytes[0] != '#':
+        return none
+    var channels: f64[3]
+    for channel in 0..<(usize)3:
+        var value: i64 = 0
+        for at in 0..<(usize)2:
+            let c = bytes[1 + channel * 2 + at]
+            let digit = (i64)(c - '0') if c >= '0' and c <= '9' else ((i64)(c - 'a') + 10 if c >= 'a' and c <= 'f' else ((i64)(c - 'A') + 10 if c >= 'A' and c <= 'F' else -1))
+            if digit < 0:
+                return none
+            value = value * 16 + digit
+        channels[channel] = transfer.srgb_decode((f64)value / 255.0)
+    return gpu.Color(channels[0], channels[1], channels[2])
+
+## The stops of a gradient spec, `|` between them, at most eight; malformed ones left out.
+func gradient_stops(text: str) -> gpu.Color[8]:
+    var out: gpu.Color[8] = ---
+    for at in 0..<(usize)8:
+        out[at] = gpu.Color()
+    var count: usize = 0
+    var first: usize = 0
+    let bytes = text.bytes
+    while first < bytes.length and count < 8:
+        var end = first
+        while end < bytes.length and bytes[end] != '|':
+            end += 1
+        if let color = color_of_hex((str)bytes[first..<end]):
+            out[count] = color
+            count += 1
+        first = end + 1
+    return out
+
+func stop_count(text: str) -> usize:
+    var count: usize = 0
+    var first: usize = 0
+    let bytes = text.bytes
+    while first < bytes.length and count < 8:
+        var end = first
+        while end < bytes.length and bytes[end] != '|':
+            end += 1
+        if color_of_hex((str)bytes[first..<end]) != none:
+            count += 1
+        first = end + 1
+    return count
 
 ## `value` as row `row` keeps it: inside the hard range, whole for integers,
 ## 0 or 1 for toggles.
@@ -515,3 +574,11 @@ func between(value: i64, low: i64, high: i64) -> i64:
     if value > high:
         return high
     return value
+
+test "gradient stops and swatch colors read #RRGGBB":
+    let white = color_of_hex("#FFFFFF") else trap("white did not parse")
+    assert(white.red > 0.999 and white.green > 0.999 and white.blue > 0.999)
+    let middle = color_of_hex("#808080") else trap("grey did not parse")
+    assert(math.abs(middle.red - transfer.srgb_decode(128.0 / 255.0)) < 1.0e-9)
+    assert(color_of_hex("808080") == none and color_of_hex("#80808") == none and color_of_hex("#80Z080") == none)
+    assert(stop_count("#4A7FD6|#F0F0F0|#E8A93C") == 3 and stop_count("") == 0 and stop_count("#4A7FD6|nope|#E8A93C") == 2)

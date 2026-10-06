@@ -106,6 +106,14 @@ extend ParameterPanel:
         try replace_text(&self.rows[(usize)index].items, items)
         self.box.value().invalidate()
 
+    ## Show the slider's track as `gradient` from now on (see ParameterSpec.gradient;
+    ## "" for the plain track).
+    pub func set_gradient(index: i64, gradient: str) -> !:
+        _ = try self.row(index)
+        self.rows[(usize)index].stops = gradient_stops(gradient)
+        self.rows[(usize)index].stop_count = stop_count(gradient)
+        self.box.value().invalidate()
+
     ## Change the default a reset puts back, and the changed marker compares with.
     pub func set_default(index: i64, component: i64, value: f64) -> !:
         let row = try self.row(index)

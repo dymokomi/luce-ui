@@ -292,6 +292,14 @@ pub func item_label(items: str, index: usize) -> str:
         at += 1
     return trimmed((str)whole.bytes[..<at])
 
+## Item `index`'s text after `=` (a swatch's `#RRGGBB`), or "".
+pub func item_label_value(items: str, index: usize) -> str:
+    let whole = item(items, index)
+    var at: usize = 0
+    while at < whole.length and whole.bytes[at] != '=':
+        at += 1
+    return trimmed((str)whole.bytes[at + 1..]) if at < whole.length else ""
+
 ## Item `index`'s value: the number after `=`, or else its index.
 pub func item_value(items: str, index: usize) -> f64:
     let whole = item(items, index)

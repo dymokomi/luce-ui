@@ -83,6 +83,8 @@ extend ParameterPanel:
             try painter.text(caption, rect.x + math.max(4.0, math.floor((rect.width - caption_width) * 0.5)), self.text_y(row), ink, self.font)
         elif kind == ParameterKind.info:
             try self.paint_fitted(painter, row.text.value, row.control_x, self.text_y(row), row.control_width, ink)
+        elif kind == ParameterKind.swatches:
+            try self.paint_chips(painter, index, theme, enabled)
 
     ## The label right-aligned against the column's edge (inline for a joined
     ## row), cut with an ellipsis when the column is narrower.
@@ -171,7 +173,8 @@ extend ParameterPanel:
             return (row.minimum, row.maximum)
         return none
 
-    ## A thin track filled to the value in the accent, with a square knob.
+    ## A thin track filled to the value in the accent, with a square knob; a
+    ## row with a gradient shows it as a band instead, under the knob.
     func paint_slider(painter: Painter*, row: Row, theme: Theme, enabled: bool) -> !:
         let rect = self.slider_rect(row)
         let range = ParameterPanel.slider_range(row) else return
@@ -181,12 +184,52 @@ extend ParameterPanel:
         let fraction = math.clamp((row.values[0] - range.0) / (range.1 - range.0), 0.0, 1.0)
         let middle = rect.y + math.floor(rect.height * 0.5) - 1.0
         let travel = rect.width - knob
-        try painter.rectangle(Rect(rect.x, middle, rect.width, 2.0), theme.border)
-        try painter.rectangle(Rect(rect.x, middle, math.floor(travel * fraction) + knob * 0.5, 2.0), theme.accent if enabled else theme.muted)
+        if row.stop_count >= 2:
+            try self.paint_band(painter, row, Rect(rect.x, middle - 2.0, rect.width, 6.0), enabled)
+        else:
+            try painter.rectangle(Rect(rect.x, middle, rect.width, 2.0), theme.border)
+            try painter.rectangle(Rect(rect.x, middle, math.floor(travel * fraction) + knob * 0.5, 2.0), theme.accent if enabled else theme.muted)
         let knob_height = math.min(rect.height - 8.0, 12.0)
         let hot = self.hot_row >= 0 and self.rows[(usize)self.hot_row].y == row.y and self.hot_part == part_slider
-        try painter.rectangle(Rect(rect.x + math.floor(travel * fraction), rect.y + math.floor((rect.height - knob_height) * 0.5), knob, knob_height),
-                              (theme.accent if hot else theme.foreground) if enabled else theme.muted)
+        let knob_rect = Rect(rect.x + math.floor(travel * fraction), rect.y + math.floor((rect.height - knob_height) * 0.5), knob, knob_height)
+        if row.stop_count >= 2:
+            # On a colored band the knob needs an edge to read.
+            try painter.rectangle(Rect(knob_rect.x - 1.0, knob_rect.y - 1.0, knob_rect.width + 2.0, knob_rect.height + 2.0), theme.background)
+        try painter.rectangle(knob_rect, (theme.accent if hot else theme.foreground) if enabled else theme.muted)
+
+    ## A row's gradient across `band`, its stops evenly spread.
+    func paint_band(painter: Painter*, row: Row, band: Rect, enabled: bool) -> !:
+        let segments = row.stop_count - 1
+        var points: Point[42] = ---
+        var colors: gpu.Color[42] = ---
+        for segment in 0..<segments:
+            let left = band.x + band.width * (f64)segment / (f64)segments
+            let right = band.x + band.width * (f64)(segment + 1) / (f64)segments
+            let a = row.stops[segment]
+            let b = row.stops[segment + 1]
+            let corners: Point[6] = [Point(left, band.y), Point(right, band.y), Point(right, band.y + band.height),
+                                     Point(left, band.y), Point(right, band.y + band.height), Point(left, band.y + band.height)]
+            let tints: gpu.Color[6] = [a, b, b, a, b, a]
+            for corner in 0..<(usize)6:
+                points[segment * 6 + corner] = corners[corner]
+                colors[segment * 6 + corner] = tints[corner]
+        try painter.shaded_mesh(points[..<segments * 6], colors[..<segments * 6], 1.0 if enabled else 0.4)
+
+    ## A swatches row: one chip per item across the span, the chosen one ringed.
+    func paint_chips(painter: Painter*, index: usize, theme: Theme, enabled: bool) -> !:
+        let row = self.rows[index]
+        let count = parameter_text.item_count(row.items.value)
+        if count == 0:
+            return
+        let chosen = (usize)row.values[0]
+        let radius = math.min(theme.control_radius, 3.0)
+        for chip in 0..<count:
+            let rect = self.chip_rect(row, chip, count)
+            let value = parameter_text.item_label_value(row.items.value, chip)
+            let color = color_of_hex(value) else theme.muted
+            if chip == chosen:
+                try painter.rounded_rectangle(Rect(rect.x - 2.0, rect.y - 2.0, rect.width + 4.0, rect.height + 4.0), theme.accent if enabled else theme.muted, radius + 1.0)
+            try painter.rounded_rectangle(rect, color, radius, 1.0 if enabled else 0.4)
 
     func paint_toggle(painter: Painter*, index: usize, theme: Theme, enabled: bool) -> !:
         let row = self.rows[index]

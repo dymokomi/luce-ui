@@ -231,6 +231,13 @@ extend ParameterPanel:
         let x = row.control_x + field + part_gap * 2.0
         return Rect(x, row.y, math.max(0.0, row.control_x + row.control_width - x), self.row_height())
 
+    ## Chip `chip` of a swatches row with `count` chips.
+    func chip_rect(row: Row, chip: usize, count: usize) -> Rect:
+        let gap = 6.0
+        let side = math.min(self.row_height() - 6.0, (row.control_width - gap * (f64)(count - 1)) / (f64)count)
+        let step = (row.control_width - side) / (f64)math_max_usize(count - 1, 1)
+        return Rect(row.control_x + math.floor(step * (f64)chip), row.y + math.floor((self.row_height() - side) * 0.5), side, side)
+
     func browse_rect(row: Row) -> Rect:
         let height = self.row_height()
         return Rect(row.control_x + row.control_width - height, row.y, height, height)
@@ -282,6 +289,8 @@ extend ParameterPanel:
             return part_button
         if kind == ParameterKind.info:
             return part_none
+        if kind == ParameterKind.swatches:
+            return part_chip
         if kind == ParameterKind.path and x >= self.browse_rect(row).x:
             return part_browse
         if kind == ParameterKind.color and x < self.swatch_rect(row).x + self.swatch_rect(row).width:
@@ -291,6 +300,13 @@ extend ParameterPanel:
         return part_field
 
     func component_at(row: Row, x: f64) -> i64:
+        if row.kind == ParameterKind.swatches:
+            let count = parameter_text.item_count(row.items.value)
+            for chip in 0..<count:
+                let rect = self.chip_rect(row, chip, count)
+                if x < rect.x + rect.width + 3.0:
+                    return (i64)chip
+            return (i64)count - 1
         if row.kind != ParameterKind.vector and row.kind != ParameterKind.color:
             return 0
         for component in 0..<row.components:
@@ -298,6 +314,9 @@ extend ParameterPanel:
             if x < field.x + field.width + part_gap * 0.5:
                 return component
         return row.components - 1
+
+func math_max_usize(a: usize, b: usize) -> usize:
+    return a if a > b else b
 
 ## Whether a kind can share a line.
 func joinable(kind: ParameterKind) -> bool:
