@@ -75,6 +75,20 @@ pub struct CurveEditor: Widget:
         self.selected = -1
         self.box.value().invalidate()
 
+    ## Replace every point with `xs`, `ys` (at most 16, any order); none gives the
+    ## identity. No change signal.
+    pub func set_points(xs: const f64[], ys: const f64[]) -> !:
+        if xs.length != ys.length or xs.length > curve_editor_points:
+            error(result.invalid, "a curve takes up to 16 points, as many x as y")
+        if xs.length == 0:
+            self.reset()
+            return
+        self.count = 0
+        self.selected = -1
+        for at in 0..<xs.length:
+            _ = try self.insert(xs[at], ys[at])
+        self.box.value().invalidate()
+
     ## Add a point from code, sorted by x; one at an existing x replaces it. No change signal.
     pub func add_point(x: f64, y: f64) -> !:
         _ = try self.insert(x, y)
