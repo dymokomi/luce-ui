@@ -32,8 +32,8 @@ the crash window" in API.md.
 Read [API.md](docs/API.md) for ownership, callbacks, custom widgets and layout;
 [DESIGN.md](docs/DESIGN.md) describes the framework contracts.
 
-Build the sibling `luce-base` and `luce` repositories at the revisions recorded in
-`bootstrap/BASE` and `bootstrap/LUCE`. Then run:
+Build the sibling `luce-base` and `luce` repositories (main; `python3
+../luce-base/tools/checkout_main.py . ../luce` checks out what is missing). Then run:
 
 ```sh
 ./test.sh

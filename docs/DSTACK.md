@@ -12,7 +12,7 @@
 - [x] Replace Luced's fixed workspace with DStack and one tab per open file;
   preserve document state, file operations, commands and configuration reload.
 - [x] Test portable input/model contracts and actual GPU output; update examples
-  and documentation. Luced records its tested UI revision in `bootstrap/UI`.
+  and documentation. Luced's CI tests against luce-ui's main.
 
 DStack owns layout topology; Panel owns its caption and content. Content remains
 mounted under the same panel while topology changes. The framework knows no
