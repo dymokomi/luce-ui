@@ -1,0 +1,24 @@
+## A crash hook whose closure captures a document that holds the application: `close`
+## removes it, and the program ends with no object left alive (the runtime's exit check
+## counts them).
+from luce_ui.ui import Application, Text
+
+class Document:
+    let name: str
+    let app: Application
+
+    pub func init(self, name: str, app: Application) -> unit!:
+        self.name = name
+        self.app = app
+
+pub func crash_hooks() -> unit!:
+    let app = Application(Text("document"), title = "Crash hooks")
+    let document = Document("scene", app)
+    let hook = app.on_crash(func () -> unit!:
+        print(f"saving {document.name}"))
+    assert(hook.is_active())
+    # a handle dropped at once leaves the hook to the application, which keeps it
+    _ = app.on_crash(func () -> unit!:
+        print(document.name))
+    app.close()
+    assert(not hook.is_active())

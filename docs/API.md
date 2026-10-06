@@ -163,6 +163,9 @@ nothing further. Reports stay on the computer; nothing is sent anywhere.
 that trapped: save what can be saved under `crash.recovery_directory()` and call
 `crash.note_recovery(path)`, and the window shows the path. The hooks get five seconds in
 all, and a fatal signal runs none, so a program that must not lose work also saves as it goes.
+It answers the hook's handle (luce-std's `crash.Hook`); the application keeps the hook until
+`close`, which removes it, so what the callback captures is not kept alive past the
+application. `remove()` on the handle takes it away sooner; dropping the handle does not.
 
 `CrashWindow(report)` is the window itself, for a program that wants to show a report it
 found some other way (`crash.take_report`).

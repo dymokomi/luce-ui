@@ -52,6 +52,9 @@ pub struct Application:
     var target_fps: f64
     var fullscreen: bool
     var session_host: window.Window
+    ## The crash hooks `on_crash` added, which `close` removes.
+    var crash_hooks: interop.Reference[crash.Hook][]
+    var crash_hook_count: usize
 
     ## A process started to show a crash report (luce-std's `crash.report_to_show`) shows
     ## it here, in a window of its own, and ends: the program's own window never opens.
@@ -95,6 +98,8 @@ pub struct Application:
         self.target_fps = fps
         self.fullscreen = fullscreen
         self.session_host = window.Window()
+        self.crash_hooks = try new interop.Reference[crash.Hook][2] --- in memory.heap
+        self.crash_hook_count = 0
 
     func check() -> !:
         if self.closed:
@@ -239,9 +244,22 @@ pub struct Application:
     ## into `crash.recovery_directory()` and say so with `crash.note_recovery(path)`,
     ## and the crash window tells the user where it went. Hooks have five seconds in
     ## all; a fatal signal (a segmentation fault and the like) runs none. See
-    ## luce-std's `crash.on_crash`.
-    pub func on_crash(callback: interop.Callback[unit, unit]) -> !:
-        try crash.on_crash(callback)
+    ## luce-std's `crash.on_crash`. The application keeps the hook until `close`, which
+    ## removes it, so what the callback captures does not outlive the application;
+    ## the answer is the hook's handle, to `remove` it sooner or to drop.
+    pub func on_crash(callback: interop.Callback[unit, unit]) -> interop.Reference[crash.Hook]!:
+        try self.check()
+        if self.crash_hook_count == self.crash_hooks.length:
+            let grown = try new interop.Reference[crash.Hook][self.crash_hooks.length * 2] --- in memory.heap
+            for index in 0..<self.crash_hook_count:
+                grown[index] = self.crash_hooks[index]
+            let previous = self.crash_hooks
+            self.crash_hooks = grown
+            free(previous) in memory.heap
+        let hook = try crash.on_crash(callback)
+        self.crash_hooks[self.crash_hook_count] = hook.clone()
+        self.crash_hook_count += 1
+        return hook
 
     ## Replace the registered commands whose shortcuts `dispatch` and `run` match
     ## before the widget tree sees a key.
@@ -714,6 +732,12 @@ pub struct Application:
     pub func close():
         self.stop()
         self.closed = true
+        # Remove before releasing: a hook's callback may hold the last edge to an object.
+        let count = self.crash_hook_count
+        self.crash_hook_count = 0
+        for index in 0..<count:
+            self.crash_hooks[index].value().remove()
+            self.crash_hooks[index].release()
 
     func dispose():
         self.close()
@@ -730,8 +754,11 @@ pub struct Application:
         self.frames.release()
         self.tree.close()
         self.title_text.release()
+        free(self.crash_hooks) in memory.heap
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        for index in 0..<self.crash_hook_count:
+            self.crash_hooks[index].trace(visit, context)
         if let handler = self.close_handler:
             handler.trace(visit, context)
         if let handler = self.error_handler:

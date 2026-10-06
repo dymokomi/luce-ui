@@ -5,6 +5,7 @@ from luce_std import math
 import memory
 import ownership
 import thread
+from luce_std import crash
 from luce_window import window
 from luce_ui import ui
 import layout_cycles
@@ -218,6 +219,46 @@ func drawing() -> !:
         expired = true
     assert(expired)
 
+## Holds an application, as a crash hook that saves its document would.
+struct Saver:
+    var app: interop.Reference[Application]?
+
+    func save(argument: unit) -> interop.Outcome[unit]:
+        _ = argument
+        return interop.Outcome[unit].success(interop.Owned[unit](()))
+
+    func close():
+        if let app = self.app:
+            self.app = none
+            app.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        if let app = self.app:
+            app.trace(visit, context)
+
+let saver_type: interop.Type[Saver] = interop.Type[Saver]("crash hook saver", Saver.close, Saver.trace)
+
+## A crash hook that captures the application is removed by `close`: nothing it held
+## outlives the application, and the handle the caller dropped early did not remove it.
+func crash_hooks() -> !:
+    let button = try new_button("save")
+    defer button.release()
+    let widget = button.as_interface[Widget](button.value())
+    defer widget.release()
+    let app = try interop.Reference[Application].adopt(new Application(widget) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    let saver = try interop.Reference[Saver].adopt(new Saver(app = app.clone()) in memory.heap, saver_type, memory.heap)
+    defer saver.release()
+    let callback = try interop.Callback[unit, unit].bind_mutating(saver, Saver.save)
+    defer callback.release()
+    let kept = try app.value().on_crash(callback)
+    let dropped = try app.value().on_crash(callback)
+    dropped.release()
+    assert(kept.value().is_active())
+    app.value().close()
+    assert(not kept.value().is_active())
+    kept.release()
+
 func construct_on_worker(context: void*?):
     let rejected = (bool*)(context else trap("missing thread result"))
     let layout: Layout? = Layout() catch failure:
@@ -231,6 +272,8 @@ pub func main(arguments: str[]) -> i32!:
     let worker = try thread.spawn(construct_on_worker, (void*)&rejected)
     try worker.join()
     assert(rejected)
+    # crash reports keep a signal stack for the process: made before allocations are counted
+    try crash.enable()
     var tracker = Tracker(upstream = memory.heap)
     let previous = memory.heap
     memory.heap = &tracker
@@ -249,6 +292,10 @@ pub func main(arguments: str[]) -> i32!:
         try shared_font()
         try game_mode()
         try drawing()
+        assert(ownership.finish_run(0) == 0)
+        assert(tracker.live == 0)
+        try crash_hooks()
+        ownership.collect()
         assert(ownership.finish_run(0) == 0)
         assert(tracker.live == 0)
     print("ok UI ownership, allocation, layout and drawing scopes")
