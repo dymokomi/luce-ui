@@ -24,6 +24,11 @@ The separate `luce-demos` project connects a button to a counter and runs the UI
 No application loop, generated Base sources or platform framework declarations
 are needed in a consumer.
 
+When an application crashes, it does not just disappear: luce-ui starts it again to show
+the crash report in a window of its own, with Copy, Reopen and Quit, and
+`app.on_crash(callback)` gives it a chance to save its work first. See "Crash reports and
+the crash window" in API.md.
+
 Read [API.md](docs/API.md) for ownership, callbacks, custom widgets and layout;
 [DESIGN.md](docs/DESIGN.md) describes the framework contracts.
 
@@ -37,7 +42,8 @@ python3 tests/gpu.py
 
 The portable suite compiles Base and Luce consumers in native optimization levels
 0–3 and both C comparison modes. The GPU suite requires an actual macOS desktop
-and verifies Metal pixels, clipping, resize and expired viewport references.
+and verifies Metal pixels, clipping, resize and expired viewport references, and that a
+program that traps is started again to show its crash window.
 Test binaries and compiler scratch files are temporary. A specifically requested
 consumer binary can be built with `python3 tools/build.py ENTRY -o OUTPUT`.
 

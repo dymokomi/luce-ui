@@ -1,0 +1,28 @@
+## The crash window a relaunched program shows: it opens and draws from a report alone,
+## and its Reopen and Quit commands end it with that choice.
+import interop
+from luce_ui import ui
+from luce_ui.ui import CrashChoice, CrashWindow
+
+let report: str = "luce crash report\napp: crash-pixels\nversion: 1.2.3\nplatform: test\npid: 1\nstarted: 1\n\ntrap: main.lucb:3:5: a deliberate trap\n\nstack:\n#0 0x1 crash-pixels+0x1\nrecovery: /tmp/crash-pixels/scene.recovered\n"
+
+## Trigger the command `id`, as its button or shortcut would.
+func trigger(app: interop.Reference[ui.Application], id: str) -> !:
+    let command = app.value().command(id) else trap("the crash window has no command")
+    defer command.release()
+    let outcome = command.value().trigger()
+    defer outcome.release()
+    try outcome.get()
+
+pub func choices() -> !:
+    var shown = try CrashWindow(report)
+    defer shown.close()
+    let app = shown.application()
+    defer app.release()
+    # a few frames on screen; no choice made is Quit
+    assert(try shown.run(frame_limit = 3) == CrashChoice.quit)
+    try trigger(app, "crash.reopen")
+    assert(try shown.run(frame_limit = 3) == CrashChoice.reopen)
+    try trigger(app, "crash.quit")
+    assert(try shown.run(frame_limit = 3) == CrashChoice.quit)
+    print("ok the crash window draws a report, and Reopen and Quit end it with their choice")

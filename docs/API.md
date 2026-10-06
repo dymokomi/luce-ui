@@ -20,7 +20,8 @@ All objects and callbacks belong to the main thread.
 | `SplitView` | Two widgets, `axis`, preferred `fraction`, `handle_width`; `fraction`, `set_fraction`, `layout` |
 | `Viewport` | Preferred minimum width/height; `on_render`, `layout` |
 | `SceneView` | `SceneView(scene, camera, renderer=none, width=320, height=240)`: a Viewport drawing a luce-3d scene; `scene`, `camera`, `renderer`, `layout` |
-| `Application` | Content, title, dimensions, optional `game`/`fps`/`fullscreen`; `run`, `stop`, `close`, `on_frame`, `after`/`every`/`post`/`cancel`, `wake_at`/`wake_after`, `watch`/`unwatch`, `title`/`set_title`, `set_game`, `set_fps`, `set_fullscreen`, `set_commands`, `command`, `layout`, `dispatch`, `render` |
+| `Application` | Content, title, dimensions, optional `game`/`fps`/`fullscreen`; `run`, `stop`, `close`, `on_frame`, `after`/`every`/`post`/`cancel`, `wake_at`/`wake_after`, `watch`/`unwatch`, `title`/`set_title`, `set_game`, `set_fps`, `set_fullscreen`, `set_commands`, `command`, `on_crash`, `layout`, `dispatch`, `render` |
+| `CrashWindow` | `CrashWindow(report, theme=Theme())`: the window a crashed program is started again to show; `run(frame_limit=0)` answers `CrashChoice.quit` or `.reopen`, `application` |
 | `TextField` | `TextField(text, placeholder=..., cells=12, secure=false)`; `text`, `set_text`, `on_change` (each edit), `on_commit` (Enter or focus loss, when changed), `on_submit` (every Enter, changed or not), `select_all` |
 | `Raster` | Mutable RGBA surface; `set_pixel`, `put`, `fill`, `fill_rect`, `dab`, `draw`, `color_at` |
 | `Painter` | Checked GPU target; `rectangle(rect, color, opacity=1.0)`, `triangle(a, b, c, color)`, `line(a, b, width, color)`, `text`, `target` |
@@ -135,6 +136,36 @@ Editor columns, carets, clicks, wrapping and truncation all count cells, so
 Japanese, Chinese and Korean text lines up; the caret still steps one scalar.
 Single-line labels are limited to 4096 bytes and 1024 Unicode scalars. Font shaping,
 bidi, grapheme navigation and arbitrary font-file loading are not yet provided.
+
+## Crash reports and the crash window
+
+A desktop program has no terminal to print a trap to, and one that just disappears is
+hard to report. `run` turns on luce-std's crash reports, named after the program's package
+and version (see `crash` in luce-std), and, unless it is a test's bounded run
+(`frame_limit > 0`), asks for the report to be shown after a crash, the way macOS shows its
+"quit unexpectedly" window:
+
+1. The program traps or gets a fatal signal. luce-std writes the report to
+   `~/.luce/crashes`, runs the crash hooks (traps only), and starts the program's own
+   executable again with no arguments and `LUCE_CRASH_REPORT` naming the report. Nothing is
+   drawn from the process that crashed: its heap may be broken.
+2. The new process runs `main` as usual until it makes its `Application`. There, instead of
+   the program's window, it opens the crash window: the program's name and version, where a
+   recovery copy went if a hook saved one, the report as selectable text, and **Copy**,
+   **Reopen** (Return) and **Quit** (Cmd/Ctrl+Q). Then the process ends; Reopen first starts
+   the program again as an ordinary run.
+
+So code that runs before the `Application` is made also runs in that second process, with no
+arguments; keep it to building the window. A crash inside the crash window itself starts
+nothing further. Reports stay on the computer; nothing is sent anywhere.
+
+`app.on_crash(callback)` runs `callback` after a trap, before the process ends, on the thread
+that trapped: save what can be saved under `crash.recovery_directory()` and call
+`crash.note_recovery(path)`, and the window shows the path. The hooks get five seconds in
+all, and a fatal signal runs none, so a program that must not lose work also saves as it goes.
+
+`CrashWindow(report)` is the window itself, for a program that wants to show a report it
+found some other way (`crash.take_report`).
 
 ## Parameter panels
 

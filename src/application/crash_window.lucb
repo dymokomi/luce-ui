@@ -1,0 +1,226 @@
+#==============================================================================================
+#
+#   crash_window - The window that shows a crash report
+#
+#   DESCRIPTION:
+#       When a luce-ui program crashes, luce-std's crash module writes the report and
+#       starts the program again with LUCE_CRASH_REPORT naming it (`relaunch_on_crash`,
+#       which `run` asks for). The new process reaches `Application.init` as usual, and
+#       instead of the program's own window it gets this one: the program's name and
+#       version, the report in a read-only editor, and Copy, Reopen and Quit. Then the
+#       process ends. Nothing is drawn from the process that crashed, and nothing is sent.
+#
+#==============================================================================================
+
+from luce_clipboard import clipboard
+import os
+import widgets.text
+import widgets.button
+import widgets.text_editor
+import widgets.vstack
+import widgets.hstack
+import widgets.spacer
+import command
+import memory
+import strings
+
+## Whether this process is showing a crash report already: the window's own
+## Application must not start another.
+var showing_crash: bool = false
+
+## Show the report at `path` in place of the program's window, then end the process:
+## what `Application.init` does in a process started to show a report. Where no window
+## can open (no display), the process ends quietly: the report is on disk already.
+func show_crash_report(path: str) -> never:
+    showing_crash = true
+    let report = crash.read_report(path) catch failure:
+        recover interop.copy_text(failure.message) catch exhausted: os.exit(1)
+    var shown = CrashWindow(report.value) catch failure:
+        os.exit(1)
+    report.release()
+    let choice = shown.run() catch failure:
+        os.exit(1)
+    shown.close()
+    if choice == CrashChoice.reopen:
+        crash.reopen() catch failure:
+            os.exit(1)
+    os.exit(0)
+
+## How a crash window was left.
+pub enum CrashChoice as u8:
+    ## Quit, or the window was closed.
+    quit = 0
+    ## Reopen: start the program again.
+    reopen = 1
+
+## A crash report in a window of its own: its heading names the program and version
+## the report's header gives, a line says where a recovery copy went when a crash
+## hook saved one, the report is selectable text, and the buttons copy it, reopen
+## the program, or quit. `run` shows it until one is chosen.
+pub struct CrashWindow:
+    var app: interop.Reference[Application]
+    var actions: interop.Reference[CrashActions]
+    var connections: interop.Reference[interop.Connection][3]
+
+    pub func init(report: str, theme: Theme = Theme()) -> !:
+        let program = header_value(report, "app: ")
+        let version = header_value(report, "version: ")
+        var room: u8[512]
+        let heading = try strings.format(room, f"{program if program.length > 0 else "The program"} quit unexpectedly")
+        let copy = try make_command("Copy", "crash.copy", command.Shortcut())
+        defer copy.release()
+        let reopen = try make_command("Reopen", "crash.reopen", command.Shortcut(key = input.Key.enter))
+        defer reopen.release()
+        let quit = try make_command("Quit", "crash.quit", command.Shortcut(key = input.Key.q, primary = true))
+        defer quit.release()
+        var rows = try new interop.Interface[Widget][5] --- in memory.heap
+        defer free(rows) in memory.heap
+        var count: usize = 0
+        defer release_rows(rows[..<count])
+        rows[count] = try text_row(heading, false)
+        count += 1
+        var detail: u8[512]
+        rows[count] = try text_row(try strings.format(detail, f"{"Version " if version.length > 0 else ""}{version}{". " if version.length > 0 else ""}This report stays on this computer; nothing is sent anywhere."), true)
+        count += 1
+        let recovered = header_value(report, "recovery: ")
+        if recovered.length > 0:
+            var saved: u8[1200]
+            rows[count] = try text_row(try strings.format(saved, f"A recovery copy was saved: {recovered}"), false)
+            count += 1
+        let editor = try interop.Reference[text_editor.TextEditor].adopt(new text_editor.TextEditor(report, read_only = true, line_numbers = false) in memory.heap, text_editor.text_editor_type, memory.heap)
+        defer editor.release()
+        rows[count] = editor.as_interface[Widget](editor.value())
+        count += 1
+        rows[count] = try button_row(copy, reopen, quit)
+        count += 1
+        let column = try interop.Reference[vstack.VStack].adopt(new vstack.VStack(rows[..<count], spacing = 10.0, padding = 16.0) in memory.heap, vstack.vstack_type, memory.heap)
+        defer column.release()
+        let root = column.as_interface[Widget](column.value())
+        defer root.release()
+        let app = try interop.Reference[Application].adopt(new Application(root, title = program if program.length > 0 else "Crash report", width = 760, height = 520, theme = theme) in memory.heap, application_type, memory.heap)
+        errdefer app.release()
+        try app.value().set_commands([copy, reopen, quit])
+        let report_copy = try interop.copy_text(report)
+        let actions = try interop.Reference[CrashActions].adopt(new CrashActions(app = app.value(), report = report_copy, copy = copy.clone(), choice = CrashChoice.quit) in memory.heap, crash_actions_type, memory.heap)
+        errdefer actions.release()
+        let copied = try connect(copy, actions, CrashActions.copy_report)
+        errdefer copied.release()
+        let reopened = try connect(reopen, actions, CrashActions.reopen)
+        errdefer reopened.release()
+        let quitted = try connect(quit, actions, CrashActions.quit)
+        self.connections = [copied, reopened, quitted]
+        self.app = app
+        self.actions = actions
+
+    ## The window's application, to lay out, render or drive in a test.
+    pub func application() -> interop.Reference[Application]:
+        return self.app.clone()
+
+    ## Show the window until Copy, Reopen or Quit ends it, or it is closed (quit). A
+    ## positive `frame_limit` stops after that many turns, as `Application.run`'s does.
+    pub func run(frame_limit: i64 = 0) -> CrashChoice!:
+        let outcome = self.app.value().run(frame_limit)
+        defer outcome.release()
+        try outcome.get()
+        return self.actions.value().choice
+
+    pub func close():
+        for connection in self.connections:
+            connection.release()
+        self.app.value().close()
+        self.actions.release()
+        self.app.release()
+
+## Run `method` of `actions` when `action` is triggered, for as long as the connection lives.
+func connect(action: interop.Reference[Command], actions: interop.Reference[CrashActions], method: func(CrashActions*, unit) -> interop.Outcome[unit]) -> interop.Reference[interop.Connection]!:
+    let callback = try interop.Callback[unit, unit].bind_mutating(actions, method)
+    defer callback.release()
+    return try action.value().on_trigger(callback)
+
+func release_rows(rows: interop.Interface[Widget][]):
+    for row in rows:
+        row.release()
+
+## The value of the first `prefix` line of `report` ("app: ", "version: "), or "".
+func header_value(report: str, prefix: str) -> str:
+    var rest = report
+    while rest.length > 0:
+        let end = strings.find(rest, "\n") else rest.length
+        let line = (str)rest.bytes[..<end]
+        if strings.starts_with(line, prefix):
+            return (str)line.bytes[prefix.length..]
+        rest = (str)rest.bytes[end + 1..] if end < rest.length else ""
+    return ""
+
+func make_command(caption: str, id: str, shortcut: command.Shortcut) -> interop.Reference[Command]!:
+    return try interop.Reference[Command].adopt(new Command(caption, shortcut = shortcut, id = id) in memory.heap, command.command_type, memory.heap)
+
+func text_row(caption: str, muted: bool) -> interop.Interface[Widget]!:
+    let label = try interop.Reference[text.Text].adopt(new text.Text(caption, muted = muted) in memory.heap, text.text_type, memory.heap)
+    defer label.release()
+    return label.as_interface[Widget](label.value())
+
+## The buttons, right-aligned: Copy, Reopen, Quit.
+func button_row(copy: interop.Reference[Command], reopen: interop.Reference[Command], quit: interop.Reference[Command]) -> interop.Interface[Widget]!:
+    let space = try interop.Reference[spacer.Spacer].adopt(new spacer.Spacer(1.0) in memory.heap, spacer.spacer_type, memory.heap)
+    defer space.release()
+    let first = try action_button(copy)
+    defer first.release()
+    let second = try action_button(reopen)
+    defer second.release()
+    let third = try action_button(quit)
+    defer third.release()
+    let filler = space.as_interface[Widget](space.value())
+    defer filler.release()
+    let row = try interop.Reference[hstack.HStack].adopt(new hstack.HStack([filler, first, second, third], spacing = 8.0) in memory.heap, hstack.hstack_type, memory.heap)
+    defer row.release()
+    return row.as_interface[Widget](row.value())
+
+func action_button(action: interop.Reference[Command]) -> interop.Interface[Widget]!:
+    let made = try interop.Reference[button.Button].adopt(new button.Button(action = action) in memory.heap, button.button_type, memory.heap)
+    defer made.release()
+    return made.as_interface[Widget](made.value())
+
+## What the window's commands do: copy the report, or end the window with a choice.
+struct CrashActions:
+    var app: Application*
+    var report: interop.Owned[str]
+    var copy: interop.Reference[Command]
+    var choice: CrashChoice
+
+    func copy_report(argument: unit) -> interop.Outcome[unit]:
+        _ = argument
+        clipboard.write_text(self.report.value) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        self.copy.value().set_text("Copied") catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func reopen(argument: unit) -> interop.Outcome[unit]:
+        _ = argument
+        self.choice = CrashChoice.reopen
+        self.app.stop()
+        return result.success[unit](())
+
+    func quit(argument: unit) -> interop.Outcome[unit]:
+        _ = argument
+        self.choice = CrashChoice.quit
+        self.app.stop()
+        return result.success[unit](())
+
+    func close():
+        self.report.release()
+        self.copy.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.copy.trace(visit, context)
+
+let crash_actions_type: interop.Type[CrashActions] = interop.Type[CrashActions]("crash window actions", CrashActions.close, CrashActions.trace, main_thread = true)
+
+test "a report's header names the program, its version and a recovery copy":
+    let report = "luce crash report\napp: luced-2d\nversion: 0.4.1\nplatform: arm64-macos\n\ntrap: a.luc:1:1: boom\nstack:\n#0 0x1\nrecovery: /home/u/.luce/recovery/luced-2d/scene.l2d\n"
+    assert(header_value(report, "app: ") == "luced-2d")
+    assert(header_value(report, "version: ") == "0.4.1")
+    assert(header_value(report, "recovery: ") == "/home/u/.luce/recovery/luced-2d/scene.l2d")
+    assert(header_value("no header at all", "app: ") == "")
+    assert(header_value("app: last", "app: ") == "last")

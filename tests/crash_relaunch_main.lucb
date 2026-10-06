@@ -1,0 +1,61 @@
+## A luce-ui program that traps in its run loop after adding a crash hook that saves a
+## recovery copy. crash_relaunch.py checks what follows: the report, the hook's copy, and
+## the program started again to show the report in its crash window.
+import interop
+import memory
+import ownership
+from luce_std import crash
+from luce_std import files
+from luce_std import paths
+from luce_ui import ui
+from luce_ui.ui import Application, Spacer, Widget
+
+struct Crasher:
+    var turns: i64
+
+    func boom(argument: unit) -> interop.Outcome[unit]:
+        _ = argument
+        trap("a deliberate trap in the run loop")
+
+    func save(argument: unit) -> interop.Outcome[unit]:
+        _ = argument
+        let folder = crash.recovery_directory() catch failure:
+            trap(failure.message)
+        defer folder.release()
+        let copy = paths.join(folder.value, "scene.recovered") catch failure:
+            trap(failure.message)
+        defer copy.release()
+        files.write_text(copy.value, "the scene, as it was") catch failure:
+            trap(failure.message)
+        crash.note_recovery(copy.value)
+        return interop.Outcome[unit].success(interop.Owned[unit](()))
+
+    func close():
+        self.turns = 0
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        _ = visit
+        _ = context
+
+let crasher_type: interop.Type[Crasher] = interop.Type[Crasher]("crash relaunch test", Crasher.close, Crasher.trace)
+
+pub func main(arguments: str[]) -> i32!:
+    _ = arguments
+    let spacer = try interop.Reference[Spacer].adopt(new Spacer(1.0) in memory.heap, ui.spacer_type, memory.heap)
+    defer spacer.release()
+    let content = spacer.as_interface[Widget](spacer.value())
+    defer content.release()
+    let app = try interop.Reference[Application].adopt(new Application(content, title = "Crash relaunch", width = 240, height = 120) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    let crasher = try interop.Reference[Crasher].adopt(new Crasher(turns = 0) in memory.heap, crasher_type, memory.heap)
+    defer crasher.release()
+    let save = try interop.Callback[unit, unit].bind_mutating(crasher, Crasher.save)
+    defer save.release()
+    try app.value().on_crash(save)
+    let boom = try interop.Callback[unit, unit].bind_mutating(crasher, Crasher.boom)
+    defer boom.release()
+    _ = try app.value().after(0.3, boom)
+    let outcome = app.value().run()
+    defer outcome.release()
+    try outcome.get()
+    return 0

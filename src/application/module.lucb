@@ -53,7 +53,12 @@ pub struct Application:
     var fullscreen: bool
     var session_host: window.Window
 
+    ## A process started to show a crash report (luce-std's `crash.report_to_show`) shows
+    ## it here, in a window of its own, and ends: the program's own window never opens.
     pub func init(content: interop.Interface[Widget], title: str = "Luce", width: i64 = 800, height: i64 = 600, theme: Theme = Theme(), game: bool = false, fps: f64 = 70.0, fullscreen: bool = false) -> !:
+        if not showing_crash:
+            if let report = crash.report_to_show():
+                show_crash_report(report)
         if not thread.is_main():
             error(interop.wrong_thread, "UI applications require the main thread")
         if width < 1 or width > 10000 or height < 1 or height > 10000 or not utf8.valid(title.bytes):
@@ -227,6 +232,14 @@ pub struct Application:
         self.error_handler = replacement
         if let old = previous:
             old.release()
+
+    ## Run `callback` when the program traps, before it ends: save what can be saved
+    ## into `crash.recovery_directory()` and say so with `crash.note_recovery(path)`,
+    ## and the crash window tells the user where it went. Hooks have five seconds in
+    ## all; a fatal signal (a segmentation fault and the like) runs none. See
+    ## luce-std's `crash.on_crash`.
+    pub func on_crash(callback: interop.Callback[unit, unit]) -> !:
+        try crash.on_crash(callback)
 
     ## Replace the registered commands whose shortcuts `dispatch` and `run` match
     ## before the widget tree sees a key.
@@ -416,10 +429,14 @@ pub struct Application:
             return result.failure[unit](result.busy, "the application is already running")
         if frame_limit < 0:
             return result.failure[unit](result.invalid, "a frame limit must be nonnegative")
-        # A windowed program has nowhere to print a trap; unless it chose its own
-        # name and version, report crashes under the window title.
+        # A windowed program has nowhere to print a trap: report crashes under the
+        # program's own name unless it chose one, and, in a run that is not a test's
+        # bounded one, show the report in a window from a fresh process.
         if not core.crash_reports_enabled():
-            crash.enable(self.title_text.value) catch failure:
+            crash.enable() catch failure:
+                _ = failure
+        if frame_limit == 0:
+            crash.relaunch_on_crash() catch failure:
                 _ = failure
         self.session_host = window.Window.open(window.Options(title = self.title_text.value, width = (u32)self.width, height = (u32)self.height, fullscreen = self.fullscreen)) catch failure:
             return result.failure[unit](failure.code, failure.message)

@@ -25,6 +25,7 @@ with tempfile.TemporaryDirectory(prefix="luce-ui-gpu-") as temporary:
     shutil.copy2(ROOT / "tests/text_pixels.lucb", project / "text_pixels.lucb")
     shutil.copy2(ROOT / "tests/run_loop_pixels.lucb", project / "run_loop_pixels.lucb")
     shutil.copy2(ROOT / "tests/present_retry_pixels.lucb", project / "present_retry_pixels.lucb")
+    shutil.copy2(ROOT / "tests/crash_window_pixels.lucb", project / "crash_window_pixels.lucb")
     shutil.copy2(args.gpu_source / "tests/programs/gpu/native.lucb", project / "native.lucb")
     dependencies = ''.join(f'    def dependency "{name}" {{\n        str path = {json.dumps((ROOT if name == "luce-ui" else ROOT.parent / name).as_posix())}\n    }}\n' for name in ('luce-ui', 'luce-std', 'luce-gpu', 'luce-window'))
     (project / "package.prisma").write_text('#prisma 4.0\ndef package "ui-pixels" {\n    str source = "."\n' + dependencies + '}\n')
@@ -33,4 +34,6 @@ with tempfile.TemporaryDirectory(prefix="luce-ui-gpu-") as temporary:
         subprocess.run([str(args.base.resolve()), "build", str(project / "main.lucb"), *flags, "-o", str(binary)], check=True, timeout=180)
         subprocess.run([str(binary)], check=True, timeout=60,
                        env=dict(os.environ, MTL_DEBUG_LAYER="1", MTL_SHADER_VALIDATION="1"))
+# a program that traps is started again to show its report in the crash window
+subprocess.run(["python3", str(ROOT / "tests/crash_relaunch.py"), "--base", str(args.base.resolve())], check=True, timeout=600)
 print("PASS real UI pixels and composed viewport scopes")
