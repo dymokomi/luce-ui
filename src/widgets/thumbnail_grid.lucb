@@ -1,9 +1,11 @@
-## The ThumbnailGrid widget: a photo library's grid of square cells, each showing
-## a picture fitted inside it with badges for a rating, a pick or reject flag, a
-## color label and an "edited" mark. Like TableView it is virtualized: it keeps
-## only the counts and badges of every item, and holds pictures for the items the
-## application hands it, typically those near the visible range, which it reports.
-## The cell size scales between 48 and 640 points (command-scroll or a pinch, or
+## The ThumbnailGrid widget: a photo library's grid. Items lie in justified rows
+## (justified_rows.lucb): each tile has its photo's aspect ratio (`set_aspect`;
+## square until told) and is filled by its picture, and every full row spans the
+## width. Badges show a rating, a pick or reject flag, a color label and an
+## "edited" mark. Like TableView it is virtualized: it keeps only the aspects
+## and badges of every item, and holds pictures for the items the application
+## hands it, typically those near the visible range, which it reports. The row
+## height scales between 48 and 640 points (command-scroll or a pinch, or
 ## `set_cell_size`); selection follows Finder: click, command-click, shift-click,
 ## arrows (with shift), command-A; a double-click or Enter activates.
 from luce_gpu import gpu
@@ -21,15 +23,22 @@ from geometry import Point
 from image import Image
 from theme import Theme
 from widgets.table_selection import RowSelection
+from widgets.justified_rows import JustifiedRows
 import icons
 
-## The smallest and largest cell side, in points.
+## The smallest and largest row height, in points.
 pub let thumbnail_grid_minimum: f64 = 48.0
 pub let thumbnail_grid_maximum: f64 = 640.0
 ## The most items a grid holds.
 pub let thumbnail_grid_items: i64 = 1048576
 
-## Two presses on one cell within this many nanoseconds are a double-click.
+## The space between tiles and around them, in points.
+let gap: f64 = 4.0
+## The narrowest and widest aspect ratio a tile takes.
+let thinnest: f64 = 0.2
+let widest: f64 = 5.0
+
+## Two presses on one tile within this many nanoseconds are a double-click.
 let double_click: u64 = 400000000
 
 ## What the grid shows over one item's picture.
@@ -43,7 +52,14 @@ pub struct ThumbnailGrid: Widget:
     let box: interop.Reference[Layout]
     var pictures: (interop.Reference[Image]?)[]
     var badges: Badges[]
+    var aspects: f32[]
     var count: usize
+    ## The rows, and what they were laid out for: a width, a row height, and
+    ## whether an aspect changed since.
+    var rows: JustifiedRows
+    var laid_width: f64
+    var laid_cell: f64
+    var stale: bool
     var picked: RowSelection
     var cell: f64
     var scroll: f64
@@ -78,11 +94,22 @@ pub struct ThumbnailGrid: Widget:
         errdefer free(pictures) in memory.heap
         let badges = try new Badges[items] in memory.heap
         errdefer free(badges) in memory.heap
+        let aspects = try new f32[items] in memory.heap
+        errdefer free(aspects) in memory.heap
+        for at in 0..<items:
+            aspects[at] = 1.0
+        var rows = try JustifiedRows.make(items)
+        errdefer rows.destroy()
         let picked = try RowSelection(items, multiple)
         self.box = box
         self.pictures = pictures
         self.badges = badges
+        self.aspects = aspects
         self.count = items
+        self.rows = rows
+        self.laid_width = -1.0
+        self.laid_cell = -1.0
+        self.stale = true
         self.picked = picked
         self.cell = math.clamp(cell, thumbnail_grid_minimum, thumbnail_grid_maximum)
         self.scroll = 0.0
@@ -110,7 +137,13 @@ pub struct ThumbnailGrid: Widget:
         errdefer free(pictures) in memory.heap
         let badges = try new Badges[items] in memory.heap
         errdefer free(badges) in memory.heap
+        let aspects = try new f32[items] in memory.heap
+        errdefer free(aspects) in memory.heap
+        var rows = try JustifiedRows.make(items)
+        errdefer rows.destroy()
         try self.picked.resize(items)
+        for at in 0..<items:
+            aspects[at] = self.aspects[at] if at < self.count else 1.0
         for at in 0..<self.count:
             if at < items:
                 pictures[at] = self.pictures[at]
@@ -119,8 +152,13 @@ pub struct ThumbnailGrid: Widget:
                 held.release()
         free(self.pictures) in memory.heap
         free(self.badges) in memory.heap
+        free(self.aspects) in memory.heap
+        self.rows.destroy()
         self.pictures = pictures
         self.badges = badges
+        self.aspects = aspects
+        self.rows = rows
+        self.stale = true
         self.count = items
         self.scroll = math.clamp(self.scroll, 0.0, self.scroll_limit())
         self.box.value().invalidate()
@@ -157,6 +195,18 @@ pub struct ThumbnailGrid: Widget:
                     held.release()
                     self.pictures[at] = none
 
+    ## Give item `index`'s tile the aspect ratio `ratio` (width over height, kept
+    ## within 1:5 and 5:1): its photo's, as shown.
+    pub func set_aspect(index: i64, ratio: f64) -> !:
+        let at = try self.checked(index)
+        if not math.is_finite(ratio) or ratio <= 0.0:
+            error(result.invalid, "a thumbnail's aspect ratio must be positive")
+        let kept = (f32)math.clamp(ratio, thinnest, widest)
+        if kept != self.aspects[at]:
+            self.aspects[at] = kept
+            self.stale = true
+            self.box.value().invalidate()
+
     ## Item `index`'s badges: `rating` 0–5 stars, `flag` 1 picked, -1 rejected
     ## (drawn faded), 0 neither; `label` 0 none, 1–7 red, orange, yellow, green,
     ## blue, purple, grey; `edited` marks a photo with adjustments.
@@ -169,68 +219,76 @@ pub struct ThumbnailGrid: Widget:
 
     # mark: geometry ============================================================================
 
-    ## The cell side the grid aims for, in points.
+    ## The row height the grid aims for, in points.
     pub func cell_size() -> f64:
         return self.cell
 
-    ## Aim for cells `cell` points wide (48–640); whole columns fill the width.
+    ## Aim for rows `cell` points tall (48–640), keeping the first visible item
+    ## in view while the tiles change size.
     pub func set_cell_size(cell: f64):
         let first = self.first_visible()
         self.cell = math.clamp(cell, thumbnail_grid_minimum, thumbnail_grid_maximum)
-        # Keep the first visible item at the top while the cells change size.
-        self.scroll = math.clamp((f64)((first // self.columns())) * self.side(), 0.0, self.scroll_limit())
+        self.arranged()
+        if first >= 0 and first < (i64)self.count:
+            self.scroll = math.clamp(self.rows.top_of(self.rows.row_of(first)) - gap, 0.0, self.scroll_limit())
         self.box.value().invalidate()
 
-    ## How many columns fit the current width.
+    ## About how many items a row holds: for prefetching a few rows around the screen.
     pub func columns() -> i64:
-        let width = self.box.value().bounds().width
-        return larger(1, (i64)(width / self.cell))
+        self.arranged()
+        if self.rows.rows == 0:
+            return larger(1, (i64)(self.box.value().bounds().width / self.cell))
+        return larger(1, ((i64)self.count + (i64)self.rows.rows - 1) // (i64)self.rows.rows)
 
-    ## The side of a cell as drawn: the width shared evenly by the columns.
-    func side() -> f64:
+    ## Lay the rows out again when the width, the row height or an aspect changed.
+    func arranged():
         let width = self.box.value().bounds().width
-        return math.max(thumbnail_grid_minimum * 0.5, width / (f64)self.columns())
-
-    func rows() -> i64:
-        let columns = self.columns()
-        return ((i64)self.count + columns - 1) // columns
+        if not self.stale and width == self.laid_width and self.cell == self.laid_cell:
+            return
+        self.rows.arrange(self.aspects, width, self.cell, gap)
+        self.laid_width = width
+        self.laid_cell = self.cell
+        self.stale = false
 
     func scroll_limit() -> f64:
-        let content = (f64)self.rows() * self.side()
-        return math.max(0.0, content - self.box.value().bounds().height)
+        self.arranged()
+        return math.max(0.0, self.rows.content - self.box.value().bounds().height)
 
-    ## The first item whose cell shows, and one past the last (empty when the
+    ## The first item whose tile shows, and one past the last (empty when the
     ## grid is not laid out yet).
     pub func first_visible() -> i64:
-        let side = self.side()
-        let row = (i64)(self.scroll / side)
-        return smaller((i64)self.count, row * self.columns())
+        self.arranged()
+        let row = self.rows.row_at(self.scroll)
+        return self.rows.first_of(row) if row >= 0 else 0
 
     pub func last_visible() -> i64:
-        let side = self.side()
-        let height = self.box.value().bounds().height
-        let row = (i64)((self.scroll + height) / side) + 1
-        return smaller((i64)self.count, row * self.columns())
+        self.arranged()
+        let row = self.rows.row_at(self.scroll + self.box.value().bounds().height)
+        return self.rows.end_of(row) if row >= 0 else 0
 
     ## The item under the local point (`x`, `y`), or -1.
     pub func item_at(x: f64, y: f64) -> i64:
-        let side = self.side()
-        if x < 0.0 or y < 0.0 or x >= side * (f64)self.columns():
-            return -1
-        let index = (i64)((y + self.scroll) / side) * self.columns() + (i64)(x / side)
-        return index if index < (i64)self.count else -1
+        self.arranged()
+        return self.rows.item_at(x, y + self.scroll)
+
+    ## Where item `index`'s tile is, in local points.
+    func tile(index: i64) -> gpu.Rect:
+        let row = self.rows.row_of(index)
+        return gpu.Rect(self.rows.x_of(index), self.rows.top_of(row) - self.scroll, self.rows.width_of(index), self.rows.height_of(row))
 
     ## Scroll item `index` into view.
     pub func reveal(index: i64):
         if index < 0 or index >= (i64)self.count:
             return
-        let side = self.side()
-        let top = (f64)(index // self.columns()) * side
+        self.arranged()
+        let row = self.rows.row_of(index)
+        let top = self.rows.top_of(row) - gap
+        let bottom = self.rows.top_of(row) + self.rows.height_of(row) + gap
         let height = self.box.value().bounds().height
         if top < self.scroll:
-            self.scroll = top
-        elif top + side > self.scroll + height:
-            self.scroll = math.max(0.0, top + side - height)
+            self.scroll = math.max(0.0, top)
+        elif bottom > self.scroll + height:
+            self.scroll = math.max(0.0, bottom - height)
         self.box.value().invalidate()
 
     # mark: selection ===========================================================================
@@ -294,63 +352,59 @@ pub struct ThumbnailGrid: Widget:
         let theme = self.box.value().theme()
         try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.background)
         self.scroll = math.clamp(self.scroll, 0.0, self.scroll_limit())
-        let side = self.side()
-        let columns = self.columns()
         let hovered = self.item_at(self.box.value().pointer_position().x, self.box.value().pointer_position().y) if self.box.value().contains_pointer() else -1
         var index = self.first_visible()
         let last = self.last_visible()
         while index < last:
-            let x = (f64)(index % columns) * side
-            let y = (f64)(index // columns) * side - self.scroll
-            try self.paint_cell(&painter, index, gpu.Rect(x, y, side, side), index == hovered, theme)
+            try self.paint_tile(&painter, index, self.tile(index), index == hovered, theme)
             index += 1
         if self.box.value().is_focused():
             try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.accent)
-        let content = (f64)self.rows() * side
+        let content = self.rows.content
         if content > size.height and size.height > 0.0:
             let thumb = math.max(24.0, size.height * size.height / content)
             let position = self.scroll / math.max(1.0, content - size.height) * math.max(0.0, size.height - thumb)
             try painter.rectangle(gpu.Rect(math.max(0.0, size.width - 6.0), position, 4.0, thumb), theme.border)
 
-    ## One cell: a frame, the picture fitted inside with a margin, the badges, and
-    ## the selection outline.
-    func paint_cell(painter: Painter*, index: i64, frame: gpu.Rect, hovered: bool, theme: Theme) -> !:
+    ## One tile: the picture filling it (cropped to the tile should their shapes
+    ## differ), the badges over it, and the selection's frame around it.
+    func paint_tile(painter: Painter*, index: i64, frame: gpu.Rect, hovered: bool, theme: Theme) -> !:
         let at = (usize)index
         let chosen = self.picked.contains(index)
-        let margin = math.max(3.0, frame.width * 0.06)
-        let inner = gpu.Rect(frame.x + 2.0, frame.y + 2.0, frame.width - 4.0, frame.height - 4.0)
-        if chosen:
-            try painter.rectangle(inner, theme.raised)
-        elif hovered:
-            try painter.rectangle(inner, theme.hover())
         let badge = self.badges[at]
-        let room = gpu.Rect(frame.x + margin, frame.y + margin, frame.width - margin * 2.0, frame.height - margin * 2.0)
         if let held = self.pictures[at]:
             let picture = held.value()
-            let fitted = fit(room, (f64)picture.width(), (f64)picture.height())
-            try painter.image(held, fitted, opacity = 0.35 if badge.flag < 0 else 1.0)
+            try painter.image(held, frame, source = cover(frame, picture.width(), picture.height()), opacity = 0.35 if badge.flag < 0 else 1.0)
         else:
-            try painter.rectangle(gpu.Rect(room.x + room.width * 0.1, room.y + room.height * 0.2, room.width * 0.8, room.height * 0.6), theme.sunken)
-        try self.paint_badges(painter, badge, room, theme)
+            try painter.rectangle(frame, theme.sunken)
+        if hovered and not chosen:
+            try painter.rectangle(frame, theme.foreground, opacity = 0.08)
+        try self.paint_badges(painter, badge, frame, theme)
         if chosen:
-            let edge = 2.0 if index == self.picked.lead else 1.0
-            try outline(painter, inner, edge, theme.accent)
+            let edge = 3.0 if index == self.picked.lead else 2.0
+            try outline(painter, gpu.Rect(frame.x - edge, frame.y - edge, frame.width + edge * 2.0, frame.height + edge * 2.0), edge, theme.accent)
 
+    ## The badges inside `room`, each on a dark chip so it reads over any photo.
     func paint_badges(painter: Painter*, badge: Badges, room: gpu.Rect, theme: Theme) -> !:
-        let mark = math.clamp(room.width * 0.07, 7.0, 14.0)
+        let mark = math.clamp(room.height * 0.07, 7.0, 14.0)
+        let chip = gpu.Color(0.0, 0.0, 0.0)
         if badge.rating > 0:
+            let stars = (f64)badge.rating
+            try painter.rounded_rectangle(gpu.Rect(room.x + 3.0, room.y + room.height - mark * 1.4 - 3.0, mark * (0.5 + stars * 1.15), mark * 1.4), chip, mark * 0.3, opacity = 0.5)
             for star in 0..<(usize)badge.rating:
-                let cx = room.x + mark * 0.7 + (f64)star * mark * 1.15
-                let cy = room.y + room.height - mark * 0.7
+                let cx = room.x + 3.0 + mark * 0.82 + (f64)star * mark * 1.15
+                let cy = room.y + room.height - mark * 0.7 - 3.0
                 try paint_star(painter, cx, cy, mark * 0.55, theme.foreground)
         if badge.label > 0:
-            try painter.rounded_rectangle(gpu.Rect(room.x + 3.0, room.y + 3.0, mark, mark), label_color(badge.label), mark * 0.25)
-        if badge.flag > 0:
-            try icons.draw_named(painter, "flag", gpu.Rect(room.x + room.width - mark * 1.6, room.y + 2.0, mark * 1.4, mark * 1.4), theme.accent)
-        elif badge.flag < 0:
-            try icons.draw_named(painter, "close", gpu.Rect(room.x + room.width - mark * 1.6, room.y + 2.0, mark * 1.4, mark * 1.4), theme.muted)
+            try painter.rounded_rectangle(gpu.Rect(room.x + 4.0, room.y + 4.0, mark, mark), label_color(badge.label), mark * 0.25)
+        let corner = gpu.Rect(room.x + room.width - mark * 1.8 - 3.0, room.y + 3.0, mark * 1.8, mark * 1.8)
+        if badge.flag != 0:
+            try painter.rounded_rectangle(corner, chip, mark * 0.3, opacity = 0.5)
+            try icons.draw_named(painter, "flag" if badge.flag > 0 else "close", gpu.Rect(corner.x + mark * 0.2, corner.y + mark * 0.2, mark * 1.4, mark * 1.4), theme.accent if badge.flag > 0 else theme.foreground)
         if badge.edited:
-            try icons.draw_named(painter, "color-correction", gpu.Rect(room.x + room.width - mark * 1.6, room.y + room.height - mark * 1.6, mark * 1.4, mark * 1.4), theme.muted)
+            let place = gpu.Rect(corner.x, room.y + room.height - mark * 1.8 - 3.0, mark * 1.8, mark * 1.8)
+            try painter.rounded_rectangle(place, chip, mark * 0.3, opacity = 0.5)
+            try icons.draw_named(painter, "color-correction", gpu.Rect(place.x + mark * 0.2, place.y + mark * 0.2, mark * 1.4, mark * 1.4), theme.foreground)
 
     # mark: input ===============================================================================
 
@@ -388,7 +442,7 @@ pub struct ThumbnailGrid: Widget:
                     let steps = event.scroll_y if event.scroll_unit == input.ScrollUnit.lines else event.scroll_y / 20.0
                     self.set_cell_size(self.cell * math.pow(1.1, steps))
                     return 2
-                let scale = 1.0 if event.scroll_unit == input.ScrollUnit.points else self.side() * 0.5
+                let scale = 1.0 if event.scroll_unit == input.ScrollUnit.points else self.cell * 0.5
                 self.scroll = math.clamp(self.scroll - event.scroll_y * scale, 0.0, self.scroll_limit())
                 self.box.value().invalidate()
             .pointer_down:
@@ -435,8 +489,8 @@ pub struct ThumbnailGrid: Widget:
         if event.key == input.Key.a and (event.meta or event.control):
             self.select_all()
             return 4
-        let columns = self.columns()
-        let page = larger(1, (i64)(self.box.value().bounds().height / self.side())) * columns
+        self.arranged()
+        let page = larger(1, (i64)(self.box.value().bounds().height / self.cell))
         let last = (i64)self.count - 1
         var target: i64 = -1
         if event.key == input.Key.right:
@@ -444,13 +498,13 @@ pub struct ThumbnailGrid: Widget:
         elif event.key == input.Key.left:
             target = larger(0, lead - 1)
         elif event.key == input.Key.down:
-            target = smaller(last, lead + columns) if lead >= 0 else 0
+            target = self.row_step(lead, 1) if lead >= 0 else 0
         elif event.key == input.Key.up:
-            target = larger(0, lead - columns) if lead >= 0 else 0
+            target = self.row_step(lead, -1) if lead >= 0 else 0
         elif event.key == input.Key.page_down:
-            target = smaller(last, larger(0, lead) + page)
+            target = self.row_step(larger(0, lead), page)
         elif event.key == input.Key.page_up:
-            target = larger(0, lead - page)
+            target = self.row_step(larger(0, lead), -page)
         elif event.key == input.Key.home:
             target = 0
         elif event.key == input.Key.end:
@@ -464,6 +518,15 @@ pub struct ThumbnailGrid: Widget:
         self.reveal(target)
         return 0
 
+    ## The item `rows` rows from `item` (clamped to the first and last rows)
+    ## nearest below its middle.
+    func row_step(item: i64, rows: i64) -> i64:
+        let row = self.rows.row_of(item)
+        let target = larger(0, smaller((i64)self.rows.rows - 1, row + rows))
+        if target == row:
+            return item
+        return self.rows.nearest_in(target, self.rows.x_of(item) + self.rows.width_of(item) * 0.5)
+
     func checked(index: i64) -> usize!:
         if index < 0 or index >= (i64)self.count:
             error(result.invalid, "no such thumbnail")
@@ -475,6 +538,8 @@ pub struct ThumbnailGrid: Widget:
                 held.release()
         free(self.pictures) in memory.heap
         free(self.badges) in memory.heap
+        free(self.aspects) in memory.heap
+        self.rows.destroy()
         self.count = 0
         self.picked.close()
         self.selected.close()
@@ -508,14 +573,20 @@ func checked_count(count: i64) -> usize!:
         error(result.invalid, "a thumbnail grid holds 0 to 1048576 items")
     return (usize)count
 
-## `room` shrunk to a `width` by `height` picture's aspect, centered.
-func fit(room: gpu.Rect, width: f64, height: f64) -> gpu.Rect:
-    if width <= 0.0 or height <= 0.0:
-        return room
-    let scale = math.min(room.width / width, room.height / height)
-    let w = width * scale
-    let h = height * scale
-    return gpu.Rect(room.x + (room.width - w) * 0.5, room.y + (room.height - h) * 0.5, w, h)
+## The part of a `width` × `height` picture that fills `frame` without
+## stretching: all of it when the shapes match, else its middle, cropped.
+func cover(frame: gpu.Rect, width: i64, height: i64) -> gpu.Region:
+    let wide = (u32)larger(0, width)
+    let high = (u32)larger(0, height)
+    if wide == 0 or high == 0 or frame.width <= 0.0 or frame.height <= 0.0:
+        return gpu.Region(width = wide, height = high)
+    let wanted = frame.width / frame.height
+    let have = (f64)wide / (f64)high
+    if have > wanted:
+        let used = (u32)math.max(1.0, (f64)high * wanted)
+        return gpu.Region(x = (wide - used) // 2, width = used, height = high)
+    let used = (u32)math.max(1.0, (f64)wide / wanted)
+    return gpu.Region(y = (high - used) // 2, width = wide, height = used)
 
 ## A frame `edge` points thick just inside `rectangle`.
 func outline(painter: Painter*, rectangle: gpu.Rect, edge: f64, color: gpu.Color) -> !:
@@ -549,12 +620,13 @@ pub func label_color(label: u8) -> gpu.Color:
 
 pub let thumbnail_grid_type: interop.Type[ThumbnailGrid] = interop.Type[ThumbnailGrid]("ThumbnailGrid", ThumbnailGrid.close, ThumbnailGrid.trace, closeable = true, main_thread = true)
 
-test "fitting keeps the aspect, centered":
-    let fitted = fit(gpu.Rect(0.0, 0.0, 100.0, 100.0), 300.0, 200.0)
-    assert(fitted.width == 100.0 and math.abs(fitted.height - 200.0 / 3.0) < 1.0e-9)
-    assert(fitted.x == 0.0 and math.abs(fitted.y - 50.0 / 3.0) < 1.0e-9)
-    let tall = fit(gpu.Rect(10.0, 10.0, 80.0, 80.0), 100.0, 200.0)
-    assert(tall.width == 40.0 and tall.height == 80.0 and tall.x == 30.0 and tall.y == 10.0)
+test "covering crops the middle of a picture of another shape":
+    let wide = cover(gpu.Rect(0.0, 0.0, 100.0, 100.0), 300, 200)
+    assert(wide.x == 50 and wide.y == 0 and wide.width == 200 and wide.height == 200)
+    let tall = cover(gpu.Rect(0.0, 0.0, 200.0, 100.0), 100, 200)
+    assert(tall.x == 0 and tall.y == 75 and tall.width == 100 and tall.height == 50)
+    let same = cover(gpu.Rect(0.0, 0.0, 150.0, 100.0), 300, 200)
+    assert(same.x == 0 and same.y == 0 and same.width == 300 and same.height == 200)
 
 test "counts are checked":
     _ = checked_count(-1) catch failure:

@@ -1,0 +1,173 @@
+## Justified rows, as photo libraries lay out thumbnails (Flickr, Google Photos,
+## Lightroom's grid without cells): every item keeps its aspect ratio, items fill
+## a row left to right, and each full row is scaled so it spans the width
+## exactly. A row is at most the target height: items join it until it would be
+## wider than the width at that height, then it shrinks to fit. The last row
+## keeps the target height and is not stretched. A gap separates items and rows
+## and frames the whole. ThumbnailGrid draws with it.
+import memory
+from luce_std import math
+
+pub struct JustifiedRows:
+    ## Per item: its row, its left edge and width, in points.
+    var item_row: u32[]
+    var item_x: f64[]
+    var item_width: f64[]
+    ## Per row (`rows` of them): its first item, top and height.
+    var row_first: u32[]
+    var row_top: f64[]
+    var row_height: f64[]
+    pub var rows: usize
+    pub var count: usize
+    ## The height of everything laid out, the bottom gap included.
+    pub var content: f64
+
+    ## Room for `count` items.
+    pub static func make(count: usize) -> JustifiedRows!:
+        var made = JustifiedRows(count = count)
+        made.item_row = try new u32[count] in memory.heap
+        errdefer free(made.item_row) in memory.heap
+        made.item_x = try new f64[count] in memory.heap
+        errdefer free(made.item_x) in memory.heap
+        made.item_width = try new f64[count] in memory.heap
+        errdefer free(made.item_width) in memory.heap
+        made.row_first = try new u32[count + 1] in memory.heap
+        errdefer free(made.row_first) in memory.heap
+        made.row_top = try new f64[count + 1] in memory.heap
+        errdefer free(made.row_top) in memory.heap
+        made.row_height = try new f64[count + 1] in memory.heap
+        return made
+
+    ## Lay out items of aspect ratios `aspects` (width over height) across
+    ## `width` points, rows at most `height` tall, `gap` points apart.
+    pub func arrange(aspects: const f32[], width: f64, height: f64, gap: f64):
+        self.rows = 0
+        var top = gap
+        var first: usize = 0
+        var sum = 0.0
+        for at in 0..<self.count:
+            sum += (f64)aspects[at]
+            let items = (f64)(at - first + 1)
+            if sum * height + gap * (items + 1.0) >= width:
+                let fitted = math.max(1.0, (width - gap * (items + 1.0)) / sum)
+                self.place(aspects, first, at + 1, top, fitted, gap, width)
+                top += fitted + gap
+                first = at + 1
+                sum = 0.0
+        if first < self.count:
+            self.place(aspects, first, self.count, top, height, gap, -1.0)
+            top += height + gap
+        self.row_first[self.rows] = (u32)self.count
+        self.content = top
+
+    ## Items `first..<end` as one row at `top`, `height` tall; a full row's last
+    ## item ends at `width` less the gap exactly (none for the last row).
+    func place(aspects: const f32[], first: usize, end: usize, top: f64, height: f64, gap: f64, width: f64):
+        let row = self.rows
+        self.row_first[row] = (u32)first
+        self.row_top[row] = top
+        self.row_height[row] = height
+        var x = gap
+        for at in first..<end:
+            self.item_row[at] = (u32)row
+            self.item_x[at] = x
+            self.item_width[at] = (f64)aspects[at] * height
+            x += self.item_width[at] + gap
+        if width > 0.0:
+            self.item_width[end - 1] = math.max(1.0, width - gap - self.item_x[end - 1])
+        self.rows += 1
+
+    ## The row holding content height `y`: the last whose top is at or above it
+    ## (the first row above them all); -1 without rows.
+    pub func row_at(y: f64) -> i64:
+        if self.rows == 0:
+            return -1
+        var low: usize = 0
+        var high = self.rows
+        while high - low > 1:
+            let middle = (low + high) // 2
+            if self.row_top[middle] <= y:
+                low = middle
+            else:
+                high = middle
+        return (i64)low
+
+    pub func first_of(row: i64) -> i64:
+        return (i64)self.row_first[(usize)row]
+
+    ## One past the last item of `row`.
+    pub func end_of(row: i64) -> i64:
+        return (i64)self.row_first[(usize)row + 1]
+
+    pub func top_of(row: i64) -> f64:
+        return self.row_top[(usize)row]
+
+    pub func height_of(row: i64) -> f64:
+        return self.row_height[(usize)row]
+
+    pub func row_of(item: i64) -> i64:
+        return (i64)self.item_row[(usize)item]
+
+    pub func x_of(item: i64) -> f64:
+        return self.item_x[(usize)item]
+
+    pub func width_of(item: i64) -> f64:
+        return self.item_width[(usize)item]
+
+    ## The item at content point (`x`, `y`), or -1 (a gap, or past the end).
+    pub func item_at(x: f64, y: f64) -> i64:
+        let row = self.row_at(y)
+        if row < 0 or y < self.top_of(row) or y >= self.top_of(row) + self.height_of(row):
+            return -1
+        for item in self.first_of(row)..<self.end_of(row):
+            let left = self.x_of(item)
+            if x >= left and x < left + self.width_of(item):
+                return item
+        return -1
+
+    ## The item of `row` whose middle is nearest `x`.
+    pub func nearest_in(row: i64, x: f64) -> i64:
+        var best = self.first_of(row)
+        var distance = 1.0e300
+        for item in self.first_of(row)..<self.end_of(row):
+            let away = math.abs(self.x_of(item) + self.width_of(item) * 0.5 - x)
+            if away < distance:
+                distance = away
+                best = item
+        return best
+
+    pub func destroy():
+        free(self.item_row) in memory.heap
+        free(self.item_x) in memory.heap
+        free(self.item_width) in memory.heap
+        free(self.row_first) in memory.heap
+        free(self.row_top) in memory.heap
+        free(self.row_height) in memory.heap
+        self.rows = 0
+        self.count = 0
+
+test "full rows span the width; the last keeps the target height":
+    var aspects: f32[5] = [1.5, 1.5, 0.75, 1.0, 1.5]
+    var rows = try JustifiedRows.make(5)
+    defer rows.destroy()
+    rows.arrange(aspects, 390.0, 100.0, 4.0)
+    # 1.5 + 1.5 + 0.75 = 3.75 at 100 is 375, with 16 of gaps 391: past 390, so
+    # the row is full and shrinks to fit.
+    assert(rows.rows == 2)
+    assert(rows.first_of(0) == 0 and rows.end_of(0) == 3)
+    let height = rows.height_of(0)
+    assert(math.abs(height - (390.0 - 16.0) / 3.75) < 1.0e-9 and height <= 100.0)
+    assert(math.abs(rows.x_of(2) + rows.width_of(2) - 386.0) < 1.0e-9)
+    assert(rows.height_of(1) == 100.0 and rows.first_of(1) == 3 and rows.end_of(1) == 5)
+    assert(math.abs(rows.content - (4.0 + height + 4.0 + 100.0 + 4.0)) < 1.0e-9)
+
+test "points find their items, gaps none":
+    var aspects: f32[3] = [1.0, 1.0, 1.0]
+    var rows = try JustifiedRows.make(3)
+    defer rows.destroy()
+    rows.arrange(aspects, 220.0, 100.0, 10.0)
+    # Two squares fill a 220 row: (220 - 30) / 2 = 95 each; the third is alone below.
+    assert(rows.rows == 2 and rows.item_at(20.0, 20.0) == 0 and rows.item_at(150.0, 50.0) == 1)
+    assert(rows.item_at(107.0, 50.0) == -1 and rows.item_at(20.0, 5.0) == -1)
+    assert(rows.item_at(20.0, 120.0) == 2 and rows.item_at(150.0, 120.0) == -1)
+    assert(rows.nearest_in(0, 200.0) == 1 and rows.row_at(0.0) == 0)
