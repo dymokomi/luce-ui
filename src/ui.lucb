@@ -157,6 +157,9 @@ pub type TableColumn = table_view.TableColumn
 pub type TableCell = table_view.TableCell
 pub type CellAlign = table_view.CellAlign
 pub let table_view_type = table_view.table_view_type
+import widgets.histogram
+pub type Histogram = histogram.Histogram
+pub let histogram_type = histogram.histogram_type
 import widgets.thumbnail_grid
 pub type ThumbnailGrid = thumbnail_grid.ThumbnailGrid
 pub let thumbnail_grid_type = thumbnail_grid.thumbnail_grid_type
