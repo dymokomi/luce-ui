@@ -285,6 +285,12 @@ pub struct Application:
         let chosen = try dialogs.save_file(message, name) else return try interop.copy_text("")
         return chosen
 
+    ## Show the desktop's folder dialog and return the chosen folder's path, or an
+    ## empty string when it was canceled.
+    pub func choose_folder(message: str) -> interop.Owned[str]!:
+        let chosen = try dialogs.choose_folder(message) else return try interop.copy_text("")
+        return chosen
+
     ## The registered command with this id, or none — for a keymap or script that
     ## drives the same commands the UI does. Trigger it, then release the reference.
     pub func command(id: str) -> interop.Reference[Command]?:
