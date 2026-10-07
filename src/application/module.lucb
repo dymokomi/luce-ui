@@ -51,6 +51,9 @@ pub struct Application:
     var game: bool
     var target_fps: f64
     var fullscreen: bool
+    ## How the window's surface blends (luce-gpu's `Blending`): linear light, or on encoded
+    ## values, as web content and most native 2D drawing blend.
+    var blending: gpu.Blending
     var session_host: window.Window
     ## The crash hooks `on_crash` added, which `close` removes.
     var crash_hooks: interop.Reference[crash.Hook][]
@@ -58,7 +61,10 @@ pub struct Application:
 
     ## A process started to show a crash report (luce-std's `crash.report_to_show`) shows
     ## it here, in a window of its own, and ends: the program's own window never opens.
-    pub func init(content: interop.Interface[Widget], title: str = "Luce", width: i64 = 800, height: i64 = 600, theme: Theme = Theme(), game: bool = false, fps: f64 = 70.0, fullscreen: bool = false) -> !:
+    ## `blending` is the window surface's (luce-gpu's `Surface.open`): `encoded` suits an
+    ## application whose content blends on encoded values, such as a web browser's pages.
+    pub func init(content: interop.Interface[Widget], title: str = "Luce", width: i64 = 800, height: i64 = 600, theme: Theme = Theme(), game: bool = false, fps: f64 = 70.0, fullscreen: bool = false,
+                  blending: gpu.Blending = gpu.Blending.linear) -> !:
         if not showing_crash:
             let report = try crash.report_to_show()
             if report.value != "":
@@ -97,6 +103,7 @@ pub struct Application:
         self.game = game
         self.target_fps = fps
         self.fullscreen = fullscreen
+        self.blending = blending
         self.session_host = window.Window()
         self.crash_hooks = try new interop.Reference[crash.Hook][2] --- in memory.heap
         self.crash_hook_count = 0
@@ -470,7 +477,7 @@ pub struct Application:
         var device = gpu.Device.open() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer device.destroy()
-        var surface = gpu.Surface.open(device, self.session_host) catch failure:
+        var surface = gpu.Surface.open(device, self.session_host, self.blending) catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer surface.destroy()
         self.session_host.show() catch failure:
