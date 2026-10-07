@@ -1,3 +1,4 @@
+## The UI pixel checks, built and run by main.luc beside this file on macOS.
 ## Read back real Metal pixels through the standard library's test observer.
 ## The UI package itself contains no platform calls or native framework settings.
 from luce_gpu import gpu

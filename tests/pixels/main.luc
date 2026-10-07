@@ -1,0 +1,36 @@
+# Real UI pixels read back from Metal: styles, docking, text, the run loop, presentation
+# retries and the crash window, in windows and composed viewport scopes. The check,
+# readback.lucb and the *_pixels.lucb modules it imports, is Base built with LUCE_BASE and
+# run as its own process under Metal's validation, through a test-only Metal observer
+# (native.lucb). It opens windows, so it needs macOS and a logged-in desktop session.
+from luce_std import files, paths, process
+import platform
+
+let failed = ErrorCode.package(1)
+
+# A logged-in desktop session: launchd's manager is Aqua there, and Background over SSH.
+func desktop() -> bool:
+    let done = process.run("launchctl", ["managername"]) catch failure:
+        return false
+    return done.output.trim() == "Aqua"
+
+pub func main(arguments: list[str]) -> int!:
+    if not platform.macos:
+        print("skip: Metal readback needs macOS")
+        return 0
+    if not desktop():
+        print("skip: no desktop session for the pixel windows")
+        return 0
+    let here = process.variable("LUC_TEST_DIR") else "tests/pixels"
+    let base = process.variable("LUCE_BASE") else "luce-base"
+    let work = "build/tests/pixels"
+    files.ensure_directory(work)
+    let output = paths.join(work, "readback")
+    let built = process.run(base, ["build", paths.join(here, "readback.lucb"), "--native", "-o", output])
+    if built.exit_code != 0:
+        error(failed, f"readback.lucb does not build:\n{built.output}{built.error_output}")
+    let ran = process.run(output, [], "", ["MTL_DEBUG_LAYER=1", "MTL_SHADER_VALIDATION=1"])
+    print(ran.output.trim_end())
+    if ran.exit_code != 0:
+        error(failed, f"readback: exit status {ran.exit_code}\n{ran.error_output}")
+    return 0

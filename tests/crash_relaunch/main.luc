@@ -1,0 +1,119 @@
+# A luce-ui program that traps is started again to show its report. app.lucb, built as a
+# package of its own ("crash-relaunch" 0.0.7, which names the report), traps in its run
+# loop in a scratch home; then the report, the crash hook's recovery copy and the second
+# process are checked: it carries LUCE_CRASH_REPORT, reads the report and keeps its crash
+# window up until it is ended here. The window needs macOS and a desktop session.
+from luce_std import files, paths, process
+import platform
+import thread
+
+let failed = ErrorCode.package(1)
+
+# A logged-in desktop session: launchd's manager is Aqua there, and Background over SSH.
+func desktop() -> bool:
+    let done = process.run("launchctl", ["managername"]) catch failure:
+        return false
+    return done.output.trim() == "Aqua"
+
+# The processes running `binary`, by PID: its path is unique to this run.
+func processes_of(binary: str) -> list[str]!:
+    var found: list[str] = []
+    for line in process.run("ps", ["-axo", "pid=,command="]).output.lines():
+        let words = line.trim().split(" ")
+        if words.length >= 2 and line.trim().remove_prefix(words[0]).trim() == binary:
+            found.append(words[0])
+    return found
+
+# The reports under `crashes` named for the app, without a `.seen` suffix.
+func reports(crashes: str) -> list[str]!:
+    var found: list[str] = []
+    if not files.exists(crashes):
+        return found
+    for name in files.list(crashes):
+        if name.starts_with("crash-relaunch-") and ".crash" in name:
+            found.append(paths.join(crashes, name.remove_suffix(".seen")))
+    return found
+
+# End the reporters: politely, then for certain (a pid already gone just fails `kill`).
+func end(pids: list[str]) -> unit!:
+    for signal in ["-TERM", "-KILL"]:
+        for pid in pids:
+            _ = process.run("kill", [signal, pid])
+        thread.sleep(500)
+
+pub func main(arguments: list[str]) -> int!:
+    if not platform.macos:
+        print("skip: the crash window is checked on macOS")
+        return 0
+    if not desktop():
+        print("skip: no desktop session for the crash window")
+        return 0
+    let here = process.variable("LUC_TEST_DIR") else "tests/crash_relaunch"
+    let base = process.variable("LUCE_BASE") else "luce-base"
+    let root = process.current_directory()
+    let work = paths.join(root, "build/tests/crash_relaunch/work")
+    if files.exists(work):
+        files.remove_tree(work)
+    let home = paths.join(work, "home")
+    let project = paths.join(work, "project")
+    files.ensure_directory(home)
+    files.ensure_directory(paths.join(project, "src"))
+    files.write_text(paths.join(project, "src/main.lucb"), files.read_text(paths.join(here, "app.lucb")))
+    let workspace = paths.directory(root)
+    files.write_text(paths.join(project, "package.prisma"), f"#prisma 4.0\ndef package \"crash-relaunch\" {{\n    str version = \"0.0.7\"\n    def dependency \"luce-ui\" {{\n        str path = \"{root}\"\n    }}\n    def dependency \"luce-std\" {{\n        str path = \"{paths.join(workspace, "luce-std")}\"\n    }}\n}}\n")
+    let binary = paths.join(work, "crash-relaunch")
+    let built = process.run(base, ["build", paths.join(project, "src/main.lucb"), "--native", "-o", binary])
+    if built.exit_code != 0:
+        error(failed, f"app.lucb does not build:\n{built.output}{built.error_output}")
+    let outcome = check(binary, home) catch failure:
+        end(processes_of(binary))
+        error(failure.code, failure.message)
+    end(outcome)
+    files.remove_tree(work)
+    return 0
+
+# Run the app, check what follows, and answer the reporter processes left to end.
+func check(binary: str, home: str) -> list[str]!:
+    let result = process.run("env", ["-u", "LUCE_CRASH_REPORT", f"HOME={home}", binary])
+    if result.exit_code != 1:
+        error(failed, f"the program exited {result.exit_code}: {result.error_output}")
+    if not ("a deliberate trap in the run loop" in result.error_output):
+        error(failed, f"no trap message: {result.error_output}")
+    let crashes = paths.join(home, ".luce/crashes")
+    let report = wait_for_report(crashes)
+    let recovered = paths.join(home, ".luce/recovery/crash-relaunch/scene.recovered")
+    if files.read_text(recovered) != "the scene, as it was":
+        error(failed, "the recovery copy differs")
+    var reporters: list[str] = []
+    for attempt in 0..<200:
+        reporters = processes_of(binary)
+        if reporters.length > 0:
+            break
+        thread.sleep(100)
+    if reporters.length != 1:
+        error(failed, f"expected one reporter, found {reporters}")
+    let environment = process.run("ps", ["eww", "-o", "command=", "-p", reporters[0]]).output
+    if not (f"LUCE_CRASH_REPORT={report}" in environment):
+        error(failed, f"the reporter lacks LUCE_CRASH_REPORT: {environment}")
+    # the reporter read the report (and marked it taken) to fill its window
+    let seen = f"{report}.seen"
+    for attempt in 0..<200:
+        if files.exists(seen) and files.read_text(seen) != "":
+            break
+        thread.sleep(100)
+    let text = files.read_text(seen)
+    if not ("app: crash-relaunch\nversion: 0.0.7\n" in text) or not (f"recovery: {recovered}" in text):
+        error(failed, f"the report: {text}")
+    # the window stays up, waiting for a choice
+    thread.sleep(1500)
+    if processes_of(binary) != reporters:
+        error(failed, "the crash window did not stay up")
+    return reporters
+
+func wait_for_report(crashes: str) -> str!:
+    for attempt in 0..<200:
+        let found = reports(crashes)
+        if found.length > 0:
+            return found[0]
+        thread.sleep(100)
+    error(failed, "no crash report appeared")

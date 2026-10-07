@@ -36,14 +36,14 @@ Build the sibling `luce-base` and `luce` repositories (main; `python3
 ../luce-base/tools/checkout_main.py . ../luce` checks out what is missing). Then run:
 
 ```sh
-./test.sh
-python3 tests/gpu.py
+luc test
 ```
 
-The portable suite compiles Base and Luce consumers in native optimization levels
-0–3 and both C comparison modes. The GPU suite requires an actual macOS desktop
-and verifies Metal pixels, clipping, resize and expired viewport references, and that a
-program that traps is started again to show its crash window.
+That runs every module's `test` blocks and four test programs: `tests/ownership` (a Base
+consumer) and `tests/controls` (Luce custom widgets) everywhere, and on a macOS desktop
+`tests/pixels` (Metal pixels, clipping, resize and expired viewport references) and
+`tests/crash_relaunch` (a program that traps is started again to show its crash window);
+without a desktop those two are skipped.
 Test binaries and compiler scratch files are temporary. A specifically requested
 consumer binary can be built with `python3 tools/build.py ENTRY -o OUTPUT`.
 
@@ -55,7 +55,7 @@ future work. MIT or Apache-2.0, at your option.
 
 ## Windows x64
 
-Build sibling `luce-base` and `luce` checkouts with `python tools/build_windows.py` in each compiler repository. Run `python tests/run.py` in this repository; the runner selects the sibling Windows executables.
+Build sibling `luce-base` and `luce` checkouts with `python tools/build_windows.py` in each compiler repository. Run `luc test` in this repository.
 For real windows and rendering, install the Vulkan SDK and start a fresh terminal with `VULKAN_SDK` set. The sibling `luce-demos` UI and sphere applications exercise Win32/Vulkan presentation. CPU tests run in hosted Windows CI; GPU smoke tests require an interactive desktop and Vulkan hardware.
 
 Typography is shared explicitly: `let font = Font()`, then

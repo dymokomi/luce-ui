@@ -1,23 +1,24 @@
 #prisma 4.0
-def package "luce_ui_tests" {
+def package "luce-ui-controls-test" {
     str source = "."
-    def dependency "luce_ui" {
-        str path = ".."
+    def dependency "luce-ui" {
+        str owner = "dymokomi"
+        str path = "../.."
     }
     def dependency "luce-gpu" {
         str owner = "dymokomi"
-        str path = "../../luce-gpu"
+        str path = "../../../luce-gpu"
     }
     def dependency "luce-std" {
         str owner = "dymokomi"
-        str path = "../../luce-std"
+        str path = "../../../luce-std"
     }
     def dependency "luce-3d" {
         str owner = "dymokomi"
-        str path = "../../luce-3d"
+        str path = "../../../luce-3d"
     }
     def dependency "luce-window" {
         str owner = "dymokomi"
-        str path = "../../luce-window"
+        str path = "../../../luce-window"
     }
 }

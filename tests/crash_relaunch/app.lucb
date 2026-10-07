@@ -1,5 +1,5 @@
 ## A luce-ui program that traps in its run loop after adding a crash hook that saves a
-## recovery copy. crash_relaunch.py checks what follows: the report, the hook's copy, and
+## recovery copy. main.luc beside it checks what follows: the report, the hook's copy, and
 ## the program started again to show the report in its crash window.
 import interop
 import memory
