@@ -12,9 +12,17 @@ extend ParameterPanel:
     func row_height() -> f64:
         return self.box.value().theme().row_height(self.font)
 
-    ## A folder heading's line, a little taller so sections read apart.
+    ## A folder heading's line, a little taller so sections read apart (a row's
+    ## height in a dense panel), the space after it, and the space before one that
+    ## follows other rows.
     func folder_height() -> f64:
-        return self.row_height() + 2.0
+        return self.row_height() if self.dense else self.row_height() + 2.0
+
+    func folder_gap() -> f64:
+        return 1.0 if self.dense else line_gap
+
+    func folder_lead() -> f64:
+        return 2.0 if self.dense else 4.0
 
     static func separator_height() -> f64:
         return 9.0
@@ -42,7 +50,7 @@ extend ParameterPanel:
                 continue
             members = 1
             if kind == ParameterKind.folder:
-                y += (4.0 if y > self.margin * 0.5 else 0.0) + self.folder_height() + line_gap
+                y += (self.folder_lead() if y > self.margin * 0.5 else 0.0) + self.folder_height() + self.folder_gap()
             elif kind == ParameterKind.separator:
                 y += ParameterPanel.separator_height()
             else:
@@ -107,13 +115,13 @@ extend ParameterPanel:
             self.rows[index].shown = true
             if kind == ParameterKind.folder:
                 if y > self.margin * 0.5:
-                    y += 4.0
+                    y += self.folder_lead()
                 self.rows[index].y = y
                 self.rows[index].height = self.folder_height()
                 self.rows[index].control_x = self.margin
                 self.rows[index].control_width = math.max(0.0, width - self.margin * 2.0)
                 self.rows[index].label_x = -1.0
-                y += self.folder_height() + line_gap
+                y += self.folder_height() + self.folder_gap()
             elif kind == ParameterKind.separator:
                 self.rows[index].y = y
                 self.rows[index].height = ParameterPanel.separator_height()

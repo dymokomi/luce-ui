@@ -227,6 +227,9 @@ pub struct ParameterPanel: Widget:
     var fixed_label: f64
     ## Room left and right of the rows, and half of it above and below.
     var margin: f64
+    ## Folder headings at a row's height with a hairline between them, for long
+    ## columns of sections (a photo editor's develop panel).
+    var dense: bool
     ## Folders the user closed, by name, as `|name|name|`: remembered across `set_specs`.
     var closed: interop.Owned[str]
     ## The width rows were placed for, and whether placing is due.
@@ -272,8 +275,10 @@ pub struct ParameterPanel: Widget:
 
     ## A panel of `specs` in `font`; `label_width` fixes the label column (0 fits it
     ## to the labels), and `margin` is the room left and right of the rows (0 lines
-    ## them up with what is above and below the panel).
-    pub func init(specs: const ParameterSpec[], font: interop.Reference[Font]? = none, label_width: f64 = 0.0, margin: f64 = 8.0) -> !:
+    ## them up with what is above and below the panel). `dense` packs folder headings
+    ## tighter.
+    pub func init(specs: const ParameterSpec[], font: interop.Reference[Font]? = none, label_width: f64 = 0.0, margin: f64 = 8.0,
+                  dense: bool = false) -> !:
         if not math.is_finite(label_width) or label_width < 0.0 or label_width > 4096.0:
             error(result.invalid, "a label column is 0..4096 points")
         if not math.is_finite(margin) or margin < 0.0 or margin > 64.0:
@@ -331,6 +336,7 @@ pub struct ParameterPanel: Widget:
         self.input = line
         self.fixed_label = label_width
         self.margin = margin
+        self.dense = dense
         self.closed = interop.Owned[str]("")
         self.placed_width = -1.0
         self.stale = true
