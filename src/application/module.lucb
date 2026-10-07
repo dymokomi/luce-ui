@@ -29,6 +29,7 @@ pub struct Application:
     var tree: Tree
     var commands: Commands
     let frames: interop.Signal[f64]
+    let appearances: interop.Signal[input.Appearance]
     var close_handler: interop.Callback[unit, bool]?
     var error_handler: interop.Callback[str, unit]?
     let width: i64
@@ -81,10 +82,14 @@ pub struct Application:
         var tree = try Tree(content, theme)
         errdefer tree.close()
         let frames = try interop.Signal[f64]()
+        errdefer frames.release()
+        let appearances = try interop.Signal[input.Appearance]()
+        errdefer appearances.release()
         self.title_text = copied
         self.tree = tree
         self.commands = Commands()
         self.frames = frames
+        self.appearances = appearances
         self.close_handler = none
         self.error_handler = none
         self.width = width
@@ -226,6 +231,23 @@ pub struct Application:
         try self.check()
         return try self.frames.connect(callback)
 
+    ## Whether the system shows light or dark, as CSS's `prefers-color-scheme` and
+    ## AppKit's NSAppearance say it (luce-window's `window.appearance`). Answers before
+    ## `run` too; light where the system offers no setting.
+    pub func appearance() -> input.Appearance:
+        if self.running:
+            return self.session_host.appearance() catch failure:
+                recover input.Appearance.light
+        return window.appearance() catch failure:
+            recover input.Appearance.light
+
+    ## Call `callback` with the new appearance each time the system switches between
+    ## light and dark while the application runs, on the main thread, between frames.
+    ## Releasing the connection stops the calls.
+    pub func on_appearance(callback: interop.Callback[input.Appearance, unit]) -> interop.Reference[interop.Connection]!:
+        try self.check()
+        return try self.appearances.connect(callback)
+
     ## Returning false keeps the native window open, for example while unsaved
     ## documents await an explicit Save or Discard action in the application.
     pub func set_close_handler(callback: interop.Callback[unit, bool]) -> !:
@@ -335,6 +357,12 @@ pub struct Application:
     ## An event with `cancelled` set becomes focus loss; otherwise command
     ## shortcuts see the event first (unless a popup is open), then the tree.
     pub func dispatch(event: Event) -> interop.Outcome[unit]:
+        # An appearance change goes to `on_appearance`, outside any operation, so a
+        # callback may restyle the tree.
+        if event.kind == input.EventKind.appearance_changed:
+            self.check() catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            return self.appearances.emit(event.appearance)
         self.begin_operation() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer self.end_operation()
@@ -663,7 +691,7 @@ pub struct Application:
             let resized = host.size() catch failure:
                 return result.failure[unit](failure.code, failure.message)
             return self.layout(resized.width, resized.height)
-        let dispatched = self.dispatch_native(event)
+        let dispatched = self.appearances.emit(event.appearance) if event.kind == input.EventKind.appearance_changed else self.dispatch_native(event)
         if dispatched.is_success():
             return dispatched
         if let handler = self.error_handler:
@@ -765,6 +793,8 @@ pub struct Application:
         self.watches.close()
         self.frames.close()
         self.frames.release()
+        self.appearances.close()
+        self.appearances.release()
         self.tree.close()
         self.title_text.release()
         free(self.crash_hooks) in memory.heap
@@ -780,6 +810,7 @@ pub struct Application:
         self.timers.trace(visit, context)
         self.watches.trace(visit, context)
         self.frames.trace(visit, context)
+        self.appearances.trace(visit, context)
         self.tree.trace(visit, context)
         self.title_text.trace(visit, context)
 

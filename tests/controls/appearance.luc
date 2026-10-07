@@ -1,0 +1,23 @@
+from luce_ui.ui import Application, Appearance, Button, Event
+from luce_window.input import EventKind
+
+class Follower:
+    var seen: list[Appearance] = []
+    pub func follow(self, appearance: Appearance):
+        self.seen.append(appearance)
+
+# The system's appearance reads before run, and an appearance_changed event reaches
+# on_appearance's callbacks until their connection is released.
+pub func appearance_follows() -> unit!:
+    let app = Application(Button("theme"))
+    let now = app.appearance()
+    assert(now == Appearance.light or now == Appearance.dark)
+    let follower = Follower()
+    let connection = app.on_appearance(follower.follow)
+    app.dispatch(Event(kind = EventKind.appearance_changed, appearance = Appearance.dark))
+    app.dispatch(Event(kind = EventKind.appearance_changed, appearance = Appearance.light))
+    assert(follower.seen.length == 2 and follower.seen[0] == Appearance.dark and follower.seen[1] == Appearance.light)
+    connection.disconnect()
+    app.dispatch(Event(kind = EventKind.appearance_changed, appearance = Appearance.dark))
+    assert(follower.seen.length == 2)
+    app.close()

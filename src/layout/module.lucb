@@ -102,6 +102,8 @@ pub struct Event:
     pub var altitude: f64
     pub var rotation: f64
     pub var tangential: f64
+    ## The new appearance, for appearance_changed (Application's `on_appearance`).
+    pub var appearance: input.Appearance
 
 ## layout returns one retained reference to the same Layout for this widget's
 ## lifetime. A measure/draw/event implementation may fail or reenter application

@@ -95,6 +95,13 @@ is one font line with one character cell of horizontal inset. A subtree can use
 `layout().set_theme(...)`, then `inherit_theme()` to return to its parent's theme.
 Typography remains explicit: pass one shared `Font` through your view components.
 
+To follow the system's light or dark setting (what CSS calls `prefers-color-scheme`),
+read `app.appearance()` (`Appearance.light` or `.dark`, also before `run`) and pick a
+theme, then connect `app.on_appearance(callback)`: the loop calls it with the new
+value when the user switches, and the callback can call `set_theme`. Release or
+`disconnect` the connection to stop. The default `Theme()` is dark; a light palette is
+the application's to define.
+
 See [composition contracts](docs/DESIGN.md), [the API](docs/API.md), and
 [text change/highlight contracts](docs/TEXT-EDITOR.md). The separate
 [luced editor](https://github.com/dymokomi/luced) composes named Luce views from

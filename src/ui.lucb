@@ -17,6 +17,8 @@ from luce_window import input
 import platform
 import cursor
 pub type Cursor = input.Cursor
+## Light or dark, as Application's `appearance` and `on_appearance` report it.
+pub type Appearance = input.Appearance
 pub type CursorSource = cursor.CursorSource
 import painter
 import result
