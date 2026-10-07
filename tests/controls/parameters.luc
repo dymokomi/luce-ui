@@ -214,7 +214,7 @@ pub func parameters() -> unit!:
     panel.reset(group)
     assert(panel.text(group) == "*")
 
-    # The label column follows a drag of its edge.
+    # The label column stays where it fits the labels: a drag at its edge moves nothing.
     let before = panel.label_width()
     let edge_x = origin.x + 6.0 + before + 3.0
     let row_y = origin.y + panel.row_bounds(size).y + 8.0
@@ -222,7 +222,7 @@ pub func parameters() -> unit!:
     app.dispatch(Event(kind = EventKind.pointer_moved, x = edge_x + 30.0, y = row_y))
     app.dispatch(Event(kind = EventKind.pointer_up, x = edge_x + 30.0, y = row_y))
     render(app)
-    assert(panel.label_width() == before + 30.0)
+    assert(panel.label_width() == before)
 
     began.disconnect()
     changed.disconnect()

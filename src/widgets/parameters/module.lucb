@@ -185,7 +185,6 @@ let part_browse: i64 = 6
 let part_swatch: i64 = 7
 let part_button: i64 = 8
 let part_folder: i64 = 9
-let part_divider: i64 = 10
 let part_chip: i64 = 11
 
 ## Which popup is open for which row: none, a menu parameter's items, the context menu.
@@ -246,7 +245,6 @@ pub struct ParameterPanel: Widget:
     var press_x: f64
     var press_y: f64
     var press_values: f64[4]
-    var press_label: f64
     ## The rate a scrub moves at; a modifier pressed mid-drag changes it from where the pointer is.
     var press_rate: f64
     var scrubbing: bool
@@ -349,7 +347,6 @@ pub struct ParameterPanel: Widget:
         self.press_x = 0.0
         self.press_y = 0.0
         self.press_values = [0.0, 0.0, 0.0, 0.0]
-        self.press_label = 0.0
         self.press_rate = 0.0
         self.scrubbing = false
         self.laddering = false

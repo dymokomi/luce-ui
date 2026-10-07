@@ -58,8 +58,8 @@ extend ParameterPanel:
             previous = (i64)index
         return y + self.margin * 0.5
 
-    ## The label column's width in a panel `width` wide: what the host or a
-    ## drag fixed, else the widest label that goes there, within reason.
+    ## The label column's width in a panel `width` wide: what the host fixed, else
+    ## the widest label that goes there, within reason.
     func label_column(width: f64) -> f64:
         let advance = self.font.value().advance()
         let most = math.max(advance * 4.0, width * 0.45)
@@ -280,8 +280,6 @@ extend ParameterPanel:
             # Joined rows share a line: find the member under the pointer.
             if x >= row.control_x + row.control_width:
                 continue
-            if x >= label_end - 2.0 and x < label_end + 8.0 and row.label_x < 0.0:
-                return ((i64)index, part_divider, 0)
             if x < label_end and row.label_x < 0.0 and x >= self.margin:
                 return ((i64)index, part_label, 0)
             return ((i64)index, part_none, 0)

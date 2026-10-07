@@ -178,8 +178,8 @@ extend ParameterPanel:
     pub func label_width() -> f64:
         return self.label_column(self.placed_width if self.placed_width > 0.0 else 320.0)
 
-    ## Fix the label column at `width` points (a host restoring what the user
-    ## dragged it to); 0 fits it to the labels again.
+    ## Fix the label column at `width` points (a host lining panels up); 0 fits it
+    ## to the labels again.
     pub func set_label_width(width: f64) -> !:
         if not math.is_finite(width) or width < 0.0 or width > 4096.0:
             error(result.invalid, "a label column is 0..4096 points")

@@ -69,11 +69,9 @@ extend ParameterPanel:
     ## Scrubbable parts show the resize cursor, as every scrubber does; typing
     ## fields the text cursor; things to click the pointer.
     func cursor_for(row: i64, part: i64) -> input.Cursor:
-        if row < 0 or (part != part_folder and part != part_divider and not self.enabled((usize)row)):
+        if row < 0 or (part != part_folder and not self.enabled((usize)row)):
             return input.Cursor.arrow
         let kind = self.rows[(usize)row].kind
-        if part == part_divider:
-            return input.Cursor.resize_horizontal
         if (part == part_field or part == part_label) and numeric(kind):
             return input.Cursor.resize_horizontal
         if part == part_field:
@@ -83,12 +81,6 @@ extend ParameterPanel:
         return input.Cursor.pointer
 
     func moved(event: Event) -> !:
-        if self.press_part == part_divider:
-            let advance = self.font.value().advance()
-            self.fixed_label = math.clamp(self.press_label + event.x - self.press_x, advance * 3.0, math.max(advance * 3.0, self.placed_width - 80.0))
-            self.stale = true
-            self.box.value().invalidate()
-            return
         if self.laddering:
             try self.climb(event)
             return
@@ -119,11 +111,6 @@ extend ParameterPanel:
             try self.remember_folder(self.rows[index].name.value, open)
             self.stale = true
             self.box.value().invalidate()
-            return
-        if part == part_divider:
-            self.press_part = part_divider
-            self.press_x = event.x
-            self.press_label = self.label_column(self.placed_width)
             return
         if not self.enabled(index):
             return
@@ -168,7 +155,7 @@ extend ParameterPanel:
         self.press_part = part_none
         self.scrubbing = false
         self.box.value().invalidate()
-        if part == part_divider or row < 0 or row >= (i64)self.total:
+        if row < 0 or row >= (i64)self.total:
             return
         if scrubbed or part == part_slider:
             try self.finish()
