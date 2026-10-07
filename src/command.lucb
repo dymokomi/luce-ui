@@ -438,5 +438,6 @@ test "a shortcut round-trips through its storable chord":
         assert(stored.value == chord)
     let shown = try (try Shortcut.parse("cmd+shift+s")).text()
     defer shown.release()
-    assert(shown.value == "⇧⌘S")
+    # the menu label is the platform's: Mac glyphs, else the modifiers spelled out
+    assert(shown.value == ("⇧⌘S" if platform.macos else "Ctrl+Shift+S"))
     assert(not Shortcut().is_bound() and (try Shortcut.parse("b")).is_bound())
