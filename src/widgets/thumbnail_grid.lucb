@@ -1,8 +1,8 @@
 ## The ThumbnailGrid widget: a photo library's grid. Items lie in justified rows
 ## (justified_rows.lucb): each tile has its photo's aspect ratio (`set_aspect`;
 ## square until told) and is filled by its picture, and every full row spans the
-## width. Badges show a rating, a pick or reject flag, a color label and an
-## "edited" mark. Like TableView it is virtualized: it keeps only the aspects
+## width. Badges show a rating, a pick or reject flag, a color label, an
+## "edited" mark and a RAW chip for camera raws. Like TableView it is virtualized: it keeps only the aspects
 ## and badges of every item, and holds pictures for the items the application
 ## hands it, typically those near the visible range, which it reports. The row
 ## height scales between 48 and 640 points (command-scroll or a pinch, or
@@ -21,6 +21,7 @@ from layout import Widget, Layout, Size, Constraints, Event
 from painter import Painter
 from geometry import Point
 from image import Image
+from font import Font, selected_font
 from theme import Theme
 from widgets.table_selection import RowSelection
 from widgets.justified_rows import JustifiedRows
@@ -47,6 +48,7 @@ struct Badges:
     var flag: i8
     var label: u8
     var edited: bool
+    var raw: bool
 
 pub struct ThumbnailGrid: Widget:
     let box: interop.Reference[Layout]
@@ -67,13 +69,17 @@ pub struct ThumbnailGrid: Widget:
     let activated: interop.Signal[i64]
     let resized: interop.Signal[i64]
     let dropped: interop.Signal[unit]
+    let font: interop.Reference[Font]
     ## The cell last pressed and when, for double-clicks.
     var pressed_index: i64
     var pressed_at: u64
 
-    ## A grid of `count` items in cells `cell` points wide. `multiple` lets
-    ## command-click, shift-click, shift-arrows and command-A select several.
-    pub func init(count: i64 = 0, cell: f64 = 160.0, multiple: bool = true) -> !:
+    ## A grid of `count` items in rows `cell` points tall. `multiple` lets
+    ## command-click, shift-click, shift-arrows and command-A select several;
+    ## `font` sets the badges' text.
+    pub func init(count: i64 = 0, cell: f64 = 160.0, multiple: bool = true, font: interop.Reference[Font]? = none) -> !:
+        var selected_text = try selected_font(font)
+        errdefer selected_text.release()
         let box = try layout.make_layout()
         errdefer box.release()
         box.value().set_focusable(true)
@@ -117,6 +123,7 @@ pub struct ThumbnailGrid: Widget:
         self.activated = activated
         self.resized = resized
         self.dropped = dropped
+        self.font = selected_text
         self.pressed_index = -1
         self.pressed_at = 0
 
@@ -209,12 +216,12 @@ pub struct ThumbnailGrid: Widget:
 
     ## Item `index`'s badges: `rating` 0–5 stars, `flag` 1 picked, -1 rejected
     ## (drawn faded), 0 neither; `label` 0 none, 1–7 red, orange, yellow, green,
-    ## blue, purple, grey; `edited` marks a photo with adjustments.
-    pub func set_badges(index: i64, rating: i64, flag: i64, label: i64, edited: bool) -> !:
+    ## blue, purple, grey; `edited` marks a photo with adjustments, `raw` a camera raw.
+    pub func set_badges(index: i64, rating: i64, flag: i64, label: i64, edited: bool, raw: bool = false) -> !:
         let at = try self.checked(index)
         if rating < 0 or rating > 5 or flag < -1 or flag > 1 or label < 0 or label > 7:
             error(result.invalid, "thumbnail badges are out of range")
-        self.badges[at] = Badges(rating = (u8)rating, flag = (i8)flag, label = (u8)label, edited = edited)
+        self.badges[at] = Badges(rating = (u8)rating, flag = (i8)flag, label = (u8)label, edited = edited, raw = raw)
         self.box.value().invalidate()
 
     # mark: geometry ============================================================================
@@ -395,8 +402,16 @@ pub struct ThumbnailGrid: Widget:
                 let cx = room.x + 3.0 + mark * 0.82 + (f64)star * mark * 1.15
                 let cy = room.y + room.height - mark * 0.7 - 3.0
                 try paint_star(painter, cx, cy, mark * 0.55, theme.foreground)
+        var left = room.x + 4.0
         if badge.label > 0:
-            try painter.rounded_rectangle(gpu.Rect(room.x + 4.0, room.y + 4.0, mark, mark), label_color(badge.label), mark * 0.25)
+            try painter.rounded_rectangle(gpu.Rect(left, room.y + 4.0, mark, mark), label_color(badge.label), mark * 0.25)
+            left += mark + 4.0
+        if badge.raw and room.width > mark * 6.0:
+            # A RAW chip in the top-left corner, beside the label.
+            let height = self.font.value().line_height()
+            let width = try self.font.value().measure("RAW") + 8.0
+            try painter.rounded_rectangle(gpu.Rect(left, room.y + 3.0, width, height), chip, 3.0, opacity = 0.65)
+            try painter.text("RAW", left + 4.0, room.y + 3.0 + math.floor((height - self.font.value().height()) * 0.5), theme.foreground, self.font)
         let corner = gpu.Rect(room.x + room.width - mark * 1.8 - 3.0, room.y + 3.0, mark * 1.8, mark * 1.8)
         if badge.flag != 0:
             try painter.rounded_rectangle(corner, chip, mark * 0.3, opacity = 0.5)
@@ -550,10 +565,12 @@ pub struct ThumbnailGrid: Widget:
         self.resized.release()
         self.dropped.close()
         self.dropped.release()
+        self.font.release()
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
         self.box.trace(visit, context)
+        self.font.trace(visit, context)
         self.selected.trace(visit, context)
         self.activated.trace(visit, context)
         self.resized.trace(visit, context)

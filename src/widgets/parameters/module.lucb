@@ -270,10 +270,14 @@ pub struct ParameterPanel: Widget:
     var tip_since: u64
     var tip_delay: u64
 
-    ## A panel of `specs` in `font`; `label_width` fixes the label column (0 fits it to the labels).
-    pub func init(specs: const ParameterSpec[], font: interop.Reference[Font]? = none, label_width: f64 = 0.0) -> !:
+    ## A panel of `specs` in `font`; `label_width` fixes the label column (0 fits it
+    ## to the labels), and `margin` is the room left and right of the rows (0 lines
+    ## them up with what is above and below the panel).
+    pub func init(specs: const ParameterSpec[], font: interop.Reference[Font]? = none, label_width: f64 = 0.0, margin: f64 = 8.0) -> !:
         if not math.is_finite(label_width) or label_width < 0.0 or label_width > 4096.0:
             error(result.invalid, "a label column is 0..4096 points")
+        if not math.is_finite(margin) or margin < 0.0 or margin > 64.0:
+            error(result.invalid, "a parameter panel's margin is 0..64 points")
         var selected = try selected_font(font)
         errdefer selected.release()
         let box = try layout.make_layout()
@@ -326,7 +330,7 @@ pub struct ParameterPanel: Widget:
         self.ladder = ladder
         self.input = line
         self.fixed_label = label_width
-        self.margin = 8.0
+        self.margin = margin
         self.closed = interop.Owned[str]("")
         self.placed_width = -1.0
         self.stale = true

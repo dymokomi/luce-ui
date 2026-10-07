@@ -41,6 +41,9 @@ pub struct Tree:
     var animating: bool
     ## The drop area a drag is over, or 0.
     var drop_hover: u64
+    ## The box the pointer was last over (hovered), or 0; when the pointer moves
+    ## off it, its widget hears pointer_left, so hover drawn on it ends.
+    var hover_box: u64
 
     ## A tree rooted at `content`, which must be visible and parentless; nothing is
     ## gathered until the first arrangement.
@@ -58,6 +61,7 @@ pub struct Tree:
         self.version = 0
         self.focus = 0
         self.requested_focus = 0
+        self.hover_box = 0
         self.capture = 0
         self.secondary_holder = 0
         self.return_focus = 0
