@@ -24,7 +24,9 @@ import widgets.parameter_text
 ## bracket one drag so a caller can make it a single undo step. With an
 ## `on_submit` listener, Enter on a field not being typed in submits instead of
 ## starting to type: the first Enter commits a typed value, the second submits,
-## as Photoshop's option bar applies a transform.
+## as Photoshop's option bar applies a transform. `edit` opens the field ready
+## to type, as Fusion's heads-up value box: there one Enter commits and submits,
+## and Escape throws the text away and calls `on_cancel`.
 ##
 ## With `units` (see measures.Unit), the value, bounds, step and decimals stay
 ## in the stored unit and the field shows them in those units, the unit's suffix
@@ -54,7 +56,10 @@ pub struct NumberField: Widget:
     let began: interop.Signal[unit]
     let ended: interop.Signal[unit]
     let submitted: interop.Signal[unit]
+    let cancelled: interop.Signal[unit]
     var submits: bool
+    ## Typing began with `edit`: Enter submits as well as commits.
+    var one_shot: bool
 
     pub func init(value: f64 = 0.0, minimum: f64 = -1.0e9, maximum: f64 = 1.0e9, step: f64 = 1.0, decimals: i64 = 0,
                   suffix: str = "", font: interop.Reference[Font]? = none, cells: f64 = 7.0, units: Unit = Unit()) -> !:
@@ -82,6 +87,8 @@ pub struct NumberField: Widget:
         errdefer ended.release()
         let submitted = try interop.Signal[unit]()
         errdefer submitted.release()
+        let cancelled = try interop.Signal[unit]()
+        errdefer cancelled.release()
         self.suffix = try interop.copy_text(units.suffix if units.suffix.length > 0 else suffix)
         self.shown_in = Unit(scale = units.scale, millimeter = units.millimeter, pixel = units.pixel)
         self.box = box
@@ -104,7 +111,9 @@ pub struct NumberField: Widget:
         self.began = began
         self.ended = ended
         self.submitted = submitted
+        self.cancelled = cancelled
         self.submits = false
+        self.one_shot = false
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -192,10 +201,24 @@ pub struct NumberField: Widget:
     pub func on_end(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         return try self.ended.connect(callback)
 
-    ## Enter pressed while the field is focused but not being typed in.
+    ## Enter pressed while the field is focused but not being typed in, or
+    ## while typing that `edit` began.
     pub func on_submit(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         self.submits = true
         return try self.submitted.connect(callback)
+
+    ## Escape pressed while typing: the typed text was thrown away.
+    pub func on_cancel(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.cancelled.connect(callback)
+
+    ## Take focus and start typing with the whole shown value selected, so the
+    ## first keystroke replaces it. Enter commits what was typed and then calls
+    ## `on_submit`; Escape cancels and calls `on_cancel`; leaving the field
+    ## commits, as it does after a click.
+    pub func edit() -> !:
+        try self.begin_editing()
+        self.one_shot = true
+        self.box.value().request_focus()
 
     ## `value` in whole steps, as a drag or an arrow moves it; whole steps from zero,
     ## not from the minimum, so a field from 0.5 in steps of 1 lands on 4, not 4.5.
@@ -237,12 +260,15 @@ pub struct NumberField: Widget:
         var digits: u8[48]
         let shown = try format_number(digits, self.shown_in.shown(self.current), measures.shown_decimals(self.decimals, self.shown_in))
         try self.input.set_text(shown)
+        try self.input.select_all()
         self.editing = true
+        self.one_shot = false
         self.box.value().set_cursor(input.Cursor.text)
         self.box.value().invalidate()
 
     func finish_editing(keep: bool) -> interop.Outcome[unit]:
         self.editing = false
+        self.one_shot = false
         self.box.value().set_cursor(input.Cursor.resize_horizontal)
         self.box.value().invalidate()
         if not keep:
@@ -322,9 +348,16 @@ pub struct NumberField: Widget:
             if event.kind == input.EventKind.focus_lost:
                 return self.finish_editing(true)
             if event.kind == input.EventKind.key_down and event.key == input.Key.escape:
-                return self.finish_editing(false)
+                let dropped = self.finish_editing(false)
+                if not dropped.is_success():
+                    return dropped
+                return self.cancelled.emit(())
             if event.kind == input.EventKind.key_down and event.key == input.Key.enter and not event.repeated:
-                return self.finish_editing(true)
+                let submits = self.one_shot and self.submits
+                let committed = self.finish_editing(true)
+                if not submits or not committed.is_success():
+                    return committed
+                return self.submitted.emit(())
             if event.kind == input.EventKind.key_down or event.kind == input.EventKind.text_input:
                 let mutated = self.input.event(event) catch failure:
                     return result.failure[unit](failure.code, failure.message)
@@ -388,6 +421,8 @@ pub struct NumberField: Widget:
         self.submitted.close()
         self.ended.release()
         self.submitted.release()
+        self.cancelled.close()
+        self.cancelled.release()
         self.suffix.release()
         self.box.release()
 
@@ -398,6 +433,7 @@ pub struct NumberField: Widget:
         self.began.trace(visit, context)
         self.ended.trace(visit, context)
         self.submitted.trace(visit, context)
+        self.cancelled.trace(visit, context)
         self.suffix.trace(visit, context)
 
 ## `text` without leading and trailing spaces.

@@ -189,6 +189,41 @@ pub func number_submit() -> unit!:
     assert(width.value() == 4.0)
     other.close()
 
+## `edit` opens a field ready to type, as Fusion's heads-up value box: the
+## shown value is selected, so typing replaces it; one Enter commits and
+## submits; Escape keeps the value and calls on_cancel.
+pub func number_edit() -> unit!:
+    let font = Font()
+    let count = Count()
+    let number = NumberField(12.5, 0.0, 1000.0, 1.0, 2, font = font, cells = 8.0)
+    let submitted = number.on_submit(count.accept)
+    let cancelled = number.on_cancel(count.cancel)
+    let app = Application(VStack([number], spacing = 0.0))
+    render(app)
+    number.edit()
+    render(app)
+    assert(number.layout().is_focused())
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 53))
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 48))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    assert(number.value() == 50.0 and count.accepts == 1 and count.cancels == 0)
+    # Escape throws the typing away.
+    number.edit()
+    render(app)
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 57))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
+    assert(number.value() == 50.0 and count.accepts == 1 and count.cancels == 1)
+    # Typing begun by a click still takes two Enters to submit.
+    let field = number.layout().bounds()
+    click(app, field.x + 6.0, field.y + field.height * 0.5)
+    render(app)
+    app.dispatch(Event(kind = EventKind.text_input, codepoint = 55))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    assert(number.value() == 7.0 and count.accepts == 1)
+    submitted.disconnect()
+    cancelled.disconnect()
+    app.close()
+
 ## A field's edit stands when focus moves on: a click on a button, or Tab,
 ## commits it (Save clicked with the caret still in a field keeps the text).
 pub func field_leaves() -> unit!:

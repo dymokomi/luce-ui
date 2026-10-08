@@ -20,7 +20,7 @@ from cursors import cursors
 from clicks import clicks
 from crash_hooks import crash_hooks
 from tables import tables
-from dialogs import dialogs, dialog_keys, number_submit, field_leaves, field_command_keys, field_submits, application_wakes, field_editing_shortcuts, disabled_shortcut_passes
+from dialogs import dialogs, dialog_keys, number_submit, number_edit, field_leaves, field_command_keys, field_submits, application_wakes, field_editing_shortcuts, disabled_shortcut_passes
 from scene_views import scene_views
 from parameters import parameters
 from appearance import appearance_follows
@@ -123,6 +123,7 @@ pub func main(arguments: list[str]) -> int!:
     disabled_shortcut_passes()
     dialog_keys()
     number_submit()
+    number_edit()
     field_leaves()
     field_command_keys()
     field_submits()
