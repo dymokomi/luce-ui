@@ -106,6 +106,24 @@ extend ParameterPanel:
         try replace_text(&self.rows[(usize)index].items, items)
         self.box.value().invalidate()
 
+    ## Show and read row `index` in `units` from now on, its suffix replacing the
+    ## row's; the stored values, ranges and step stay as they are. `Unit()` shows
+    ## the numbers as stored, with no suffix.
+    pub func set_units(index: i64, units: Unit) -> !:
+        _ = try self.row(index)
+        if not measures.valid(units):
+            error(result.invalid, "a unit needs a finite, positive scale and nonnegative lengths")
+        try replace_text(&self.rows[(usize)index].suffix, units.suffix)
+        self.rows[(usize)index].units = Unit(scale = units.scale, millimeter = units.millimeter, pixel = units.pixel)
+        self.box.value().invalidate()
+
+    ## Show every row in a length unit (`Unit.is_length`) in `units` instead: a
+    ## document's unit switched in one call. Angles and other rows keep theirs.
+    pub func set_length_units(units: Unit) -> !:
+        for index in 0..<self.total:
+            if self.rows[index].units.is_length():
+                try self.set_units((i64)index, units)
+
     ## Show the slider's track as `gradient` from now on (see ParameterSpec.gradient;
     ## "" for the plain track).
     pub func set_gradient(index: i64, gradient: str) -> !:

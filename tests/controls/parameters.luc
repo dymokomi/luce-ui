@@ -2,7 +2,9 @@
 ## scrubbing (one undo step per drag), resets, conditions, Tab between
 ## fields, folders remembered across specs, buttons, the context menu, the
 ## value ladder, and a long list inside a scroll view.
-from luce_ui.ui import Application, Font, VStack, ScrollView, Event, ParameterPanel, ParameterSpec, ParameterKind
+from luce_ui.ui import Application, Font, VStack, ScrollView, Event, ParameterPanel, ParameterSpec, ParameterKind, NumberField, Unit
+from luce_ui import ui
+from luce_std import math
 from luce_gpu.gpu import Frame, Rect
 from luce_window.input import EventKind, Key
 from luce_window import window
@@ -230,7 +232,66 @@ pub func parameters() -> unit!:
     acted.disconnect()
     app.close()
     many_parameters()
+    units()
     print("PASS parameter panel: typing, scrubbing, ladder, conditions, folders, Tab")
+
+## Lengths stored in millimeters, shown and typed in the document's unit; an
+## angle beside them keeps its degrees through a unit switch.
+func units() -> unit!:
+    let font = Font()
+    let panel = ParameterPanel([ParameterSpec(name = "width", label = "Width", value = 25.4, minimum = 0.0, maximum = 1000.0, soft_maximum = 100.0,
+                                              step = 1.0, decimals = 2, slider = true, units = ui.millimeters()),
+                                ParameterSpec(name = "offset", label = "Offset", kind = ParameterKind.vector, components = 2, units = ui.millimeters()),
+                                ParameterSpec(name = "angle", label = "Angle", value = 10.0, maximum = 360.0, suffix = "°")], font = font)
+    let app = Application(VStack([panel], spacing = 0.0))
+    render(app)
+    let width = panel.find("width")
+    let angle = panel.find("angle")
+    for (text, stored) in [("1 in", 25.4), ("2.5cm", 25.0), ("0.1 m", 100.0), ("1 FT", 304.8), ("1\"", 25.4), ("12", 12.0), ("10 + 5 mm", 15.0)]:
+        click_field(app, panel, width)
+        typed(app, text)
+        key(app, Key.enter)
+        assert(math.abs(panel.value(width) - stored) < 1.0e-9)
+    click_field(app, panel, width)
+    typed(app, "3 parsecs")
+    key(app, Key.enter)
+    assert(panel.value(width) == 15.0)
+    # The document switches to inches: one call, the stored values stay.
+    panel.set_length_units(ui.inches())
+    render(app)
+    assert(panel.value(width) == 15.0)
+    click_field(app, panel, width)
+    typed(app, "1")
+    key(app, Key.enter)
+    assert(panel.value(width) == 25.4)
+    # Up steps by a round amount in inches (0.05 in for a 1 mm step).
+    key(app, Key.up)
+    assert(math.abs(panel.value(width) - 26.67) < 1.0e-9)
+    click_field(app, panel, panel.find("offset"), 1)
+    typed(app, "2\"")
+    key(app, Key.enter)
+    assert(math.abs(panel.component(panel.find("offset"), 1) - 50.8) < 1.0e-9)
+    # The angle has no length unit: still degrees, a trailing word ignored.
+    click_field(app, panel, angle)
+    typed(app, "+=1 deg")
+    key(app, Key.enter)
+    assert(panel.value(angle) == 11.0)
+    panel.set_units(width, Unit())
+    click_field(app, panel, width)
+    typed(app, "7")
+    key(app, Key.enter)
+    assert(panel.value(width) == 7.0)
+    app.close()
+    # The number field and the helpers.
+    let field = NumberField(25.4, 0.0, 1000.0, 1.0, 2, units = ui.millimeters())
+    field.set_units(ui.inches())
+    assert(field.value() == 25.4 and field.shown_value() == 1.0 and field.shown_units().suffix == " in")
+    assert(ui.inches().shown(50.8) == 2.0 and ui.inches().stored(1.0) == 25.4 and ui.millimeters().is_length() and not Unit().is_length())
+    let named = ui.unit_named("Inches")
+    assert(named != none)
+    let resolution = 300.0 / 25.4
+    assert(math.abs(ui.inches(millimeter = resolution, pixel = 1.0).stored(1.0) - 300.0) < 1.0e-9)
+    assert(ui.evaluate_number("1 in", 0.0, ui.millimeters()) == 25.4 and ui.evaluate_number("3 parsecs", 0.0, ui.millimeters()) == none)
 
 ## Three hundred rows in a scroll view draw and place without trouble.
 func many_parameters() -> unit!:

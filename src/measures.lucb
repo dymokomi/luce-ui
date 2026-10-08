@@ -1,0 +1,220 @@
+#==============================================================================================
+#
+#   measures - The unit a number field shows a stored value in
+#
+#==============================================================================================
+#
+#   DESCRIPTION:
+#       A program keeps a length in one unit (luced-3d in millimeters, luced-2d in
+#       pixels); a field shows it in the unit the document chose and reads what is
+#       typed in any length unit. Only showing and typing convert: `shown = stored /
+#       scale`, and every value, bound and step a host passes stays in the stored unit.
+#       A unit that knows how long a millimeter (and a pixel) is in stored units also
+#       reads the other length units typed after a number: "1 in", "2.5cm", 1".
+#
+#==============================================================================================
+
+from luce_std import math
+
+## How a field shows a stored number: `suffix` after it, `scale` stored units in
+## one shown unit (an inch over millimeters is 25.4). `millimeter` and `pixel` are
+## a millimeter and a pixel in stored units, for reading lengths typed in other
+## units; 0 when the stored unit has none (pixels without a resolution). `Unit()`
+## is no unit: the number as stored, and a trailing word typed after it ignored.
+pub struct Unit:
+    pub var suffix: str = ""
+    pub var scale: f64 = 1.0
+    pub var millimeter: f64 = 0.0
+    pub var pixel: f64 = 0.0
+
+    ## `stored` as the field shows it.
+    pub func shown(stored: f64) -> f64:
+        return stored / self.scale
+
+    ## `shown` (in this unit) as it is stored.
+    pub func stored(shown: f64) -> f64:
+        return shown * self.scale
+
+    ## Whether typed lengths in other units convert: a millimeter or a pixel is known.
+    pub func is_length() -> bool:
+        return self.millimeter > 0.0 or self.pixel > 0.0
+
+    ## Whether the unit converts at all.
+    pub func converts() -> bool:
+        return self.scale != 1.0
+
+## Millimeters, centimeters, meters, inches and feet over a stored unit in which a
+## millimeter is `millimeter` long (1 for values kept in millimeters) and a pixel
+## `pixel` long (0 when pixels mean nothing).
+pub func millimeters(millimeter: f64 = 1.0, pixel: f64 = 0.0) -> Unit:
+    return Unit(suffix = " mm", scale = millimeter, millimeter = millimeter, pixel = pixel)
+
+pub func centimeters(millimeter: f64 = 1.0, pixel: f64 = 0.0) -> Unit:
+    return Unit(suffix = " cm", scale = millimeter * 10.0, millimeter = millimeter, pixel = pixel)
+
+pub func meters(millimeter: f64 = 1.0, pixel: f64 = 0.0) -> Unit:
+    return Unit(suffix = " m", scale = millimeter * 1000.0, millimeter = millimeter, pixel = pixel)
+
+pub func inches(millimeter: f64 = 1.0, pixel: f64 = 0.0) -> Unit:
+    return Unit(suffix = " in", scale = millimeter * 25.4, millimeter = millimeter, pixel = pixel)
+
+pub func feet(millimeter: f64 = 1.0, pixel: f64 = 0.0) -> Unit:
+    return Unit(suffix = " ft", scale = millimeter * 304.8, millimeter = millimeter, pixel = pixel)
+
+## Pixels over a stored unit in which a pixel is `pixel` long (1 for values kept
+## in pixels) and a millimeter `millimeter` (a resolution in pixels per inch / 25.4).
+pub func pixels(millimeter: f64 = 0.0, pixel: f64 = 1.0) -> Unit:
+    return Unit(suffix = " px", scale = pixel, millimeter = millimeter, pixel = pixel)
+
+## The unit `name` names, as typed after a number ("mm", "Inches", "\"", "ft"),
+## over the given stored unit; none for a name it does not know, or a length the
+## stored unit cannot measure (millimeters with `millimeter` 0).
+pub func unit_named(name: str, millimeter: f64 = 1.0, pixel: f64 = 0.0) -> Unit?:
+    let lengths = length_of(name) else return none
+    let (millimeters_long, pixels_long) = lengths
+    if pixels_long > 0.0:
+        return pixels(millimeter, pixel) if pixel > 0.0 else none
+    if millimeter <= 0.0:
+        return none
+    if millimeters_long == 1.0:
+        return millimeters(millimeter, pixel)
+    if millimeters_long == 10.0:
+        return centimeters(millimeter, pixel)
+    if millimeters_long == 1000.0:
+        return meters(millimeter, pixel)
+    if millimeters_long == 25.4:
+        return inches(millimeter, pixel)
+    return feet(millimeter, pixel)
+
+## How long one `word` is, in millimeters or (the second) in pixels; none for
+## a word that is no length. Letters match in any case.
+func length_of(word: str) -> (f64, f64)?:
+    if word == "\"":
+        return (25.4, 0.0)
+    if word == "'":
+        return (304.8, 0.0)
+    var lower: u8[16]
+    if word.length == 0 or word.length > lower.length:
+        return none
+    for at in 0..<word.length:
+        let byte = word.bytes[at]
+        lower[at] = byte + 32 if byte >= 'A' and byte <= 'Z' else byte
+    let name = (str)lower[..<word.length]
+    if name == "mm" or name == "millimeter" or name == "millimeters":
+        return (1.0, 0.0)
+    if name == "cm" or name == "centimeter" or name == "centimeters":
+        return (10.0, 0.0)
+    if name == "m" or name == "meter" or name == "meters":
+        return (1000.0, 0.0)
+    if name == "in" or name == "inch" or name == "inches":
+        return (25.4, 0.0)
+    if name == "ft" or name == "foot" or name == "feet":
+        return (304.8, 0.0)
+    if name == "px" or name == "pixel" or name == "pixels":
+        return (0.0, 1.0)
+    return none
+
+## One `word` typed after a number, in `unit`'s stored unit: a length the unit can
+## measure, or the unit's own suffix; none otherwise.
+pub func stored_per(word: str, units: Unit) -> f64?:
+    if let lengths = length_of(word):
+        let (millimeters_long, pixels_long) = lengths
+        if pixels_long > 0.0:
+            return units.pixel if units.pixel > 0.0 else none
+        return millimeters_long * units.millimeter if units.millimeter > 0.0 else none
+    let own = trimmed(units.suffix)
+    if own.length > 0 and same_letters(own, word):
+        return units.scale
+    return none
+
+## `step` (stored) as a field in `units` moves: the same for a unit that does not
+## convert, else the nearest 1, 2 or 5 times a power of ten in the shown unit
+## (a millimeter in inches steps by 0.05).
+pub func shown_step(step: f64, units: Unit) -> f64:
+    if not units.converts() or step <= 0.0:
+        return step / units.scale
+    return nearest_nice(step / units.scale)
+
+## The decimals a field in `units` shows, given `decimals` in the stored unit: as
+## many more as the unit is larger, rounded (millimeters with 2 show inches with 3).
+pub func shown_decimals(decimals: i64, units: Unit) -> i64:
+    if not units.converts():
+        return decimals
+    let more = (i64)math.round(math.log10(units.scale))
+    let shown = decimals + more
+    return 0 if shown < 0 else (9 if shown > 9 else shown)
+
+## Whether `units` is one a field can take: a finite, positive scale and finite,
+## nonnegative lengths.
+pub func valid(units: Unit) -> bool:
+    return math.is_finite(units.scale) and units.scale > 0.0 and math.is_finite(units.millimeter) and units.millimeter >= 0.0 and math.is_finite(units.pixel) and units.pixel >= 0.0
+
+## 1, 2 or 5 times a power of ten, nearest `value` by ratio.
+func nearest_nice(value: f64) -> f64:
+    if value <= 0.0 or not math.is_finite(value):
+        return value
+    let power = math.pow(10.0, math.floor(math.log10(value)))
+    let scaled = value / power
+    if scaled < math.sqrt(2.0):
+        return power
+    if scaled < math.sqrt(10.0):
+        return power * 2.0
+    if scaled < math.sqrt(50.0):
+        return power * 5.0
+    return power * 10.0
+
+func trimmed(text: str) -> str:
+    var start: usize = 0
+    var end = text.length
+    while start < end and text.bytes[start] == ' ':
+        start += 1
+    while end > start and text.bytes[end - 1] == ' ':
+        end -= 1
+    return (str)text.bytes[start..<end]
+
+func same_letters(a: str, b: str) -> bool:
+    if a.length != b.length:
+        return false
+    for index in 0..<a.length:
+        let x = a.bytes[index]
+        let y = b.bytes[index]
+        if (x + 32 if x >= 'A' and x <= 'Z' else x) != (y + 32 if y >= 'A' and y <= 'Z' else y):
+            return false
+    return true
+
+test "units convert shown and stored values both ways":
+    let inch = inches()
+    assert(inch.shown(25.4) == 1.0 and inch.stored(1.0) == 25.4)
+    assert(math.abs(centimeters().shown(25.0) - 2.5) < 1.0e-12 and meters().stored(0.1) == 100.0)
+    assert(math.abs(feet().shown(304.8) - 1.0) < 1.0e-12)
+    assert(not Unit().converts() and not Unit().is_length() and millimeters().is_length() and not millimeters().converts())
+    # Over pixels at 300 pixels an inch: an inch is 300 stored, a millimeter 11.81.
+    let per_millimeter = 300.0 / 25.4
+    assert(math.abs(inches(per_millimeter, 1.0).stored(1.0) - 300.0) < 1.0e-9)
+    assert(pixels(per_millimeter).shown(42.0) == 42.0)
+    assert(valid(inch) and not valid(Unit(scale = 0.0)) and not valid(Unit(millimeter = -1.0)))
+
+test "unit names read in any case, and only lengths the stored unit measures":
+    assert((stored_per("mm", millimeters()) else 0.0) == 1.0)
+    assert((stored_per("IN", millimeters()) else 0.0) == 25.4)
+    assert((stored_per("\"", millimeters()) else 0.0) == 25.4)
+    assert((stored_per("Feet", millimeters()) else 0.0) == 304.8)
+    assert((stored_per("cm", inches()) else 0.0) == 10.0)
+    assert(stored_per("px", millimeters()) == none and stored_per("parsec", millimeters()) == none)
+    assert((stored_per("px", pixels(2.0)) else 0.0) == 1.0 and (stored_per("mm", pixels(2.0)) else 0.0) == 2.0)
+    assert(stored_per("mm", pixels()) == none)
+    assert((stored_per("mil", Unit(suffix = " mil", scale = 0.0254, millimeter = 1.0)) else 0.0) == 0.0254)
+    let named = unit_named("Inches") else trap("inches not named")
+    assert(named.suffix == " in" and named.scale == 25.4)
+    assert(unit_named("px") == none and unit_named("furlong") == none)
+    let pixel_unit = unit_named("px", 300.0 / 25.4, 1.0) else trap("pixels not named")
+    assert(pixel_unit.suffix == " px" and pixel_unit.scale == 1.0)
+
+test "steps and decimals in the shown unit":
+    assert(shown_step(0.25, millimeters()) == 0.25 and shown_step(1.0, Unit()) == 1.0)
+    assert(math.abs(shown_step(1.0, inches()) - 0.05) < 1.0e-12)
+    assert(math.abs(shown_step(0.1, inches()) - 0.005) < 1.0e-12)
+    assert(math.abs(shown_step(10.0, centimeters()) - 1.0) < 1.0e-12)
+    assert(math.abs(shown_step(1.0, meters()) - 0.001) < 1.0e-15)
+    assert(shown_decimals(2, millimeters()) == 2 and shown_decimals(2, inches()) == 3 and shown_decimals(2, meters()) == 5)
+    assert(shown_decimals(0, Unit(scale = 0.01)) == 0 and shown_decimals(8, feet()) == 9)

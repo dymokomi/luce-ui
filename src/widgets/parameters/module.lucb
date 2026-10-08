@@ -47,6 +47,8 @@ from text.line_input import LineInput
 from widgets.action_popup import ActionPopup, action_popup_type
 from widgets.color_editor import ColorEditor, color_editor_type
 from widgets.number_field import format_number
+import measures
+from measures import Unit
 import icons
 
 ## What a parameter row edits and how it shows. Houdini's parameter types,
@@ -99,6 +101,10 @@ pub struct ParameterSpec:
     pub var decimals: i64 = 3
     ## A unit shown after the number, muted: "°", " px", "%".
     pub var suffix: str = ""
+    ## The unit a length shows and is typed in (`millimeters()`, `inches()`):
+    ## the value, ranges and step above stay in the stored unit, and the unit's
+    ## suffix replaces `suffix`. `Unit()`, the default, shows the number as stored.
+    pub var units: Unit = Unit()
     ## A slider beside the field (numbers and integers).
     pub var slider: bool = false
     ## The slider's track as a gradient instead of a fill: sRGB stops, `|`
@@ -133,6 +139,8 @@ struct Row:
     var name: interop.Owned[str]
     var label: interop.Owned[str]
     var suffix: interop.Owned[str]
+    ## The unit shown, its suffix kept in `suffix`.
+    var units: Unit
     var items: interop.Owned[str]
     var doc: interop.Owned[str]
     ## The current text of a text, path or info row; a button's caption is its label.
@@ -447,6 +455,8 @@ func make_row(spec: ParameterSpec) -> Row!:
         error(result.invalid, "parameter decimals must be 0..9")
     if not math.is_finite(spec.step) or spec.step < 0.0:
         error(result.invalid, "a parameter step must be finite and nonnegative")
+    if not measures.valid(spec.units):
+        error(result.invalid, "a unit needs a finite, positive scale and nonnegative lengths")
     var minimum = spec.minimum
     var maximum = spec.maximum
     if spec.kind == ParameterKind.color:
@@ -456,6 +466,7 @@ func make_row(spec: ParameterSpec) -> Row!:
     var row = Row(kind = spec.kind, name = try interop.copy_text(spec.name), label = interop.Owned[str](""), suffix = interop.Owned[str](""),
                   items = interop.Owned[str](""), doc = interop.Owned[str](""), text = interop.Owned[str](""), fallback = interop.Owned[str](""),
                   hide_when = interop.Owned[str](""), disable_when = interop.Owned[str](""), components = components,
+                  units = Unit(scale = spec.units.scale, millimeter = spec.units.millimeter, pixel = spec.units.pixel),
                   values = defaults, defaults = defaults, minimum = minimum, maximum = maximum,
                   soft_minimum = spec.soft_minimum, soft_maximum = spec.soft_maximum, step = spec.step,
                   decimals = 0 if spec.kind == ParameterKind.integer else spec.decimals,
@@ -465,7 +476,7 @@ func make_row(spec: ParameterSpec) -> Row!:
                   stops = gradient_stops(spec.gradient), stop_count = stop_count(spec.gradient))
     errdefer release_row(row)
     row.label = try interop.copy_text(spec.label if spec.label.length > 0 else spec.name)
-    row.suffix = try interop.copy_text(spec.suffix)
+    row.suffix = try interop.copy_text(spec.units.suffix if spec.units.suffix.length > 0 else spec.suffix)
     row.items = try interop.copy_text(spec.items)
     row.doc = try interop.copy_text(spec.doc)
     row.text = try interop.copy_text(spec.text)
@@ -524,6 +535,16 @@ func stop_count(text: str) -> usize:
             count += 1
         first = end + 1
     return count
+
+## The unit row `row` shows, its suffix a view of the row's.
+func row_units(row: Row) -> Unit:
+    var shown = row.units
+    shown.suffix = row.suffix.value
+    return shown
+
+## The decimals row `row` shows in its unit.
+func shown_decimals(row: Row) -> i64:
+    return measures.shown_decimals(row.decimals, row.units)
 
 ## `value` as row `row` keeps it: inside the hard range, whole for integers,
 ## 0 or 1 for toggles.

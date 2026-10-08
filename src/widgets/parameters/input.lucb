@@ -227,19 +227,21 @@ extend ParameterPanel:
         self.rows[index].values = kept
         try self.touch((i64)index)
 
-    ## The step arrows, scrubbing and the ladder's middle rung move by.
+    ## The step arrows, scrubbing and the ladder's middle rung move by, stored;
+    ## a round step in the unit the row shows.
     static func increment(row: Row) -> f64:
+        let units = row.units
         if row.step > 0.0:
-            return row.step
-        if row.kind == ParameterKind.integer:
+            return units.stored(measures.shown_step(row.step, units))
+        if row.kind == ParameterKind.integer and not units.converts():
             return 1.0
         if let range = ParameterPanel.slider_range(row):
-            return nice_step((range.1 - range.0) / 100.0)
-        return math.min(1.0, math.pow(10.0, 1.0 - (f64)row.decimals))
+            return units.stored(nice_step(units.shown(range.1 - range.0) / 100.0))
+        return units.stored(math.min(1.0, math.pow(10.0, 1.0 - (f64)shown_decimals(row))))
 
     ## `value` on the row's grid: its step, or the decimals it shows.
     static func snapped(row: Row, value: f64) -> f64:
-        let grid = row.step if row.step > 0.0 else math.pow(10.0, -(f64)row.decimals)
+        let grid = ParameterPanel.increment(row) if row.step > 0.0 else row.units.stored(math.pow(10.0, -(f64)shown_decimals(row)))
         return row_clamp(row, math.floor(value / grid + 0.5) * grid)
 
     # -- The value ladder.
@@ -252,9 +254,11 @@ extend ParameterPanel:
         if row < 0 or not self.enabled((usize)row) or not numeric(self.rows[(usize)row].kind) or (part != part_field and part != part_label and part != part_slider):
             return
         let index = (usize)row
+        # The rungs in the unit the row shows; `climb` stores them.
         var rungs: f64[8]
-        let middle = ParameterPanel.increment(self.rows[index])
-        let smallest = 1.0 if self.rows[index].kind == ParameterKind.integer else math.pow(10.0, -(f64)self.rows[index].decimals)
+        let units = self.rows[index].units
+        let middle = units.shown(ParameterPanel.increment(self.rows[index]))
+        let smallest = 1.0 if self.rows[index].kind == ParameterKind.integer and not units.converts() else math.pow(10.0, -(f64)shown_decimals(self.rows[index]))
         var count: usize = 0
         var start: usize = 0
         var power = 3
@@ -291,7 +295,7 @@ extend ParameterPanel:
             self.rung_x = event.x
             self.rung_values = self.rows[index].values
             self.ladder.value().select((usize)rung)
-        let step = self.ladder.value().rungs[(usize)rung]
+        let step = self.rows[index].units.stored(self.ladder.value().rungs[(usize)rung])
         let moved = math.floor((event.x - self.rung_x) / ladder_pitch) * step
         var values = self.rows[index].values
         for component in 0..<self.rows[index].components:

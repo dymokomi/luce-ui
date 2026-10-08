@@ -193,7 +193,7 @@ then the control, every row one text line high. A `ParameterSpec` describes a
 row: `name` (the key conditions and hosts use), `label`, `kind`, the default
 (`value`, and `y`, `z`, `w` for vectors and colors), the hard range
 (`minimum`, `maximum`), the slider's soft range (`soft_minimum`,
-`soft_maximum`), `step`, `decimals`, `suffix`, `slider`, a menu's `items`
+`soft_maximum`), `step`, `decimals`, `suffix`, `units` (see [units](#units)), `slider`, a menu's `items`
 (`"Linear|Catmull-Clark"`, or `"Points=0|Faces=2"` for other values), `text`
 for texts, `doc` for the tooltip, `hide_when` and `disable_when` conditions
 in Houdini's form (`{ shape != Custom }`, clauses in braces all hold, one
@@ -217,7 +217,8 @@ times finer; the label moves every component of a vector); the middle button
 opens Houdini's value ladder, a column of steps chosen by moving up and down,
 the value moved by left and right. A click types into the field: arithmetic
 (`2*3`, `(1+2)/4`, `2^3`, `pi/2`) and Maya's relative forms (`+=0.5`, `-=1`,
-`*=2`, `/=4`) are worked out, a trailing unit is ignored; Enter commits,
+`*=2`, `/=4`) are worked out, a trailing unit is ignored (or converted, in a
+row with a length unit; see [units](#units)); Enter commits,
 Escape keeps the old value, Tab and Shift-Tab move through the fields, Up and
 Down nudge. Cmd/Ctrl-click, or the context menu's Revert to Default, puts the
 default back; the context menu also copies and pastes values and reverts
@@ -232,6 +233,48 @@ while the user drags a row a refresh from the host does not pull it back.
 Only rows the window shows are drawn, so hundreds of parameters in a
 `ScrollView` stay cheap. One spec makes a standalone row; `set_margin(0)`
 fits it inside another layout.
+
+### Units
+
+A program keeps a length in one unit and lets the document choose the unit
+it is shown in. A `Unit` says how: `suffix` after the number, and `scale`,
+how many stored units make one shown unit (shown = stored / scale). Give one
+to a spec's `units`, or to `NumberField(..., units=...)`:
+
+```luce
+ParameterSpec(name = "width", label = "Width", value = 25.4, minimum = 0.0,
+              step = 1.0, decimals = 2, units = ui.millimeters())
+```
+
+The value, `minimum`, `maximum`, the soft range, `step` and `decimals` are
+always in the stored unit, and `value`, `set_value` and `on_change` report
+stored values. Only what the field shows and reads converts, much as a
+`datetime` stays UTC while it is displayed in a time zone. In another unit the
+step becomes the nearest 1, 2 or 5 times a power of ten (a 1 mm step moves
+0.05 in), and the field shows as many more decimals as the unit is larger,
+rounded (2 in millimeters, 3 in inches).
+
+`ui.millimeters()`, `centimeters()`, `meters()`, `inches()` and `feet()`
+assume values kept in millimeters. For another stored unit, pass how long a
+millimeter is in it, and a pixel if pixels mean something: a paint program
+that keeps pixels at 300 pixels an inch uses `ui.inches(millimeter = 300 /
+25.4, pixel = 1)` and `ui.pixels(millimeter = 300 / 25.4)`.
+`ui.unit_named("in")` finds a unit by the name a user types or a document
+saves. `Unit()` is no unit; angles keep it with `suffix = "°"`.
+
+Typing reads a length in any unit the stored unit can measure: `25.4 mm`,
+`1 in`, `1"`, `2.5cm`, `0.1 m`, `1 ft` (also `'`, `px`, and the words spelled
+out), in any case, with or without a space. A bare number is in the shown
+unit, and arithmetic mixes them: `10 + 5 mm`, `+=1`. An unknown unit is
+unreadable, so the value stays as it was, as for any unreadable entry.
+Without a length unit a trailing word is ignored, as before.
+
+`panel.set_units(index, unit)` and `field.set_units(unit)` change the unit of
+a live row or field; the stored value stays. `panel.set_length_units(unit)`
+switches every row in a length unit at once (a document's Units menu), leaving
+angles and plain numbers alone. `Unit` also has `shown(stored)`,
+`stored(shown)` and `is_length()`; `field.shown_value()` is the value as the
+field shows it.
 
 ## Themes, actions and popups
 

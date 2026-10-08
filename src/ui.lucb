@@ -232,9 +232,41 @@ pub let value_ladder_type = parameters.value_ladder_type
 
 ## What `typed` into a numeric field comes to, as a parameter panel
 ## reads it: arithmetic, or `+=`/`-=`/`*=`/`/=` applied to `current`; none
-## when it cannot be read.
-pub func evaluate_number(typed: str, current: f64) -> f64?:
-    return parameter_text.evaluate(typed, current)
+## when it cannot be read. With length `units`, `current` and the result are
+## stored values and each number may carry a unit ("1 in + 5 mm").
+pub func evaluate_number(typed: str, current: f64, units: Unit = Unit()) -> f64?:
+    return parameter_text.evaluate(typed, current, units)
+
+import measures
+## The unit a field shows a stored number in; see `millimeters` and the others.
+pub type Unit = measures.Unit
+
+## Lengths over a stored unit in which a millimeter is `millimeter` long (1 for
+## values kept in millimeters) and a pixel `pixel` long (0 when pixels mean nothing).
+pub func millimeters(millimeter: f64 = 1.0, pixel: f64 = 0.0) -> Unit:
+    return measures.millimeters(millimeter, pixel)
+
+pub func centimeters(millimeter: f64 = 1.0, pixel: f64 = 0.0) -> Unit:
+    return measures.centimeters(millimeter, pixel)
+
+pub func meters(millimeter: f64 = 1.0, pixel: f64 = 0.0) -> Unit:
+    return measures.meters(millimeter, pixel)
+
+pub func inches(millimeter: f64 = 1.0, pixel: f64 = 0.0) -> Unit:
+    return measures.inches(millimeter, pixel)
+
+pub func feet(millimeter: f64 = 1.0, pixel: f64 = 0.0) -> Unit:
+    return measures.feet(millimeter, pixel)
+
+## Pixels over a stored unit in which a pixel is `pixel` long (1 for values kept
+## in pixels) and a millimeter `millimeter` long (pixels per inch / 25.4).
+pub func pixels(millimeter: f64 = 0.0, pixel: f64 = 1.0) -> Unit:
+    return measures.pixels(millimeter, pixel)
+
+## The unit `name` names ("mm", "in", "Inches", "\"", "ft", "px"), over the given
+## stored unit; none for a name it does not know or a length it cannot measure.
+pub func unit_named(name: str, millimeter: f64 = 1.0, pixel: f64 = 0.0) -> Unit?:
+    return measures.unit_named(name, millimeter, pixel)
 
 import icons
 import widgets.icon

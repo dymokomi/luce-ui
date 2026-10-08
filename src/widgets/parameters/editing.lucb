@@ -16,7 +16,8 @@ extend ParameterPanel:
             try self.input.set_text(self.rows[index].text.value)
         else:
             var digits: u8[48]
-            try self.input.set_text(try format_number(digits, self.rows[index].values[(usize)component], self.rows[index].decimals))
+            let row_now = self.rows[index]
+            try self.input.set_text(try format_number(digits, row_now.units.shown(row_now.values[(usize)component]), shown_decimals(row_now)))
         self.hide_tip()
         self.edit_row = row
         self.edit_component = component
@@ -47,7 +48,7 @@ extend ParameterPanel:
         if kind == ParameterKind.text or kind == ParameterKind.path:
             try self.edit_text(index, typed.value)
             return
-        let value = parameter_text.evaluate(typed.value, self.rows[index].values[(usize)component]) else return
+        let value = parameter_text.evaluate(typed.value, self.rows[index].values[(usize)component], row_units(self.rows[index])) else return
         var values = self.rows[index].values
         values[(usize)component] = value
         try self.edit(index, values)

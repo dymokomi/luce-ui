@@ -3,16 +3,21 @@
 ## functions over borrowed text, so they are tested on their own.
 from luce_std import math
 import strings
+from measures import Unit
+import measures
 
 # -- Arithmetic.
 
 ## A recursive-descent reader of `+ - * / % ^`, parentheses, unary signs,
 ## numbers with exponents and `pi`. `failed` is set at the first thing it
-## cannot read; the value is then meaningless.
+## cannot read; the value is then meaningless. With `units` that measure
+## lengths, a number may carry a unit ("5 mm", "1\"") and is read in the shown
+## unit; a bare number already is.
 struct Reader:
     let bytes: const u8[]
     var at: usize
     var failed: bool
+    let units: Unit
 
     func peek() -> u8:
         while self.at < self.bytes.length and self.bytes[self.at] == ' ':
@@ -99,10 +104,35 @@ struct Reader:
         let parsed = strings.parse_f64((str)self.bytes[start..<self.at]) catch _:
             self.failed = true
             recover 0.0
-        return parsed
+        if not self.units.is_length():
+            return parsed
+        let stored = self.stored_per()
+        return parsed if stored == 0.0 else parsed * stored / self.units.scale
+
+    ## What one of the unit written after a number is in the stored unit: 0
+    ## when none follows; an unknown unit fails.
+    func stored_per() -> f64:
+        let first = self.peek()
+        var end = self.at
+        if first == '"' or first == '\'':
+            end += 1
+        else:
+            while end < self.bytes.length and is_letter(self.bytes[end]):
+                end += 1
+        if end == self.at:
+            return 0.0
+        let word = (str)self.bytes[self.at..<end]
+        self.at = end
+        let stored = measures.stored_per(word, self.units) else 0.0
+        if stored <= 0.0:
+            self.failed = true
+        return stored
 
 func is_digit(byte: u8) -> bool:
     return byte >= '0' and byte <= '9'
+
+func is_letter(byte: u8) -> bool:
+    return (byte >= 'a' and byte <= 'z') or (byte >= 'A' and byte <= 'Z')
 
 func is_name(byte: u8) -> bool:
     return is_digit(byte) or (byte >= 'a' and byte <= 'z') or (byte >= 'A' and byte <= 'Z') or byte == '_' or byte == '.'
@@ -132,27 +162,33 @@ func without_unit(text: str) -> str:
 ## What `text` typed into a numeric field comes to: arithmetic (`2*3`,
 ## `(1+2)/4`, `2^3`, `pi/2`), or, after Maya, a change to `current` written
 ## `+=0.5`, `-=1`, `*=2` or `/=4`. A unit after the number is ignored. None
-## when it cannot be read or is not finite.
-pub func evaluate(text: str, current: f64) -> f64?:
-    var body = without_unit(trimmed(text))
+## when it cannot be read or is not finite. With `units` that measure
+## lengths, `current` and the result are stored values, the arithmetic is in
+## the shown unit, and each number may carry its own unit ("10 + 5 mm",
+## "1 in", "2.5cm"); an unknown unit is unreadable.
+pub func evaluate(text: str, current: f64, units: Unit = Unit()) -> f64?:
+    let measured = units.is_length()
+    var body = trimmed(text) if measured else without_unit(trimmed(text))
     var relative: u8 = 0
     if body.length >= 2 and body.bytes[1] == '=' and (body.bytes[0] == '+' or body.bytes[0] == '-' or body.bytes[0] == '*' or body.bytes[0] == '/'):
         relative = body.bytes[0]
         body = trimmed((str)body.bytes[2..])
     if body.length == 0:
         return none
-    var reader = Reader(bytes = body.bytes, at = 0, failed = false)
+    var reader = Reader(bytes = body.bytes, at = 0, failed = false, units = units)
     var value = reader.sum()
     if reader.failed or reader.peek() != 0:
         return none
+    let shown = units.shown(current)
     if relative == '+':
-        value = current + value
+        value = shown + value
     elif relative == '-':
-        value = current - value
+        value = shown - value
     elif relative == '*':
-        value = current * value
+        value = shown * value
     elif relative == '/':
-        value = current / value
+        value = shown / value
+    value = units.stored(value)
     if not math.is_finite(value):
         return none
     return value
@@ -360,6 +396,33 @@ test "typed arithmetic and relative changes":
     assert(evaluate("2*", 1.0) == none)
     assert(evaluate("1/0", 1.0) == none)
     assert(evaluate("(1", 1.0) == none)
+
+test "typed lengths convert to the stored unit":
+    let mm = Unit(suffix = " mm", scale = 1.0, millimeter = 1.0)
+    let inch = Unit(suffix = " in", scale = 25.4, millimeter = 1.0)
+    # Stored in millimeters, shown in millimeters.
+    assert((evaluate("25.4 mm", 0.0, mm) else -1.0) == 25.4)
+    assert((evaluate("1 in", 0.0, mm) else -1.0) == 25.4)
+    assert((evaluate("1\"", 0.0, mm) else -1.0) == 25.4)
+    assert((evaluate("2.5cm", 0.0, mm) else -1.0) == 25.0)
+    assert((evaluate("0.1 m", 0.0, mm) else -1.0) == 100.0)
+    assert(math.abs((evaluate("1 ft", 0.0, mm) else -1.0) - 304.8) < 1.0e-9)
+    assert((evaluate("1 IN", 0.0, mm) else -1.0) == 25.4 and (evaluate(" 3 Mm ", 0.0, mm) else -1.0) == 3.0)
+    assert((evaluate("12", 0.0, mm) else -1.0) == 12.0)
+    # Shown in inches: a bare number is inches, any unit converts.
+    assert((evaluate("1", 0.0, inch) else -1.0) == 25.4)
+    assert((evaluate("25.4 mm", 0.0, inch) else -1.0) == 25.4)
+    assert((evaluate("2\"", 0.0, inch) else -1.0) == 50.8)
+    assert(math.abs((evaluate("1'", 0.0, inch) else -1.0) - 304.8) < 1.0e-9)
+    # Arithmetic mixes units; relative forms work in the shown unit.
+    assert((evaluate("10 + 5 mm", 0.0, mm) else -1.0) == 15.0)
+    assert(math.abs((evaluate("1in + 2.54cm", 0.0, mm) else -1.0) - 50.8) < 1.0e-9)
+    assert(math.abs((evaluate("+=1", 25.4, inch) else -1.0) - 50.8) < 1.0e-9)
+    assert(math.abs((evaluate("*=2", 25.4, inch) else -1.0) - 50.8) < 1.0e-9)
+    # An unknown unit, or a pixel the stored unit cannot measure, is unreadable.
+    assert(evaluate("3 parsecs", 1.0, mm) == none and evaluate("3 px", 1.0, mm) == none and evaluate("3 mm mm", 1.0, mm) == none)
+    # Without a length unit a trailing word is ignored, as before.
+    assert((evaluate("12 parsecs", 0.0) else -1.0) == 12.0)
 
 test "conditions read as Houdini writes them":
     var into: Clause[8]

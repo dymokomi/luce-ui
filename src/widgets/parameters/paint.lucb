@@ -155,11 +155,12 @@ extend ParameterPanel:
         let room = rect.width - inset * 2.0
         let suffix = row.suffix.value
         let suffix_width = text_width(self.font, suffix)
-        var decimals = row.decimals
-        var shown = try format_number(digits, row.values[(usize)component], decimals)
+        var decimals = shown_decimals(row)
+        let amount = row.units.shown(row.values[(usize)component])
+        var shown = try format_number(digits, amount, decimals)
         while decimals > 0 and text_width(self.font, shown) + suffix_width > room:
             decimals -= 1
-            shown = try format_number(digits, row.values[(usize)component], decimals)
+            shown = try format_number(digits, amount, decimals)
         let ink = theme.foreground if enabled else theme.muted
         try painter.text(shown, rect.x + inset, y, ink, self.font)
         if suffix.length > 0 and text_width(self.font, shown) + suffix_width <= room:

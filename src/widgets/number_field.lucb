@@ -11,6 +11,9 @@ from painter import Painter
 from text.line_input import LineInput
 from luce_window import input
 from font import Font, selected_font
+import measures
+from measures import Unit
+import widgets.parameter_text
 
 ## A number field after eleusis's scrubber: drag horizontally to change the value
 ## (a step per two pixels; Shift ten times as fast), click without dragging to
@@ -22,11 +25,19 @@ from font import Font, selected_font
 ## `on_submit` listener, Enter on a field not being typed in submits instead of
 ## starting to type: the first Enter commits a typed value, the second submits,
 ## as Photoshop's option bar applies a transform.
+##
+## With `units` (see measures.Unit), the value, bounds, step and decimals stay
+## in the stored unit and the field shows them in those units, the unit's suffix
+## after the number: the step rounded to 1, 2 or 5 there, the decimals as many
+## more as the unit is larger. What is typed may carry any length unit ("1 in",
+## "2.5cm", "10 + 5 mm", arithmetic as a parameter panel reads it).
 pub struct NumberField: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]
     var input: LineInput
     var suffix: interop.Owned[str]
+    ## The unit shown, its suffix kept in `suffix`.
+    var shown_in: Unit
     var minimum: f64
     var maximum: f64
     var step: f64
@@ -46,11 +57,13 @@ pub struct NumberField: Widget:
     var submits: bool
 
     pub func init(value: f64 = 0.0, minimum: f64 = -1.0e9, maximum: f64 = 1.0e9, step: f64 = 1.0, decimals: i64 = 0,
-                  suffix: str = "", font: interop.Reference[Font]? = none, cells: f64 = 7.0) -> !:
+                  suffix: str = "", font: interop.Reference[Font]? = none, cells: f64 = 7.0, units: Unit = Unit()) -> !:
         if not math.is_finite(minimum) or not math.is_finite(maximum) or maximum <= minimum or not math.is_finite(value) or not math.is_finite(step) or step < 0.0:
             error(result.invalid, "a number field needs finite bounds with maximum above minimum, a finite value and a nonnegative step")
         if decimals < 0 or decimals > 9:
             error(result.invalid, "number field decimals must be 0..9")
+        if not measures.valid(units):
+            error(result.invalid, "a unit needs a finite, positive scale and nonnegative lengths")
         var selected = try selected_font(font)
         errdefer selected.release()
         let box = try layout.make_layout()
@@ -69,7 +82,8 @@ pub struct NumberField: Widget:
         errdefer ended.release()
         let submitted = try interop.Signal[unit]()
         errdefer submitted.release()
-        self.suffix = try interop.copy_text(suffix)
+        self.suffix = try interop.copy_text(units.suffix if units.suffix.length > 0 else suffix)
+        self.shown_in = Unit(scale = units.scale, millimeter = units.millimeter, pixel = units.pixel)
         self.box = box
         self.font = selected
         self.input = line
@@ -127,6 +141,27 @@ pub struct NumberField: Widget:
         self.current = self.snap(self.current)
         self.box.value().invalidate()
 
+    ## Show and read the value in `units` from now on (its suffix replacing the
+    ## field's); the stored value stays as it is. `Unit()` shows it as stored.
+    pub func set_units(units: Unit) -> !:
+        if not measures.valid(units):
+            error(result.invalid, "a unit needs a finite, positive scale and nonnegative lengths")
+        try self.set_suffix(units.suffix)
+        self.shown_in = Unit(scale = units.scale, millimeter = units.millimeter, pixel = units.pixel)
+        self.editing = false
+
+    ## The unit the field shows, as `set_units` took it.
+    pub func shown_units() -> Unit:
+        var shown = self.shown_in
+        shown.suffix = self.suffix.value
+        return shown
+
+    ## The value in the shown unit, rounded to the decimals the field shows.
+    pub func shown_value() -> f64:
+        let decimals = measures.shown_decimals(self.decimals, self.shown_in)
+        let scale = math.pow(10.0, (f64)decimals)
+        return math.floor(self.shown_in.shown(self.current) * scale + 0.5) / scale
+
     ## The unit shown after the value, muted.
     pub func set_suffix(suffix: str) -> !:
         let replacement = try interop.copy_text(suffix)
@@ -165,13 +200,20 @@ pub struct NumberField: Widget:
     ## `value` in whole steps, as a drag or an arrow moves it; whole steps from zero,
     ## not from the minimum, so a field from 0.5 in steps of 1 lands on 4, not 4.5.
     func snap(value: f64) -> f64:
-        return self.snap_to(value, self.step)
+        return self.snap_to(value, self.grid())
+
+    ## The step in stored units, as the shown unit rounds it.
+    func grid() -> f64:
+        return self.shown_in.stored(measures.shown_step(self.step, self.shown_in))
 
     ## `value` as shown: to the field's decimals where they are finer than the step.
     ## What is typed or set from code stays what it is, as far as the field shows it;
-    ## a field without a step takes any value.
+    ## a field without a step takes any value. In a unit that converts it stays
+    ## exactly what it is: "25 mm" typed under an inch display is 25 mm.
     func precise(value: f64) -> f64:
-        return self.snap_to(value, math.min(self.step, math.pow(10.0, -(f64)self.decimals)))
+        if self.shown_in.converts():
+            return self.snap_to(value, 0.0)
+        return self.snap_to(value, math.min(self.grid(), self.shown_in.stored(math.pow(10.0, -(f64)measures.shown_decimals(self.decimals, self.shown_in)))))
 
     func snap_to(value: f64, grid: f64) -> f64:
         var snapped = value
@@ -189,11 +231,11 @@ pub struct NumberField: Widget:
 
     ## One increment for arrows and scrubbing: the step, or a two-hundredth of the range.
     func increment() -> f64:
-        return self.step if self.step > 0.0 else (self.maximum - self.minimum) / 200.0
+        return self.grid() if self.step > 0.0 else (self.maximum - self.minimum) / 200.0
 
     func begin_editing() -> !:
         var digits: u8[48]
-        let shown = try format_number(digits, self.current, self.decimals)
+        let shown = try format_number(digits, self.shown_in.shown(self.current), measures.shown_decimals(self.decimals, self.shown_in))
         try self.input.set_text(shown)
         self.editing = true
         self.box.value().set_cursor(input.Cursor.text)
@@ -208,6 +250,9 @@ pub struct NumberField: Widget:
         let typed = self.input.text() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer typed.release()
+        if self.shown_in.converts() or self.shown_in.is_length():
+            let measured = parameter_text.evaluate(typed.value, self.current, self.shown_units()) else return result.success[unit](())
+            return self.change(measured, exact = true)
         let parsed = strings.parse_f64(trimmed(typed.value)) catch _:
             recover self.current
         if not math.is_finite(parsed):
@@ -240,7 +285,7 @@ pub struct NumberField: Widget:
             try self.input.paint(&painter, self.font, theme, inset, text_y, size.width - inset * 2.0)
             return
         var digits: u8[48]
-        let shown = try format_number(digits, self.current, self.decimals)
+        let shown = try format_number(digits, self.shown_in.shown(self.current), measures.shown_decimals(self.decimals, self.shown_in))
         # Right-aligned value, then the suffix in the muted color.
         let suffix_width = try self.font.value().measure(self.suffix.value)
         let value_width = try self.font.value().measure(shown)
@@ -441,6 +486,51 @@ test "sub-micron numerical fields preserve typed and programmatic precision":
     assert(math.abs(field.value() - 0.000015856) < 1e-18)
     var rejected = false
     field.set_decimals(10) catch failure:
+        assert(failure.code == result.invalid)
+        rejected = true
+        recover ()
+    assert(rejected)
+
+test "a number field in units shows, steps and reads the stored value in them":
+    var field = try NumberField(25.4, 0.0, 1000.0, 1.0, 2, units = measures.millimeters())
+    defer field.close()
+    assert(field.value() == 25.4 and field.shown_value() == 25.4 and field.suffix.value == " mm")
+    # A switch to inches keeps the stored value; the step and decimals follow the unit.
+    try field.set_units(measures.inches())
+    assert(field.value() == 25.4 and field.shown_value() == 1.0 and field.suffix.value == " in")
+    assert(math.abs(field.increment() - 1.27) < 1.0e-12)
+    try field.begin_editing()
+    let shown = try field.input.text()
+    assert(shown.value == "1.000")
+    shown.release()
+    # Typed lengths in any unit; a bare number is inches; the hard range holds.
+    for (typed, stored) in [("2.5cm", 25.0), ("1", 25.4), ("0.1 in", 2.54), ("25.4 mm", 25.4), ("1\"", 25.4), ("50 in", 1000.0), ("10 + 5 mm", 259.0)]:
+        try field.begin_editing()
+        try field.input.set_text(typed)
+        let outcome = field.finish_editing(true)
+        try outcome.get()
+        outcome.release()
+        assert(math.abs(field.value() - stored) < 1.0e-9)
+    # An unknown unit leaves the value.
+    try field.begin_editing()
+    try field.input.set_text("3 parsecs")
+    let kept = field.finish_editing(true)
+    try kept.get()
+    kept.release()
+    assert(math.abs(field.value() - 259.0) < 1.0e-9)
+    # A tenth of an inch shows as one, not 0.0999999.
+    try field.set_value(2.54)
+    try field.begin_editing()
+    let tenth = try field.input.text()
+    assert(tenth.value == "0.100")
+    tenth.release()
+    # Stepping moves in whole shown steps: 0.05 in.
+    try field.set_value(25.4)
+    let stepped = field.change(field.value() + field.increment())
+    stepped.release()
+    assert(math.abs(field.value() - 26.67) < 1.0e-9 and math.abs(field.shown_value() - 1.05) < 1.0e-12)
+    var rejected = false
+    field.set_units(measures.Unit(scale = 0.0)) catch failure:
         assert(failure.code == result.invalid)
         rejected = true
         recover ()
