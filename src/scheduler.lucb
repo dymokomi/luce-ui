@@ -67,11 +67,18 @@ pub struct Scheduler:
     pub func cancel(id: i64):
         for index in 0..<self.timers.length:
             if self.timers[index].id == id and self.timers[index].active:
-                if let callback = self.timers[index].callback:
-                    callback.release()
-                self.timers[index].callback = none
-                self.timers[index].active = false
+                self.clear(index)
                 return
+
+    ## Empty slot `index`, then release its callback. Releasing the last edge of a
+    ## closure can run a collection that traces this scheduler, so the slot must
+    ## already be empty by then, or the trace visits a dead callback.
+    func clear(index: usize):
+        let held = self.timers[index].callback
+        self.timers[index].callback = none
+        self.timers[index].active = false
+        if let callback = held:
+            callback.release()
 
     ## The soonest deadline still pending, for a loop that means to sleep until then.
     pub func next_deadline() -> u64?:
@@ -102,10 +109,7 @@ pub struct Scheduler:
                     if self.timers[index].interval > 0:
                         self.timers[index].deadline = now +? self.timers[index].interval else now
                     else:
-                        if let callback = self.timers[index].callback:
-                            callback.release()
-                        self.timers[index].callback = none
-                        self.timers[index].active = false
+                        self.clear(index)
         self.compact()
         return result.success[unit](())
 
@@ -134,14 +138,16 @@ pub struct Scheduler:
         free(self.timers) in memory.heap
         self.timers = packed
 
+    ## Detach every timer before releasing any, for the reason `clear` gives.
     pub func close():
-        for index in 0..<self.timers.length:
-            if let callback = self.timers[index].callback:
-                callback.release()
-        if self.timers.length > 0:
-            free(self.timers) in memory.heap
+        let old = self.timers
         var empty: Timer[]
         self.timers = empty
+        for index in 0..<old.length:
+            if let callback = old[index].callback:
+                callback.release()
+        if old.length > 0:
+            free(old) in memory.heap
 
     pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
         for index in 0..<self.timers.length:

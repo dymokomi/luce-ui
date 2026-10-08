@@ -72,11 +72,14 @@ pub struct Watches:
                 return
 
     func drop(index: usize):
+        # Empty the slot before the release: dropping a closure's last edge can run a
+        # collection that traces these watches.
         let descriptor = self.slots[index].descriptor
-        if let callback = self.slots[index].callback:
-            callback.release()
+        let held = self.slots[index].callback
         self.slots[index].callback = none
         self.slots[index].active = false
+        if let callback = held:
+            callback.release()
         window.unwatch(descriptor) catch failure:
             _ = failure
         if let poller = self.poller:

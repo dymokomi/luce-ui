@@ -106,10 +106,12 @@ pub struct LineInput:
                 # break (PowerShell's Set-Clipboard adds one) still pastes.
                 let line = try new u8[text.value.length] --- in memory.heap
                 defer free(line) in memory.heap
-                let pasted = (str)line[..<single_line(text.value, line)]
-                let scalars = try validate(pasted)
-                if self.document.length() - (self.document.last() - self.document.first()) + scalars > 1024:
-                    error(result.limit, "single-line input is limited to 1024 characters")
+                # What does not fit in the 1024 characters is cut, as a browser's
+                # maxlength does, rather than failing the paste.
+                let one_line = (str)line[..<single_line(text.value, line)]
+                let room = 1024 - (self.document.length() - (self.document.last() - self.document.first()))
+                let pasted = (str)one_line.bytes[..<fitting(one_line, room)]
+                _ = try validate(pasted)
                 try self.document.insert(pasted)
             elif command and event.key == input.Key.z:
                 _ = try self.document.redo() if event.shift else try self.document.undo()
@@ -225,6 +227,17 @@ func single_line(text: str, into: u8[]) -> usize:
         count -= first
     return count
 
+## The bytes of `text`'s first `room` scalars, stopping early at bytes that are
+## not UTF-8.
+func fitting(text: str, room: usize) -> usize:
+    var offset: usize = 0
+    var count: usize = 0
+    while offset < text.length and count < room:
+        let scalar = utf8.decode(text.bytes, offset) else return offset
+        count += 1
+        offset += scalar.width
+    return offset
+
 func validate(text: str) -> usize!:
     if text.length > 4096:
         error(result.limit, "single-line input is too long")
@@ -250,6 +263,12 @@ test "pasted text becomes one line: breaks at the ends go, inner ones become spa
     let bell = "a\u{7}b"
     assert((str)into[..<single_line(bell, into)] == "ab")
     assert(single_line("\r\n", into) == 0)
+
+test "a paste longer than the room left is cut at a whole character":
+    assert(fitting("abcdef", 4) == 4)
+    assert(fitting("ab", 4) == 2)
+    assert(fitting("田中abc", 1) == 3)
+    assert(fitting("abc", 0) == 0)
 
 test "the shown window and clicks count cells: wide scalars take two":
     var line = try LineInput()
