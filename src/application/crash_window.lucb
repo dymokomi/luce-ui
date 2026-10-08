@@ -10,6 +10,9 @@
 #       version, the report in a read-only editor, and Copy, Reopen and Quit. Then the
 #       process ends. Nothing is drawn from the process that crashed, and nothing is sent.
 #
+#       An error that ends `Application.run` is no crash: the process is sound, so the
+#       same window shows it from there (`show_failure`) before `run` returns it.
+#
 #==============================================================================================
 
 from luce_clipboard import clipboard
@@ -22,6 +25,7 @@ import widgets.hstack
 import widgets.spacer
 import command
 import memory
+import platform
 import strings
 
 ## Whether this process is showing a crash report already: the window's own
@@ -46,6 +50,33 @@ func show_crash_report(path: str) -> never:
             os.exit(1)
     os.exit(0)
 
+## Show the failure of `outcome`, an error that ended `Application.run`, in a crash
+## window: the program's name and version, the error's message, Copy, Reopen and
+## Quit, for `frame_limit` turns when that is positive. Whether the window was shown;
+## where no window can open, nothing is, and the error goes on to the caller as before.
+func show_failure(outcome: interop.Outcome[unit], frame_limit: i64) -> bool:
+    _ = outcome.get() catch failure:
+        return show_error(failure.message, frame_limit)
+    return false
+
+func show_error(message: str, frame_limit: i64) -> bool:
+    showing_crash = true
+    defer showing_crash = false
+    let room = new u8[message.length + 1024] --- in memory.heap catch failure:
+        return false
+    defer free(room) in memory.heap
+    let report = strings.format(room, f"luce error report\napp: {platform.program}\nversion: {platform.program_version}\nplatform: {platform.name}\n\nerror: {message}\n") catch failure:
+        return false
+    var shown = CrashWindow(report) catch failure:
+        return false
+    defer shown.close()
+    let choice = shown.run(frame_limit) catch failure:
+        return false
+    if choice == CrashChoice.reopen:
+        crash.reopen() catch failure:
+            return true
+    return true
+
 ## How a crash window was left.
 pub enum CrashChoice as u8:
     ## Quit, or the window was closed.
@@ -66,7 +97,8 @@ pub struct CrashWindow:
         let program = header_value(report, "app: ")
         let version = header_value(report, "version: ")
         var room: u8[512]
-        let heading = try strings.format(room, f"{program if program.length > 0 else "The program"} quit unexpectedly")
+        let named = program if program.length > 0 else "The program"
+        let heading = try strings.format(room, f"{named} stopped on an error" if strings.starts_with(report, "luce error report") else f"{named} quit unexpectedly")
         let copy = try make_command("Copy", "crash.copy", command.Shortcut())
         defer copy.release()
         let reopen = try make_command("Reopen", "crash.reopen", command.Shortcut(key = input.Key.enter))

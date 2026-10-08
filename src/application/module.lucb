@@ -43,6 +43,10 @@ pub struct Application:
     ## A digest of the render failure last reported, 0 after a clean frame: a
     ## widget that fails every frame is reported once, not once a frame.
     var render_failure: u64
+    ## The same for the frame callbacks' failures, reported once while they repeat.
+    var frame_failure: u64
+    ## Whether the last `run` ended by a failure it showed in a window (`failure_shown`).
+    var shown_failure: bool
     var timers: scheduler.Scheduler
     var watches: watches.Watches
     ## The monotonic instant `wake_at` asked the loop to run a turn by, 0 for none.
@@ -100,6 +104,8 @@ pub struct Application:
         self.dirty = true
         self.last_epoch = 0
         self.render_failure = 0
+        self.frame_failure = 0
+        self.shown_failure = false
         self.last_render = 0
         self.timers = scheduler.Scheduler()
         self.watches = watches.Watches()
@@ -483,6 +489,12 @@ pub struct Application:
     ## an allowed close request. A positive `frame_limit` stops after that many
     ## iterations and never blocks waiting for input, for deterministic tests; 0
     ## runs until stopped. Fails when the application is already running.
+    ##
+    ## A failure of a callback (input, a frame, a timer, a watch) or of a render goes to
+    ## the error handler (`set_error_handler`) and the run goes on. One that still ends the
+    ## run once the window is open, with no handler or from the handler itself, is shown
+    ## in a window like the crash window's, with Copy, Reopen and Quit, for `frame_limit`
+    ## turns when that is positive, and then returned: a program's `main` still prints it.
     pub func run(frame_limit: i64 = 0) -> interop.Outcome[unit]:
         self.check() catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -490,6 +502,19 @@ pub struct Application:
             return result.failure[unit](result.busy, "the application is already running")
         if frame_limit < 0:
             return result.failure[unit](result.invalid, "a frame limit must be nonnegative")
+        self.shown_failure = false
+        var opened = false
+        let outcome = self.drive(frame_limit, &opened)
+        if opened and not outcome.is_success() and not showing_crash:
+            self.shown_failure = show_failure(outcome, frame_limit)
+        return outcome
+
+    ## Whether the last `run` ended by a failure it showed in a window.
+    pub func failure_shown() -> bool:
+        return self.shown_failure
+
+    ## `run`'s loop; `opened` is set once the window is open.
+    func drive(frame_limit: i64, opened: bool*) -> interop.Outcome[unit]:
         # A windowed program has nowhere to print a trap: report crashes under the
         # program's own name unless it chose one, and, in a run that is not a test's
         # bounded one, show the report in a window from a fresh process.
@@ -502,6 +527,7 @@ pub struct Application:
         self.session_host = window.Window.open(window.Options(title = self.title_text.value, width = (u32)self.width, height = (u32)self.height, fullscreen = self.fullscreen)) catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer self.session_host.destroy()
+        *opened = true
         var device = gpu.Device.open() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer device.destroy()
@@ -564,13 +590,13 @@ pub struct Application:
                 return result.failure[unit](failure.code, failure.message)
             if not self.running:
                 break
-            let serviced = self.timers.service(time.now())
+            let serviced = self.reported(self.timers.service(time.now()), none)
             if not serviced.is_success():
                 return serviced
             serviced.release()
             if not self.running:
                 break
-            let watched = self.watches.service()
+            let watched = self.reported(self.watches.service(), none)
             if not watched.is_success():
                 return watched
             watched.release()
@@ -582,7 +608,7 @@ pub struct Application:
             let current = time.now()
             let elapsed = (f64)(current - previous) / 1000000000.0
             previous = current
-            let delivered = self.frames.emit(elapsed)
+            let delivered = self.reported(self.frames.emit(elapsed), &self.frame_failure)
             if not delivered.is_success():
                 return delivered
             delivered.release()
@@ -664,6 +690,26 @@ pub struct Application:
                 digest = (digest ^ (u64)byte) *% 1099511628211
             return digest if digest != 0 else 1
         return 1
+
+    ## A callback's failure (a frame's, a timer's, a watch's) reported to the error
+    ## handler, as an input's or a render's is, so the run goes on; without a handler it is
+    ## returned and ends the run. With `last`, a failure repeated turn after turn is
+    ## reported once: `last` holds the digest of the one reported, 0 after a success.
+    func reported(outcome: interop.Outcome[unit], last: u64*?) -> interop.Outcome[unit]:
+        if outcome.is_success():
+            if let previous = last:
+                *previous = 0
+            return outcome
+        let handler = self.error_handler else return outcome
+        if let previous = last:
+            let digest = Application.failure_digest(outcome)
+            if digest == *previous:
+                outcome.release()
+                return result.success[unit](())
+            *previous = digest
+        let notified = Application.report_input_failure(outcome, handler)
+        outcome.release()
+        return notified
 
     static func report_input_failure(outcome: interop.Outcome[unit], handler: interop.Callback[str, unit]) -> interop.Outcome[unit]:
         _ = outcome.get() catch failure:

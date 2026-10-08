@@ -143,6 +143,7 @@ pub func main(arguments: str[]) -> i32!:
     try text_pixels.check(host, surface)
     print("ok UI Metal pixels, ancestor clipping, resize and expired viewport")
     try run_loop_pixels.wakes()
+    try run_loop_pixels.frame_failures()
     try present_retry_pixels.skipped_presents()
     try crash_window_pixels.choices()
     return 0

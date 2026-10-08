@@ -20,7 +20,7 @@ All objects and callbacks belong to the main thread.
 | `SplitView` | Two widgets, `axis`, preferred `fraction`, `handle_width`; `fraction`, `set_fraction`, `layout` |
 | `Viewport` | Preferred minimum width/height; `on_render`, `layout` |
 | `SceneView` | `SceneView(scene, camera, renderer=none, width=320, height=240)`: a Viewport drawing a luce-3d scene; `scene`, `camera`, `renderer`, `layout` |
-| `Application` | Content, title, dimensions, optional `game`/`fps`/`fullscreen`; `run`, `stop`, `close`, `on_frame`, `after`/`every`/`post`/`cancel`, `wake_at`/`wake_after`, `watch`/`unwatch`, `title`/`set_title`, `set_game`, `set_fps`, `set_fullscreen`, `set_commands`, `command`, `on_crash`, `appearance`/`on_appearance`, `layout`, `dispatch`, `render` |
+| `Application` | Content, title, dimensions, optional `game`/`fps`/`fullscreen`; `run`, `stop`, `close`, `on_frame`, `after`/`every`/`post`/`cancel`, `wake_at`/`wake_after`, `watch`/`unwatch`, `title`/`set_title`, `set_game`, `set_fps`, `set_fullscreen`, `set_commands`, `command`, `set_error_handler`, `failure_shown`, `on_crash`, `appearance`/`on_appearance`, `layout`, `dispatch`, `render` |
 | `CrashWindow` | `CrashWindow(report, theme=Theme())`: the window a crashed program is started again to show; `run(frame_limit=0)` answers `CrashChoice.quit` or `.reopen`, `application` |
 | `TextField` | `TextField(text, placeholder=..., cells=12, secure=false)`; `text`, `set_text`, `on_change` (each edit), `on_commit` (Enter or focus loss, when changed), `on_submit` (every Enter, changed or not), `select_all` |
 | `Raster` | Mutable RGBA surface; `set_pixel`, `put`, `fill`, `fill_rect`, `dab`, `draw`, `color_at` |
@@ -174,6 +174,15 @@ application. `remove()` on the handle takes it away sooner; dropping the handle 
 
 `CrashWindow(report)` is the window itself, for a program that wants to show a report it
 found some other way (`crash.take_report`).
+
+An error is not a crash. `set_error_handler(callback)` hears the failures of callbacks (input,
+`on_frame`, timers, watches) and of rendering, and the run goes on; one that repeats every
+frame, from `on_frame` or a widget's drawing, is reported once until it stops. An error that
+still ends `run` once the window is open, because there is no handler or the handler itself
+failed, is shown in the same window, headed "stopped on an error", with its message and Copy,
+Reopen and Quit; then `run` returns it as before, so `main` still prints it on standard error.
+In a test's bounded run the window stays up for `frame_limit` turns. `failure_shown()` says
+whether the last `run` showed one.
 
 ## Parameter panels
 

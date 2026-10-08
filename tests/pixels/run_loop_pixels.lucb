@@ -96,3 +96,69 @@ pub func wakes() -> !:
     let woken = try run_once(app)
     assert(woken >= 90000000 and woken < 900000000)
     print("ok run loop wakes for watched sockets and wake_at")
+
+## A frame callback that fails every frame, and the error handler that hears of it.
+struct Failing:
+    var reports: i64
+    ## Whether every report carried the frame's message whole.
+    var whole: bool
+
+    func frame(elapsed: f64) -> interop.Outcome[unit]:
+        _ = elapsed
+        return interop.Outcome[unit].failure(failing_frame, interop.copy_text("the frame failed") catch exhausted: trap(exhausted.message))
+
+    func report(message: str) -> interop.Outcome[unit]:
+        self.reports += 1
+        self.whole = self.whole and message == "the frame failed"
+        return interop.Outcome[unit].success(interop.Owned[unit](()))
+
+    func close():
+        self.reports = 0
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        _ = visit
+        _ = context
+
+let failing_type: interop.Type[Failing] = interop.Type[Failing]("run loop test failing frame", Failing.close, Failing.trace)
+let failing_frame: ErrorCode = ErrorCode.package(41)
+
+func failing_app(title: str) -> interop.Reference[Application]!:
+    let spacer = try interop.Reference[Spacer].adopt(new Spacer(1.0) in memory.heap, ui.spacer_type, memory.heap)
+    defer spacer.release()
+    let content = spacer.as_interface[Widget](spacer.value())
+    defer content.release()
+    return try interop.Reference[Application].adopt(new Application(content, title = title, width = 200, height = 120) in memory.heap, ui.application_type, memory.heap)
+
+## A frame callback's failure goes to the error handler, once while it repeats, and the
+## run goes on; without a handler it ends the run and is shown in a window first.
+pub func frame_failures() -> !:
+    let failing = try interop.Reference[Failing].adopt(new Failing(reports = 0, whole = true) in memory.heap, failing_type, memory.heap)
+    defer failing.release()
+    let frames = try interop.Callback[f64, unit].bind_mutating(failing, Failing.frame)
+    defer frames.release()
+    let handled = try failing_app("Frame failures")
+    defer handled.release()
+    let reported = try interop.Callback[str, unit].bind_mutating(failing, Failing.report)
+    defer reported.release()
+    try handled.value().set_error_handler(reported)
+    let connection = try handled.value().on_frame(frames)
+    defer connection.release()
+    let ran = handled.value().run(frame_limit = 5)
+    defer ran.release()
+    try ran.get()
+    assert(failing.value().reports == 1)
+    assert(failing.value().whole)
+    assert(not handled.value().failure_shown())
+    let unhandled = try failing_app("Frame failure shown")
+    defer unhandled.release()
+    let unhandled_connection = try unhandled.value().on_frame(frames)
+    defer unhandled_connection.release()
+    let ended = unhandled.value().run(frame_limit = 3)
+    defer ended.release()
+    _ = ended.get() catch failure:
+        assert(failure.code == failing_frame)
+        assert(failure.message == "the frame failed")
+        recover ()
+    assert(not ended.is_success())
+    assert(unhandled.value().failure_shown())
+    print("ok a frame callback's failure reaches the error handler, and one that ends the run is shown")
