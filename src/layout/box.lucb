@@ -9,6 +9,9 @@ pub struct Layout:
     var parent: u64
     var application: u64
     var items: interop.Interface[Widget][]
+    ## Each child's layout, held so `detach` never asks a widget for it: during a
+    ## collection a Luce widget's own fields may already be closed.
+    var item_layouts: interop.Reference[Layout][]
     let axis: Axis
     let spacing: f64
     ## Padding left and right, and above and below: the same unless `set_padding` splits them.
@@ -73,6 +76,8 @@ pub struct Layout:
         self.application = 0
         var empty: interop.Interface[Widget][]
         self.items = empty
+        var no_layouts: interop.Reference[Layout][]
+        self.item_layouts = no_layouts
         self.arrangement = none
         self.scrolls = false
         self.cursor_source = none
@@ -504,18 +509,20 @@ pub struct Layout:
                 if other.value().identifier == state.identifier:
                     error(result.invalid, "a layout cannot contain the same widget twice")
             index += 1
+        let layouts = try child_layouts(children)
         var replacement: interop.Interface[Widget][]
         if children.length > 0:
-            replacement = try new interop.Interface[Widget][children.length] --- in memory.heap
+            replacement = new interop.Interface[Widget][children.length] --- in memory.heap catch failure:
+                release_layouts(layouts)
+                error(failure.code, failure.message)
         index = 0
         for child in children:
             replacement[index] = child.clone()
             index += 1
         self.detach()
         self.items = replacement
-        for child in self.items:
-            let layout = try widget_layout(child)
-            defer layout.release()
+        self.item_layouts = layouts
+        for layout in self.item_layouts:
             layout.value().parent = self.identifier
         self.invalidate()
 
@@ -558,21 +565,22 @@ pub struct Layout:
     func finish_edit():
         self.editing = false
 
+    ## Drop the children without calling into them. The arrays leave the traced
+    ## fields before any release, which can run a collection that traces this box.
     func detach():
         let previous = self.items
+        let layouts = self.item_layouts
         var empty: interop.Interface[Widget][]
         self.items = empty
-        for child in previous:
-            # Parents retain interfaces; a child's explicit close may precede
-            # removal. Closed children need no further membership mutation.
-            let layout = widget_layout(child) catch failure:
-                child.release()
-                continue
-            # Collection finalizes every owner before releasing graph edges.
-            # A still-open widget can therefore return an already-closed layout.
+        var no_layouts: interop.Reference[Layout][]
+        self.item_layouts = no_layouts
+        for layout in layouts:
+            # Collection finalizes every owner before releasing graph edges, so a
+            # child's layout may already be closed; it needs no unparenting then.
             let state: Layout*? = layout.get() catch failure: recover none
             if let open = state: open.parent = 0
-            layout.release()
+        release_layouts(layouts)
+        for child in previous:
             child.release()
         if previous.length > 0:
             free(previous) in memory.heap
@@ -590,6 +598,8 @@ pub struct Layout:
             arrangement.trace(visit, context)
         for child in self.items:
             child.trace(visit, context)
+        for layout in self.item_layouts:
+            layout.trace(visit, context)
 
 pub let layout_type: interop.Type[Layout] = interop.Type[Layout]("UI layout", Layout.dispose, Layout.trace, main_thread = true)
 
@@ -605,6 +615,26 @@ pub func widget_layout(widget: interop.Interface[Widget]) -> interop.Reference[L
     try widget.enter()
     defer widget.leave()
     return widget.value().layout()
+
+## Each child's layout, retained, in a new array; nothing is kept on failure.
+func child_layouts(children: const interop.Interface[Widget][]) -> interop.Reference[Layout][]!:
+    var layouts: interop.Reference[Layout][]
+    if children.length == 0:
+        return layouts
+    layouts = try new interop.Reference[Layout][children.length] --- in memory.heap
+    for index in 0..<children.length:
+        layouts[index] = widget_layout(children[index]) catch failure:
+            for held in layouts[..<index]:
+                held.release()
+            free(layouts) in memory.heap
+            error(failure.code, failure.message)
+    return layouts
+
+func release_layouts(layouts: interop.Reference[Layout][]):
+    for layout in layouts:
+        layout.release()
+    if layouts.length > 0:
+        free(layouts) in memory.heap
 
 func contains(widget: interop.Interface[Widget], identifier: u64, depth: usize) -> bool!:
     if depth >= 64:

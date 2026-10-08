@@ -1,0 +1,45 @@
+## A Luce widget whose layout is a native child's, left in a garbage cycle
+## (owner → stack → wrapper → bound method → owner), is collected after main
+## returns. The collector finishes the cycle oldest first, so the button is
+## closed before the stack's layout goes; the layout must not ask the wrapper
+## for its layout then (LUCED_3D's SceneViewport trapped in Layout.detach).
+from luce_ui.ui import Widget, Layout, Size, Constraints, Event, Button, VStack, Font
+from luce_gpu.gpu import RenderTarget
+
+class Wrapper: Widget:
+    let inner: Button
+    pub var on_press: func() -> unit
+
+    pub func init(self, inner: Button, on_press: func() -> unit) -> unit!:
+        self.inner = inner
+        self.on_press = on_press
+
+    pub func layout(self) -> Layout:
+        return self.inner.layout()
+
+    pub func measure(self, available: Constraints) -> Size!:
+        return Size(10.0, 10.0)
+
+    pub func draw(self, target: RenderTarget) -> unit!:
+        _ = target
+
+    pub func event(self, event: Event) -> unit!:
+        _ = event
+
+class Owner:
+    pub var stack: VStack? = none
+    pub var presses: int = 0
+    pub func press(self):
+        self.presses += 1
+
+func build() -> unit!:
+    let font = Font()
+    let button = Button("Inner", font = font)
+    let owner = Owner()
+    let wrapper = Wrapper(button, owner.press)
+    owner.stack = VStack([wrapper], spacing = 0.0)
+
+pub func main(arguments: list[str]) -> int!:
+    build()
+    print("PASS closed child: built a cycle for collection at exit")
+    return 0
