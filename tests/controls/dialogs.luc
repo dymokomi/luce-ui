@@ -351,3 +351,25 @@ pub func field_editing_shortcuts() -> unit!:
     for connection in triggered:
         connection.disconnect()
     app.close()
+
+## A disabled command's shortcut doesn't take the key: the press goes on to the next
+## command with the same shortcut (and, with none, to the focused widget).
+pub func disabled_shortcut_passes() -> unit!:
+    let count = Count()
+    let app = Application(VStack([Button("Here", font = Font())], spacing = 0.0))
+    let off = Command("Preview", Shortcut(Key.d), id = "preview")
+    let off_triggered = off.on_trigger(count.copy)
+    let on = Command("Dimension", Shortcut(Key.d), id = "dimension")
+    let on_triggered = on.on_trigger(count.trigger)
+    app.set_commands([off, on])
+    render(app)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.d))
+    assert(count.copies == 1 and count.triggers == 0)
+    off.set_enabled(false)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.d))
+    assert(count.copies == 1 and count.triggers == 1)
+    on.set_enabled(false)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.d))
+    assert(count.copies == 1 and count.triggers == 1)
+    off_triggered.disconnect()
+    on_triggered.disconnect()

@@ -133,7 +133,9 @@ pub struct Command:
     pub func set_checked(checked: bool):
         self.checked = checked
 
-    ## A disabled command ignores `trigger`; its shortcut still consumes the key.
+    ## A disabled command ignores `trigger`, and its shortcut no longer takes the key:
+    ## the press goes on to the next matching command or to the focused widget, as a
+    ## disabled menu item's key equivalent does on macOS.
     pub func set_enabled(enabled: bool):
         self.enabled = enabled
 
@@ -196,12 +198,14 @@ pub struct Commands:
         self.items = copied
         release_commands(previous)
 
-    ## Match a key press against the shortcuts in registry order. The first match
-    ## consumes the event and triggers its command, unless the press is a key
-    ## repeat or the command is disabled. Returns whether a shortcut consumed it.
+    ## Match a key press against the shortcuts of enabled commands in registry order.
+    ## The first match consumes the event and triggers its command (a key repeat is
+    ## consumed without triggering again). A disabled command's shortcut is skipped,
+    ## so the key goes to the next match or on to the focused widget. Returns whether
+    ## a shortcut consumed the press.
     pub func dispatch(event: input.Event) -> interop.Outcome[bool]:
         for item in self.items:
-            if item.value().shortcut().matches(event):
+            if item.value().is_enabled() and item.value().shortcut().matches(event):
                 let selected = item.clone()
                 defer selected.release()
                 if not event.repeated:
