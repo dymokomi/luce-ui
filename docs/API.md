@@ -283,12 +283,18 @@ changes that application's inherited values. A layout's `set_theme` overrides
 its subtree; `inherit_theme` removes the override. Values resolve parent-first
 before measurement, including newly inserted children. Colors are semantic:
 background, panel, foreground, muted, selection, accent, button, pressed, border,
-active_border, gutter, shadow. The interaction states `hover()`, `hover_border()`,
+active_border, gutter, shadow, and `diagnostic_error`, `diagnostic_warning` and
+`diagnostic_info` for problem severities. The interaction states `hover()`, `hover_border()`,
 `gutter_active()` and `gutter_hover()` are derived from those base colors through
 `luce_color` (Oklab), so a palette is always internally consistent.
 `control_lines` accepts 1..4 and `inset_cells` accepts 0..4; all values must be finite.
 Defaults give controls one text line vertically and one glyph advance of inset.
 `TextEditor(theme=EditorTheme(...))` can override editor-specific colors.
+
+`Tooltip(font)` is the shared tooltip: a popup child that shows wrapped text,
+with an optional muted note, at a point in its owner's coordinates, and lets the
+pointer through. The parameter panel shows a row's doc in one and the text editor
+a diagnostic's messages.
 
 A `Command(text, shortcut=Shortcut(), id="")` owns its label, enabled state and
 signal, plus an optional registry id. `set_commands` registers the application's

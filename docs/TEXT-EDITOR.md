@@ -127,6 +127,38 @@ falls back to a coarse whole-region mark. Pass the current text (as after a save
 to clear the bars. luced sets the baseline to the file on disk and re-baselines on
 save.
 
+## Diagnostics
+
+`set_diagnostics(diagnostics)` shows compiler or linter results; an empty list,
+or `clear_diagnostics()`, removes them. Each is
+`Diagnostic(line, column_start, column_end, severity, message)`, with `severity`
+one of `Severity.error`, `warning` and `info`. Lines and columns are one-based,
+as compilers print them and as `line()` reports the caret's line. Columns count
+Unicode scalars, not UTF-8 bytes and not display cells: a tab or a wide scalar is
+one column, so they differ from `column()`, which counts cells. On ASCII lines
+byte and scalar columns agree; a caller with byte columns on non-ASCII text
+converts them first. The range is `column_start..<column_end`. An empty range,
+or one past the line's end, underlines one cell, and a line past the last points
+at the document's end. A zero line or column is refused and keeps the previous
+set.
+
+Errors and warnings get a wavy underline, info a straight one, in
+`EditorTheme.diagnostic_error`, `diagnostic_warning` and `diagnostic_info`,
+which `Theme` supplies. With line numbers on, a line on which any diagnostic
+starts shows a square in the gutter's first cell, in its worst severity. Resting
+the pointer on an underline or a gutter mark shows a `Tooltip` under the row with
+every message there, one to a line, after `set_tip_delay(seconds)` (half a second
+unless set). A press, key, scroll, edit or the pointer leaving hides it;
+`shown_tip()` returns its text, or an empty one when hidden.
+
+Diagnostics follow edits as highlights do: positions before an edit stay, those
+after shift by its length, and those inside replaced text move to its end. A
+range whose text is all deleted, or a point inside deleted text, is dropped and
+does not come back on undo. `set_text` clears them, since they belonged to the
+old text. `diagnostic_count()` and `diagnostic_range(index)` (zero-based scalar
+offsets) report what is left, so a stale set can be republished after the next
+build.
+
 ## Editing commands and context menus
 
 `copy`, `cut`, `paste`, `select_all`, `undo` and `redo` expose the same operations

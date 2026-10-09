@@ -1,0 +1,153 @@
+## The Tooltip: a small popup of wrapped text, with an optional muted note under
+## it. It floats over the window at a point its owner gives, in the owner's
+## points, and takes no input: the pointer passes through it. The parameter
+## panel shows a row's doc in one, the text editor a diagnostic's message.
+from luce_gpu import gpu
+import interop
+import ownership
+from luce_std import math
+import layout
+import result
+import text.cells as cell_widths
+from layout import Widget, Layout, Size, Constraints, Event, Rect
+from painter import Painter
+from font import Font
+
+## Characters to a line at most; a shorter text makes a narrower tip.
+let widest: usize = 44
+
+pub struct Tooltip: Widget:
+    let box: interop.Reference[Layout]
+    let font: interop.Reference[Font]
+    var body: interop.Owned[str]
+    var note: interop.Owned[str]
+
+    pub func init(font: interop.Reference[Font]) -> !:
+        let box = try layout.make_layout()
+        box.value().set_popup(true)
+        box.value().set_modal(false)
+        box.value().set_popup_placement(layout.PopupPlacement.point)
+        box.value().set_visible(false)
+        self.box = box
+        self.font = font.clone()
+        self.body = interop.Owned[str]("")
+        self.note = interop.Owned[str]("")
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func is_open() -> bool:
+        return self.box.value().is_visible()
+
+    ## The text showing, or the last one shown.
+    pub func text() -> str:
+        return self.body.value
+
+    ## Show `body`, and `note` under it when not empty, with the tip's top-left at
+    ## (`x`, `y`) in the owner's points.
+    pub func show(body: str, note: str, x: f64, y: f64) -> !:
+        try replace(&self.body, body)
+        try replace(&self.note, note)
+        try self.box.value().set_popup_point(x, y)
+        self.box.value().set_visible(true)
+
+    pub func hide():
+        self.box.value().set_visible(false)
+
+    func columns() -> usize:
+        let body = cell_widths.width(self.body.value)
+        let fitted = body if body < widest else widest
+        let note = cell_widths.width(self.note.value)
+        return fitted if fitted > note else note
+
+    func lines() -> usize:
+        var count: usize = 0
+        var at: usize = 0
+        while at < self.body.value.length:
+            let (end, next) = wrap(self.body.value, at, self.columns())
+            _ = end
+            at = next
+            count += 1
+        return count + (1 if self.note.value.length > 0 else 0)
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let advance = self.font.value().advance()
+        let line = self.font.value().line_height()
+        return result.success[Size](Size((f64)self.columns() * advance + advance * 2.0, (f64)self.lines() * line + 8.0))
+
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        try painter.rectangle(Rect(width = size.width, height = size.height), theme.border)
+        try painter.rectangle(Rect(1.0, 1.0, size.width - 2.0, size.height - 2.0), theme.raised)
+        let advance = self.font.value().advance()
+        let line = self.font.value().line_height()
+        var y = math.floor((line - self.font.value().height()) * 0.5) + 4.0
+        var at: usize = 0
+        while at < self.body.value.length:
+            let (end, next) = wrap(self.body.value, at, self.columns())
+            try painter.text((str)self.body.value.bytes[at..<end], advance, y, theme.foreground, self.font)
+            at = next
+            y += line
+        if self.note.value.length > 0:
+            try painter.text(self.note.value, advance, y, theme.muted, self.font)
+
+    pub func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub func close():
+        self.body.release()
+        self.note.release()
+        self.font.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+        self.font.trace(visit, context)
+        self.body.trace(visit, context)
+        self.note.trace(visit, context)
+
+pub let tooltip_type: interop.Type[Tooltip] = interop.Type[Tooltip]("Tooltip", Tooltip.close, Tooltip.trace, closeable = true, main_thread = true)
+
+## Put a copy of `text` in `slot`, releasing what it held only once the slot no
+## longer does.
+func replace(slot: interop.Owned[str]*, text: str) -> !:
+    if slot.value == text:
+        return
+    let copy = try interop.copy_text(text)
+    let previous = *slot
+    *slot = copy
+    previous.release()
+
+## The line of `text` from `start` that fits `columns` cells, broken at a space
+## when it can be: where it ends, and where the next begins. A newline always ends
+## a line. A line always takes at least one scalar, and a wide one that would cross
+## the edge starts the next.
+func wrap(text: str, start: usize, columns: usize) -> (usize, usize):
+    let line = cell_widths.prefix((str)text.bytes[start..], columns)
+    var at = start + line.length
+    if at == start and at < text.length:
+        at += 1
+        while at < text.length and text.bytes[at] & 0xC0 == 0x80:
+            at += 1
+    var space: usize? = none
+    for index in start..<at:
+        if text.bytes[index] == '\n':
+            return (index, index + 1)
+        if text.bytes[index] == ' ':
+            space = index
+    if at >= text.length:
+        return (text.length, text.length)
+    if text.bytes[at] == '\n':
+        return (at, at + 1)
+    if let broken = space:
+        if broken > start:
+            return (broken, broken + 1)
+    return (at, at)

@@ -12,6 +12,8 @@ from text.projection import Projection
 from text.folding import Folding
 from text.diff import LineDiff, ChangeKind
 from text.style import Highlight, EditorTheme, Swatch, swatch_span
+from text.diagnostics import Diagnostics
+import text.diagnostic_drawing as marks
 import strings
 
 pub func vertical_padding(font: interop.Reference[Font]) -> f64:
@@ -43,7 +45,8 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
                scroll_x: f64, scroll_y: f64, numbers: bool, focused: bool,
                caret_visible: bool, font: interop.Reference[Font], theme: EditorTheme,
                highlights: const Highlight[], projection: const Projection*, folds: const Folding*, diff: const LineDiff*, hovered_row: usize?,
-               ai_first: usize, ai_last: usize, swatches: const Swatch[], reserve: bool) -> !:
+               ai_first: usize, ai_last: usize, swatches: const Swatch[], reserve: bool,
+               diagnostics: const Diagnostics*) -> !:
     let folding = folds.values().length > 0
     let gutter = gutter_width(numbers, font, projection.line_count(), folding)
     try painter.rectangle(gpu.Rect(width = width, height = height), theme.background)
@@ -84,6 +87,9 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
                 try painter.rectangle(gpu.Rect(gutter - bar * 2.4, row_top - 1.5, bar * 2.4, 3.0), theme.diff_deleted)
             if segment.end == line.end and segment.physical + 1 == projection.line_count() and diff.tail_deletion():
                 try painter.rectangle(gpu.Rect(gutter - bar * 2.4, row_top + font.value().line_height() - 1.5, bar * 2.4, 3.0), theme.diff_deleted)
+        if numbers and segment.leading:
+            if let worst = diagnostics.worst(line.start, line.end):
+                try marks.gutter_mark(painter, row_top, font, marks.severity_color(theme, worst))
         let number_color = theme.active_line_number if row == current or hovered_row == row else theme.line_number
         if numbers and segment.leading:
             var label: u8[32]
@@ -92,6 +98,9 @@ pub func paint(document: const Document*, painter: Painter*, width: f64, height:
             try painter.text(text, gutter - extent - font.value().advance() * (3.0 if folding else 1.0), y, number_color, font)
         try paint_line(document, painter, segment.start, segment.end, segment.column, segment.end == line.end,
                        y, width, scroll_x, gutter, focused, caret_visible, font, theme, highlights, &style, swatches, &swatch, reserve)
+        if diagnostics.values().length > 0:
+            try marks.underline(document, painter, diagnostics, segment.start, segment.end, segment.column, segment.end == line.end,
+                                y, width, scroll_x, gutter, font, theme, swatches if reserve else swatches[..<0])
         if segment.leading:
             if let index = folds.at(line.start):
                 let fold = folds.values()[index]

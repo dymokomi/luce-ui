@@ -20,7 +20,7 @@
 #       paint.lucb     drawing the rows: labels, fields, sliders, toggles, menus, swatches
 #       input.lucb     pointer gestures: scrubbing, the value ladder, clicks, the context menu
 #       editing.lucb   typing into a field, keys, Tab between fields, and polled popups
-#       popups.lucb    the value ladder and the tooltip, the panel's two small popups
+#       popups.lucb    the value ladder, a small popup beside the row tooltip
 #
 #==============================================================================================
 
@@ -47,6 +47,7 @@ from text.line_input import LineInput
 from widgets.action_popup import ActionPopup, action_popup_type
 from widgets.color_editor import ColorEditor, color_editor_type
 from widgets.number_field import format_number
+from widgets.tooltip import Tooltip, tooltip_type
 import measures
 from measures import Unit
 import icons
@@ -227,7 +228,7 @@ pub struct ParameterPanel: Widget:
     let activated: interop.Signal[i64]
     let items_popup: interop.Reference[ActionPopup]
     let color_popup: interop.Reference[ColorEditor]
-    let tip: interop.Reference[ParameterTip]
+    let tip: interop.Reference[Tooltip]
     let ladder: interop.Reference[ValueLadder]
     var input: LineInput
     ## The label column's width when the host or a drag set it; 0 fits the labels.
@@ -311,7 +312,7 @@ pub struct ParameterPanel: Widget:
         errdefer items_popup.release()
         let color_popup = try interop.Reference[ColorEditor].adopt(new ColorEditor(selected) in memory.heap, color_editor_type, memory.heap)
         errdefer color_popup.release()
-        let tip = try interop.Reference[ParameterTip].adopt(new ParameterTip(selected) in memory.heap, parameter_tip_type, memory.heap)
+        let tip = try interop.Reference[Tooltip].adopt(new Tooltip(selected) in memory.heap, tooltip_type, memory.heap)
         errdefer tip.release()
         let ladder = try interop.Reference[ValueLadder].adopt(new ValueLadder(selected) in memory.heap, value_ladder_type, memory.heap)
         errdefer ladder.release()

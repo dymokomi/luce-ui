@@ -5,14 +5,15 @@
 #==============================================================================================
 #
 #   DESCRIPTION:
-#       A multiline code editor with highlighting, color chips, folding, soft wrap
-#       and change bars. The TextEditor's methods are split by concern across the
+#       A multiline code editor with highlighting, color chips, folding, soft wrap,
+#       change bars and diagnostics. The TextEditor's methods are split by concern across the
 #       fragments, each under `extend TextEditor:`. In ORDER:
 #
 #       module.lucb       the struct, construction, closing and the widget type
 #       commands.lucb     the text, selection and edit commands; change notification
 #       events.lucb       keys and pointer gestures turned into edits and selections
 #       decorations.lucb  highlights, color chips, folds, change bars and AI lines
+#       diagnostics.lucb  diagnostic underlines and gutter marks, and their tooltip
 #       view.lucb         layout and drawing: projection, scrolling, wrap, painting
 #
 #==============================================================================================
@@ -37,6 +38,9 @@ from text.swatches import Swatches
 from text.folding import FoldRange, Folding
 from text.projection import Projection
 from text.diff import LineDiff
+from text.diagnostics import Diagnostic, Diagnostics
+import text.diagnostic_drawing as diagnostic_drawing
+from widgets.tooltip import Tooltip, tooltip_type
 from font import Font, selected_font
 from layout import Widget, Layout, Size, Constraints, Event, Point
 from painter import Painter
@@ -76,6 +80,16 @@ pub struct TextEditor: Widget:
     let swatch_activated: interop.Signal[i64]
     var swatch_hover: bool
     var pending_swatch: i64
+    var diagnostics: Diagnostics
+    ## The diagnostic tooltip, a popup child; emptied in close before its release.
+    var tip: interop.Reference[Tooltip]?
+    ## What the pointer rests on: a visual row (-1 for nothing), the first
+    ## diagnostic it touches there (-1 for a gutter mark), the pointer's x, and since when.
+    var tip_row: i64
+    var tip_first: i64
+    var tip_x: f64
+    var tip_since: u64
+    var tip_delay: u64
 
     pub func init(text: str = "", read_only: bool = false, line_numbers: bool = true,
                   font: interop.Reference[Font]? = none, theme: EditorTheme? = none, wrap: bool = false) -> !:
@@ -98,6 +112,14 @@ pub struct TextEditor: Widget:
         errdefer changed.release()
         let swatch_activated = try interop.Signal[i64]()
         errdefer swatch_activated.release()
+        let tip = try interop.Reference[Tooltip].adopt(new Tooltip(selected) in memory.heap, tooltip_type, memory.heap)
+        errdefer tip.release()
+        let children: interop.Interface[Widget][1] = [tip.as_interface[Widget](tip.value())]
+        box.value().set_children(children) catch failure:
+            children[0].release()
+            error(failure.code, failure.message)
+        # The layout retained its child; this carrier was ours to drop.
+        children[0].release()
         let highlights = Decorations()
         let swatches = Swatches()
         var folds = Folding()
@@ -134,6 +156,13 @@ pub struct TextEditor: Widget:
         self.swatch_activated = swatch_activated
         self.swatch_hover = false
         self.pending_swatch = -1
+        self.diagnostics = Diagnostics()
+        self.tip = tip
+        self.tip_row = -1
+        self.tip_first = -1
+        self.tip_x = 0.0
+        self.tip_since = 0
+        self.tip_delay = tip_wait
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -152,6 +181,11 @@ pub struct TextEditor: Widget:
         if let baseline = self.baseline:
             baseline.release()
         self.diff.close()
+        self.diagnostics.close()
+        let tip = self.tip
+        self.tip = none
+        if let held = tip:
+            held.release()
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
@@ -159,5 +193,10 @@ pub struct TextEditor: Widget:
         self.box.trace(visit, context)
         self.changed.trace(visit, context)
         self.swatch_activated.trace(visit, context)
+        if let tip = self.tip:
+            tip.trace(visit, context)
+
+## A diagnostic's tooltip shows after the pointer rests this long on it (nanoseconds), unless set.
+let tip_wait: u64 = 500000000
 
 pub let text_editor_type: interop.Type[TextEditor] = interop.Type[TextEditor]("Text editor", TextEditor.close, TextEditor.trace, closeable = true, main_thread = true)

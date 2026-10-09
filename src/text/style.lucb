@@ -1,5 +1,5 @@
 ## The text editor's styling inputs: syntax highlight spans, color swatches
-## and the editor theme's colors.
+## and the editor theme's colors. Diagnostics live in text.diagnostics.
 from luce_gpu import gpu
 
 ## Half-open scalar ranges. Ordered, non-overlapping spans can come from any
@@ -37,6 +37,10 @@ pub struct EditorTheme:
     pub var diff_added: gpu.Color = gpu.Color(0.24, 0.63, 0.35)
     pub var diff_modified: gpu.Color = gpu.Color(0.20, 0.55, 0.86)
     pub var diff_deleted: gpu.Color = gpu.Color(0.82, 0.32, 0.32)
+    ## Diagnostic underlines and gutter marks, by severity.
+    pub var diagnostic_error: gpu.Color = gpu.Color(0.86, 0.26, 0.24)
+    pub var diagnostic_warning: gpu.Color = gpu.Color(0.88, 0.64, 0.18)
+    pub var diagnostic_info: gpu.Color = gpu.Color(0.2, 0.66, 0.92)
 
 ## The value 0..15 of a hex-digit scalar, or -1 when it is not one.
 pub func hex_digit(scalar: u32) -> i64:

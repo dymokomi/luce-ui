@@ -1,0 +1,156 @@
+#==============================================================================================
+#
+#   widgets/text_editor/diagnostics - Diagnostic underlines, gutter marks and their tooltip
+#
+#==============================================================================================
+
+extend TextEditor:
+    ## Replace every diagnostic with `diagnostics`; an empty list clears them. Lines
+    ## and columns are 1-based, as compilers report them, and columns count Unicode
+    ## scalars (see Diagnostic). Each range is underlined in its severity's color, and
+    ## a line with any shows a mark in the gutter's first cell in its worst severity
+    ## (when line numbers show). Resting the pointer on either shows the messages.
+    ## Diagnostics then follow edits as highlights do, until the next call.
+    pub func set_diagnostics(diagnostics: const Diagnostic[]) -> !:
+        try self.refresh_view()
+        try self.diagnostics.replace(diagnostics, &self.projection)
+        self.forget_tip()
+        self.box.value().invalidate()
+
+    ## Remove every diagnostic; the same as `set_diagnostics([])`.
+    pub func clear_diagnostics():
+        self.diagnostics.close()
+        self.forget_tip()
+        self.box.value().invalidate()
+
+    ## The diagnostics held: those set, less any an edit removed.
+    pub func diagnostic_count() -> i64:
+        return (i64)self.diagnostics.values().length
+
+    ## The 0-based scalar range diagnostic `index` covers now, after edits; equal
+    ## ends for a point.
+    pub func diagnostic_range(index: i64) -> (i64, i64)!:
+        if index < 0 or index >= self.diagnostic_count():
+            error(result.invalid, "no diagnostic has that index")
+        let mark = self.diagnostics.values()[(usize)index]
+        return (mark.start, mark.end)
+
+    ## How long the pointer rests on a diagnostic before its tooltip shows, in
+    ## seconds (0.5 unless set).
+    pub func set_tip_delay(seconds: f64) -> !:
+        if not math.is_finite(seconds) or seconds < 0.0 or seconds > 60.0:
+            error(result.invalid, "a tooltip delay is 0..60 seconds")
+        self.tip_delay = (u64)(seconds * 1.0e9)
+
+    ## The messages the diagnostic tooltip shows, or an empty text when it is hidden.
+    pub func shown_tip() -> interop.Owned[str]!:
+        let tip = self.tip else return try interop.copy_text("")
+        return try interop.copy_text(tip.value().text() if tip.value().is_open() else "")
+
+    ## Track the pointer at editor-local (`x`, `y`): resting on another diagnostic
+    ## hides the tip and starts its wait over.
+    func rest_pointer(x: f64, y: f64):
+        let (row, first) = self.diagnostic_at(x, y)
+        self.tip_x = x
+        if row == self.tip_row and first == self.tip_first:
+            return
+        self.forget_tip()
+        self.tip_row = row
+        self.tip_first = first
+        self.tip_since = time.now()
+        if row >= 0:
+            layout.wake_at(self.tip_since + self.tip_delay)
+            self.box.value().invalidate()
+
+    ## Hide the tip and forget what the pointer rested on, as after an edit,
+    ## scroll or press, so a stale row never shows.
+    func forget_tip():
+        self.tip_row = -1
+        self.tip_first = -1
+        if let tip = self.tip:
+            if tip.value().is_open():
+                tip.value().hide()
+
+    ## The visual row and first diagnostic under (`x`, `y`): -1 for the diagnostic
+    ## when it is the line's gutter mark, (-1, -1) over none.
+    func diagnostic_at(x: f64, y: f64) -> (i64, i64):
+        if self.diagnostics.values().length == 0 or x < 0.0:
+            return (-1, -1)
+        let top = y - drawing.vertical_padding(self.font) + self.scroll_y
+        if top < 0.0:
+            return (-1, -1)
+        let row = (usize)(top / self.font.value().line_height())
+        if row >= self.projection.visible_count():
+            return (-1, -1)
+        if self.on_gutter_mark(x):
+            let segment = self.projection.row(row)
+            let line = self.projection.line(segment.physical)
+            if segment.leading:
+                if let worst = self.diagnostics.worst(line.start, line.end):
+                    _ = worst
+                    return ((i64)row, -1)
+            return (-1, -1)
+        for index in 0..<self.diagnostics.values().length:
+            if self.under(index, row, x):
+                return ((i64)row, (i64)index)
+        return (-1, -1)
+
+    ## Whether x lies on the gutter's first cell, where a line's mark is drawn.
+    func on_gutter_mark(x: f64) -> bool:
+        return self.line_numbers and x < self.font.value().advance()
+
+    ## Whether diagnostic `index` is underlined at `x` on visual row `row`.
+    func under(index: usize, row: usize, x: f64) -> bool:
+        let mark = self.diagnostics.values()[index]
+        let segment = self.projection.row(row)
+        let line = self.projection.line(segment.physical)
+        let advance = self.font.value().advance()
+        let origin = self.gutter_width() + advance - self.scroll_x - (f64)segment.column * advance
+        let covered = diagnostic_drawing.extent(&self.document, (usize)mark.start, (usize)mark.end, segment.start, segment.end,
+                                                segment.end == line.end, origin, advance, self.active_swatches()) else return false
+        let (left, right) = covered
+        return x >= left and x < right and x >= self.gutter_width()
+
+    ## Whether diagnostic `index` belongs to what the pointer rests on: the gutter
+    ## mark's line, or the underline under the pointer.
+    func resting_on(index: usize) -> bool:
+        let row = (usize)self.tip_row
+        if self.tip_first < 0:
+            let line = self.projection.line(self.projection.row(row).physical)
+            let start = self.diagnostics.values()[index].start
+            return start >= (i64)line.start and start <= (i64)line.end
+        return self.under(index, row, self.tip_x)
+
+    ## Show the tooltip that is due, under the row the pointer rests on: every
+    ## message there, one to a line.
+    func show_due_tip() -> !:
+        let tip = self.tip else return
+        if self.tip_row < 0 or tip.value().is_open() or self.dragging or self.dragging_scroll:
+            return
+        if (usize)self.tip_row >= self.projection.visible_count():
+            self.forget_tip()
+            return
+        if time.now() < self.tip_since + self.tip_delay:
+            layout.wake_at(self.tip_since + self.tip_delay)
+            return
+        var length: usize = 0
+        for index in 0..<self.diagnostics.values().length:
+            if self.resting_on(index):
+                length += self.diagnostics.message(index).length + 1
+        if length == 0:
+            return
+        let joined = try new u8[length] --- in memory.heap
+        defer free(joined) in memory.heap
+        var at: usize = 0
+        for index in 0..<self.diagnostics.values().length:
+            if self.resting_on(index):
+                if at > 0:
+                    joined[at] = '\n'
+                    at += 1
+                let message = self.diagnostics.message(index)
+                for offset in 0..<message.length:
+                    joined[at + offset] = message.bytes[offset]
+                at += message.length
+        let line = self.font.value().line_height()
+        let y = (f64)(self.tip_row + 1) * line - self.scroll_y + drawing.vertical_padding(self.font) + 2.0
+        try tip.value().show((str)joined[..<at], "", math.max(0.0, self.tip_x), y)

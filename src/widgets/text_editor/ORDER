@@ -2,4 +2,5 @@ module.lucb
 commands.lucb
 events.lucb
 decorations.lucb
+diagnostics.lucb
 view.lucb

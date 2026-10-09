@@ -1,0 +1,87 @@
+## Diagnostics in the text editor: set and clear, drawing with and without wrap,
+## the tooltip over an underline and over a gutter mark, and edits moving or
+## dropping them.
+from luce_ui.ui import Application, TextEditor, Font, Event, Diagnostic, Severity
+from luce_ui import ui
+from luce_window.input import EventKind
+from luce_gpu.gpu import Frame
+from luce_window import window
+
+func render(app: Application) -> unit!:
+    let frame = Frame(window.Size(320.0, 200.0, 320.0, 200.0, 1.0))
+    app.layout(320.0, 200.0)
+    app.render(frame.target())
+    frame.close()
+
+## Rest the pointer on cell `column` (0-based, after the gutter) of visual row `row`,
+## or on the gutter's first cell when `column` is negative, and draw.
+func rest(app: Application, font: Font, row: float, column: float) -> unit!:
+    let gutter = font.advance() * 3.0
+    let x = font.advance() * 0.5 if column < 0.0 else gutter + font.advance() * (column + 1.5)
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x, y = font.line_height() * (row + 0.5)))
+    render(app)
+
+pub func diagnostics() -> unit!:
+    let font = Font()
+    let editor = TextEditor("let x = 1\nbad()\nend", font = font)
+    let app = Application(editor)
+    render(app)
+    editor.set_tip_delay(0.0)
+    editor.set_diagnostics([Diagnostic(2, 1, 4, Severity.error, "unknown name"),
+                            Diagnostic(2, 5, 99, Severity.warning, "unused call"),
+                            Diagnostic(3, 4, 4, Severity.info, "missing newline"),
+                            Diagnostic(1, 5, 6, Severity.warning, "unused")])
+    assert(editor.diagnostic_count() == 4)
+    let (first, last) = editor.diagnostic_range(0)
+    assert(first == 10 and last == 13)
+    let (point, same) = editor.diagnostic_range(2)
+    assert(point == 19 and same == 19)
+    render(app)
+    # Resting on an underline shows its message; on the gutter mark, the line's.
+    rest(app, font, 1.0, 1.0)
+    assert(editor.shown_tip() == "unknown name")
+    rest(app, font, 1.0, -1.0)
+    assert(editor.shown_tip() == "unknown name\nunused call")
+    rest(app, font, 0.0, 0.0)
+    assert(editor.shown_tip() == "")
+    # A point at the line's end underlines the cell after the text.
+    rest(app, font, 2.0, 3.0)
+    assert(editor.shown_tip() == "missing newline")
+    app.dispatch(Event(kind = EventKind.pointer_left, x = -1.0, y = -1.0))
+    render(app)
+    assert(editor.shown_tip() == "")
+    # Soft wrap draws them on wrapped rows too.
+    editor.set_wrap(true)
+    render(app)
+    editor.set_wrap(false)
+    # A line inserted above moves them down; the tip hides on an edit.
+    rest(app, font, 1.0, 1.0)
+    assert(editor.shown_tip() == "unknown name")
+    editor.set_selection(0, 0)
+    editor.insert("# head\n")
+    assert(editor.shown_tip() == "" and editor.diagnostic_count() == 4)
+    let (moved, moved_last) = editor.diagnostic_range(0)
+    assert(moved == 17 and moved_last == 20)
+    rest(app, font, 2.0, 1.0)
+    assert(editor.shown_tip() == "unknown name")
+    # Deleting a range's text drops it.
+    editor.set_selection(17, 20)
+    editor.insert("")
+    assert(editor.diagnostic_count() == 3)
+    render(app)
+    # Lines and columns are 1-based.
+    var rejected = false
+    editor.set_diagnostics([Diagnostic(0, 1, 1, Severity.error, "zero")]) catch failure:
+        rejected = failure.code == ui.invalid
+    assert(rejected and editor.diagnostic_count() == 3)
+    editor.set_diagnostics([])
+    assert(editor.diagnostic_count() == 0)
+    editor.set_diagnostics([Diagnostic(1, 1, 2, Severity.error, "again")])
+    editor.clear_diagnostics()
+    assert(editor.diagnostic_count() == 0)
+    # Loading new text clears them.
+    editor.set_diagnostics([Diagnostic(1, 1, 2, Severity.error, "again")])
+    editor.set_text("fresh")
+    assert(editor.diagnostic_count() == 0)
+    render(app)
+    app.close()

@@ -92,7 +92,7 @@ extend TextEditor:
         return try self.changed.connect(callback)
 
     ## Load new text: newlines are normalized, history is cleared, the caret goes
-    ## to the start and scrolling resets. Notifies `on_change`.
+    ## to the start, scrolling resets and diagnostics are cleared. Notifies `on_change`.
     pub func set_text(text: str) -> interop.Outcome[unit]:
         let normalized = editing.normalize_lines(text) catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -101,6 +101,7 @@ extend TextEditor:
             return result.failure[unit](failure.code, failure.message)
         self.scroll_x = 0.0
         self.scroll_y = 0.0
+        self.clear_diagnostics()
         return self.notify_changed()
 
     ## Select scalar offsets `anchor` to `caret` and scroll the caret into view.
@@ -176,6 +177,8 @@ extend TextEditor:
         self.highlights.transform(self.document.last_change())
         self.swatches.transform(self.document.last_change())
         self.folds.transform(self.document.last_change())
+        self.diagnostics.transform(self.document.last_change())
+        self.forget_tip()
         self.vertical_move = false
         self.active_since = time.now()
         self.reveal_caret() catch failure:

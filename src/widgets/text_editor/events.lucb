@@ -9,12 +9,16 @@ extend TextEditor:
         # Passive hover is derived by Layout and rendered without remeasuring
         # controls or rebuilding text projections for each pointer movement. The
         # pointer turns into a hand over a color chip, updated only on a transition.
+        # Resting on a diagnostic starts its tooltip's wait.
         if event.kind == input.EventKind.pointer_moved and not event.cancelled and not self.dragging and not self.dragging_scroll:
             let over = self.swatch_at(event.x, event.y) >= 0
             if over != self.swatch_hover:
                 self.swatch_hover = over
                 self.box.value().set_cursor(input.Cursor.pointer if over else input.Cursor.text)
+            self.rest_pointer(event.x, event.y)
             return result.success[unit](())
+        # Anything else (a press, a key, a scroll, the pointer leaving) ends a tooltip.
+        self.forget_tip()
         let before = self.document.version()
         self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)

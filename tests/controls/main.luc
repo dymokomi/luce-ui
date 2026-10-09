@@ -23,6 +23,7 @@ from tables import tables
 from dialogs import dialogs, dialog_keys, number_submit, number_edit, field_leaves, field_command_keys, field_submits, application_wakes, field_editing_shortcuts, disabled_shortcut_passes
 from scene_views import scene_views
 from parameters import parameters
+from diagnostics import diagnostics
 from appearance import appearance_follows
 
 class Custom: Widget:
@@ -173,6 +174,7 @@ pub func main(arguments: list[str]) -> int!:
     app.render(target)
     frame.close()
     text_views()
+    diagnostics()
     wide_text()
     panes()
     scene_views()

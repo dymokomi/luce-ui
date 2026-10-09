@@ -151,6 +151,11 @@ pub type TextEditor = text_editor.TextEditor
 pub type Highlight = style.Highlight
 pub type EditorTheme = style.EditorTheme
 pub let text_editor_type = text_editor.text_editor_type
+import text.diagnostics
+## A compiler diagnostic for `TextEditor.set_diagnostics`: 1-based line and
+## columns, columns in Unicode scalars, `column_start..<column_end`.
+pub type Diagnostic = diagnostics.Diagnostic
+pub type Severity = diagnostics.Severity
 
 import widgets.list_view
 pub type ListView = list_view.ListView
@@ -227,8 +232,10 @@ pub type ParameterPanel = parameters.ParameterPanel
 pub type ParameterSpec = parameters.ParameterSpec
 pub type ParameterKind = parameters.ParameterKind
 pub let parameter_panel_type = parameters.parameter_panel_type
-pub let parameter_tip_type = parameters.parameter_tip_type
 pub let value_ladder_type = parameters.value_ladder_type
+import widgets.tooltip
+pub type Tooltip = tooltip.Tooltip
+pub let tooltip_type = tooltip.tooltip_type
 
 ## What `typed` into a numeric field comes to, as a parameter panel
 ## reads it: arithmetic, or `+=`/`-=`/`*=`/`/=` applied to `current`; none

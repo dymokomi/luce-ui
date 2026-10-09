@@ -1,6 +1,7 @@
 ## Wide text on real pixels: in "田a" the ideograph takes two cells, so selecting
 ## the 'a' paints the third cell of the line, not the second. Sampled below the
-## glyphs, where only the selection and background show.
+## glyphs, where only the selection and background show. A diagnostic's gutter
+## mark is checked the same way.
 from luce_gpu import gpu
 import interop
 import memory
@@ -36,3 +37,29 @@ pub func check(host: window.Window, surface: gpu.Surface) -> !:
     style_pixels.pixel(scale, advance * 2.5, y, 255, 255, 255)
     style_pixels.pixel(scale, advance * 3.5, y, 0, 255, 0)
     style_pixels.pixel(scale, advance * 4.5, y, 255, 255, 255)
+
+## A diagnostic's gutter mark: a square in the error color centered in the gutter's
+## first cell of its line, and nothing on a line without one.
+pub func diagnostic_marks(host: window.Window, surface: gpu.Surface) -> !:
+    try host.resize(205, 120)
+    let font = try interop.Reference[ui.Font].adopt(new ui.Font() in memory.heap, ui.font_type, memory.heap)
+    defer font.release()
+    let white = gpu.Color(1.0, 1.0, 1.0)
+    let theme = ui.EditorTheme(background = white, foreground = gpu.Color(), gutter = white, current_line = white,
+        gutter_active = white, gutter_hover = white, diagnostic_error = gpu.Color(1.0, 0.0, 0.0))
+    let editor = try interop.Reference[TextEditor].adopt(new TextEditor("bad\nfine", font = font, theme = theme) in memory.heap, ui.text_editor_type, memory.heap)
+    defer editor.release()
+    let marked: ui.Diagnostic[1] = [ui.Diagnostic(1, 1, 4, ui.Severity.error, "unknown name")]
+    try editor.value().set_diagnostics(marked)
+    let root = editor.as_interface[Widget](editor.value())
+    defer root.release()
+    let app = try interop.Reference[Application].adopt(new Application(root) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    let scale = (try host.size()).scale
+    native.begin("UI pixel contracts")
+    defer native.end()
+    try style_pixels.render(app, host, surface)
+    let advance = font.value().advance()
+    let line = font.value().line_height()
+    style_pixels.pixel(scale, advance * 0.5, line * 0.5, 255, 0, 0)
+    style_pixels.pixel(scale, advance * 0.5, line * 1.5, 255, 255, 255)

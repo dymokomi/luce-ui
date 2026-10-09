@@ -1,0 +1,81 @@
+## Painting diagnostics: a wavy underline under each range (a straight one for
+## info), and a square gutter mark in the worst severity of the line. Column math
+## matches drawing.paint_line, so an underline sits under exactly its scalars.
+from luce_gpu import gpu
+import interop
+from luce_std import math
+from font import Font
+from painter import Painter
+from geometry import Point
+from text.cells import grid
+from text.document import Document
+from text.diagnostics import Diagnostics, Severity
+import text.editing
+from text.style import EditorTheme, Swatch
+
+pub func severity_color(theme: EditorTheme, severity: Severity) -> gpu.Color:
+    if severity == Severity.error:
+        return theme.diagnostic_error
+    if severity == Severity.warning:
+        return theme.diagnostic_warning
+    return theme.diagnostic_info
+
+## A square in the gutter's first cell of the row at `row_top`, which the gutter
+## keeps free left of the line number.
+pub func gutter_mark(painter: Painter*, row_top: f64, font: interop.Reference[Font], color: gpu.Color) -> !:
+    let side = math.floor(math.min(font.value().advance(), font.value().height()) * 0.6)
+    let x = math.floor((font.value().advance() - side) * 0.5)
+    let y = math.floor(row_top + (font.value().line_height() - side) * 0.5)
+    try painter.rectangle(gpu.Rect(x, y, side, side), color)
+
+## The left and right x of the cells a diagnostic `start..<end` covers on the
+## visual row `row_start..<row_end` (`last` when it ends its line), or none when it
+## is not on the row. A point covers the one cell at it.
+pub func extent(document: const Document*, start: usize, end: usize, row_start: usize, row_end: usize, last: bool,
+                origin: f64, advance: f64, swatches: const Swatch[]) -> (f64, f64)?:
+    if start == end:
+        if start < row_start or start > row_end or (start == row_end and not last):
+            return none
+    elif start >= row_end or end <= row_start:
+        return none
+    let first = start if start > row_start else row_start
+    let left = origin + (f64)editing.column(document, first, swatches) * advance
+    let finish = end if end < row_end else row_end
+    if finish <= first:
+        return (left, left + advance)
+    let column = editing.column(document, finish - 1, swatches)
+    return (left, origin + (f64)(column + grid(document.scalar(finish - 1), column)) * advance)
+
+## Underline every diagnostic on one visual row; arguments as paint_line takes them.
+pub func underline(document: const Document*, painter: Painter*, diagnostics: const Diagnostics*,
+                   start: usize, end: usize, start_column: usize, last: bool, y: f64, width: f64,
+                   scroll_x: f64, gutter: f64, font: interop.Reference[Font], theme: EditorTheme,
+                   swatches: const Swatch[]) -> !:
+    let advance = font.value().advance()
+    let origin = gutter + advance - scroll_x - (f64)start_column * advance
+    let base = y + font.value().height()
+    for mark in diagnostics.values():
+        let covered = extent(document, (usize)mark.start, (usize)mark.end, start, end, last, origin, advance, swatches) else continue
+        let (left, right) = covered
+        let low = math.max(left, gutter)
+        let high = math.min(right, width - 8.0)
+        if high > low:
+            let color = severity_color(theme, mark.severity)
+            if mark.severity == Severity.info:
+                try painter.line(Point(low, base + 0.5), Point(high, base + 0.5), 1.0, color)
+            else:
+                try wave(painter, low, high, base, color)
+
+## A zigzag between `base - 1` and `base + 1`, two points to a slope, phased
+## from x = 0 so neighboring ranges join up.
+func wave(painter: Painter*, left: f64, right: f64, base: f64, color: gpu.Color) -> !:
+    var x = left
+    while x < right:
+        let next = math.min(right, math.floor(x * 0.5) * 2.0 + 2.0)
+        try painter.line(Point(x, base + height(x)), Point(next, base + height(next)), 1.0, color)
+        x = next
+
+## The zigzag's offset at `x`: -1 at even multiples of two points, +1 at odd ones.
+func height(x: f64) -> f64:
+    let phase = x * 0.25 - math.floor(x * 0.25)
+    return phase * 4.0 - 1.0 if phase < 0.5 else 3.0 - phase * 4.0

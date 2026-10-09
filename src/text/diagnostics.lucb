@@ -1,0 +1,202 @@
+## Compiler and linter diagnostics as editor decorations. A caller publishes them in
+## 1-based lines and columns, as compilers report them; they are kept as scalar
+## ranges so edits transform them like highlights, without allocation. Messages are
+## copied into one byte block, so the set holds no references and needs no trace.
+import memory
+import result
+from text.document import Document, TextChange
+from text.folding import Folding
+from text.projection import Projection
+
+## How bad a diagnostic is. Lower is worse, so a line's mark takes the minimum.
+pub enum Severity as u8:
+    error = 0
+    warning = 1
+    info = 2
+
+## One diagnostic on 1-based `line`, underlining 1-based columns
+## `column_start..<column_end`. Columns count Unicode scalars, not bytes or display
+## cells: a tab or a wide scalar is one column, as compilers count them. An empty
+## range, or one past the line's end, still underlines one cell.
+pub struct Diagnostic:
+    pub let line: i64
+    pub let column_start: i64
+    pub let column_end: i64
+    pub let severity: Severity
+    pub let message: str
+
+## A stored diagnostic: half-open scalar offsets (equal for a point) and where its
+## message sits in the shared byte block.
+pub struct Mark:
+    pub let start: i64
+    pub let end: i64
+    pub let severity: Severity
+    let text: usize
+    let length: usize
+
+pub struct Diagnostics:
+    var marks: Mark[]
+    var count: usize
+    var texts: u8[]
+
+    pub func init():
+        var marks: Mark[]
+        var texts: u8[]
+        self.marks = marks
+        self.count = 0
+        self.texts = texts
+
+    pub func values() -> const Mark[]:
+        return self.marks[..<self.count]
+
+    pub func message(index: usize) -> str:
+        let mark = self.marks[index]
+        return (str)self.texts[mark.text..<mark.text + mark.length]
+
+    ## The worst severity among the diagnostics starting in scalars `start..=end`
+    ## (a physical line, its newline offset included), or none.
+    pub func worst(start: usize, end: usize) -> Severity?:
+        var found: Severity? = none
+        for mark in self.values():
+            if mark.start >= (i64)start and mark.start <= (i64)end:
+                if let known = found:
+                    if (u8)mark.severity < (u8)known:
+                        found = mark.severity
+                else:
+                    found = mark.severity
+        return found
+
+    ## Positions before an edit stay, those after it shift, and those inside the
+    ## replaced text move to its new end, as highlights do. A range whose text was
+    ## all replaced, or a point inside the replaced text, is dropped.
+    pub func transform(change: TextChange):
+        var count: usize = 0
+        let delta = change.new_end - change.old_end
+        for mark in self.marks[..<self.count]:
+            var start = mark.start
+            var end = mark.end
+            if start == end:
+                if start > change.start and start < change.old_end:
+                    continue
+                if start >= change.old_end:
+                    start += delta
+                    end = start
+            else:
+                if start >= change.old_end:
+                    start += delta
+                elif start >= change.start:
+                    start = change.new_end
+                if end > change.old_end:
+                    end += delta
+                elif end > change.start:
+                    end = change.new_end
+                if end <= start:
+                    continue
+            self.marks[count] = Mark(start, end, mark.severity, mark.text, mark.length)
+            count += 1
+        self.count = count
+
+    ## Replace the set with `diagnostics`, placed by the lines of a refreshed
+    ## `projection`. A line past the last points at the document's end; a column
+    ## past its line's end, at that end.
+    pub func replace(diagnostics: const Diagnostic[], projection: const Projection*) -> !:
+        if diagnostics.length > 65536:
+            error(result.limit, "an editor supports at most 65536 diagnostics")
+        var bytes: usize = 0
+        for diagnostic in diagnostics:
+            if diagnostic.line < 1 or diagnostic.column_start < 1 or diagnostic.column_end < 1:
+                error(result.invalid, "diagnostic lines and columns are 1-based")
+            if diagnostic.message.length > 65536:
+                error(result.limit, "a diagnostic message is at most 65536 bytes")
+            bytes += diagnostic.message.length
+        var marks: Mark[]
+        var texts: u8[]
+        if diagnostics.length > 0:
+            marks = try new Mark[diagnostics.length] --- in memory.heap
+        errdefer release(marks, texts)
+        if bytes > 0:
+            texts = try new u8[bytes] --- in memory.heap
+        var at: usize = 0
+        for index in 0..<diagnostics.length:
+            let diagnostic = diagnostics[index]
+            let (start, end) = place(diagnostic, projection)
+            for offset in 0..<diagnostic.message.length:
+                texts[at + offset] = diagnostic.message.bytes[offset]
+            marks[index] = Mark(start, end, diagnostic.severity, at, diagnostic.message.length)
+            at += diagnostic.message.length
+        self.close()
+        self.marks = marks
+        self.count = diagnostics.length
+        self.texts = texts
+
+    pub func close():
+        release(self.marks, self.texts)
+        var marks: Mark[]
+        var texts: u8[]
+        self.marks = marks
+        self.count = 0
+        self.texts = texts
+
+func release(marks: Mark[], texts: u8[]):
+    if marks.length > 0:
+        free(marks) in memory.heap
+    if texts.length > 0:
+        free(texts) in memory.heap
+
+## The scalar range a diagnostic covers, its columns clamped to its line.
+func place(diagnostic: Diagnostic, projection: const Projection*) -> (i64, i64):
+    let lines = projection.line_count()
+    let row = (usize)diagnostic.line - 1
+    let line = projection.line(row if row < lines else lines - 1)
+    if row >= lines:
+        return ((i64)line.end, (i64)line.end)
+    let start = line.start + within(diagnostic.column_start - 1, line.end - line.start)
+    let end = line.start + within(diagnostic.column_end - 1, line.end - line.start)
+    return ((i64)start, (i64)(end if end > start else start))
+
+## A 0-based column held to a line of `room` scalars.
+func within(column: i64, room: usize) -> usize:
+    return (usize)column if column < (i64)room else room
+
+test "diagnostics place 1-based scalar columns and follow edits as highlights do":
+    var document = try Document("let é = 1\n\tbad()\nend")
+    defer document.close()
+    var folds = Folding()
+    defer folds.close()
+    var projection = Projection()
+    defer projection.close()
+    try projection.refresh(&document, &folds)
+    var set = Diagnostics()
+    defer set.close()
+    # Columns count scalars: `é` and the tab are one each. An empty range, a column
+    # past its line and a line past the last all become points.
+    let published: Diagnostic[5] = [Diagnostic(1, 5, 6, Severity.warning, "unused"), Diagnostic(2, 2, 5, Severity.error, "unknown name"),
+                                    Diagnostic(2, 7, 7, Severity.info, "note"), Diagnostic(3, 99, 120, Severity.info, "past"),
+                                    Diagnostic(9, 1, 2, Severity.error, "end")]
+    try set.replace(published, &projection)
+    let marks = set.values()
+    assert(marks.length == 5 and marks[0].start == 4 and marks[0].end == 5)
+    assert(marks[1].start == 11 and marks[1].end == 14 and set.message(1) == "unknown name")
+    assert(marks[2].start == 16 and marks[2].end == 16 and marks[3].start == 20 and marks[4].start == 20)
+    if let worst = set.worst(10, 16):
+        assert(worst == Severity.error)
+    else:
+        assert(false)
+    # A line inserted above shifts everything after it.
+    try document.select(10, 10)
+    try document.insert("x\n")
+    set.transform(document.last_change())
+    assert(set.values()[0].start == 4 and set.values()[1].start == 13 and set.values()[1].end == 16)
+    # Deleting a range's whole text drops it; a point after the deletion moves back.
+    try document.replace(13, 18, "")
+    set.transform(document.last_change())
+    assert(set.values().length == 4 and set.message(1) == "note" and set.values()[1].start == 13)
+    # A 0-based line is refused, and the set is left as it was.
+    var failed = false
+    let zero: Diagnostic[1] = [Diagnostic(0, 1, 1, Severity.error, "zero")]
+    set.replace(zero, &projection) catch failure:
+        failed = failure.code == result.invalid
+    assert(failed and set.values().length == 4)
+    var empty: Diagnostic[]
+    try set.replace(empty, &projection)
+    assert(set.values().length == 0)

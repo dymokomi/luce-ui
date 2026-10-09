@@ -68,6 +68,7 @@ extend TextEditor:
 
     func paint(target: interop.View[gpu.RenderTarget]) -> !:
         try self.refresh_view()
+        try self.show_due_tip()
         var painter = try Painter(target)
         defer painter.close()
         let size = try target.get().size()
@@ -82,7 +83,8 @@ extend TextEditor:
         try drawing.paint(&self.document, &painter, size.width, size.height, self.scroll_x, self.scroll_y,
                           self.line_numbers, self.box.value().is_focused(), phase < 600000000,
                           self.font, (self.theme else self.box.value().theme().editor()), self.highlights.values(), &self.projection, &self.folds, &self.diff, hovered_row,
-                          (usize)self.ai_first, (usize)self.ai_last, self.swatches.values(), not self.wrap)
+                          (usize)self.ai_first, (usize)self.ai_last, self.swatches.values(), not self.wrap,
+                          &self.diagnostics)
 
     func maximum_scroll() -> f64:
         return math.max(0.0, (f64)self.projection.visible_count() * self.font.value().line_height() + drawing.vertical_padding(self.font) * 2.0 - self.box.value().bounds().height)
