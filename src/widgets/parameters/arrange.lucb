@@ -53,6 +53,8 @@ extend ParameterPanel:
                 y += (self.folder_lead() if y > self.margin * 0.5 else 0.0) + self.folder_height() + self.folder_gap()
             elif kind == ParameterKind.separator:
                 y += ParameterPanel.separator_height()
+            elif is_ramp(kind):
+                y += self.ramp_height(kind) + line_gap
             else:
                 y += self.row_height() + line_gap
             previous = (i64)index
@@ -129,6 +131,15 @@ extend ParameterPanel:
                 self.rows[index].control_width = math.max(0.0, width - self.margin * 2.0)
                 self.rows[index].label_x = -1.0
                 y += ParameterPanel.separator_height()
+            elif is_ramp(kind):
+                # A ramp takes a line of its own, the curve and the fields under it.
+                let left = self.controls_left(width)
+                self.rows[index].y = y
+                self.rows[index].height = self.ramp_height(kind)
+                self.rows[index].control_x = left
+                self.rows[index].control_width = math.max(left + 20.0, width - self.margin) - left
+                self.rows[index].label_x = -1.0
+                y += self.ramp_height(kind) + line_gap
             else:
                 line_y = y
                 members[0] = index
@@ -199,6 +210,10 @@ extend ParameterPanel:
             return 1
         if row.kind == ParameterKind.vector or row.kind == ParameterKind.color:
             return row.components
+        if row.kind == ParameterKind.ramp:
+            return 2
+        if row.kind == ParameterKind.color_ramp:
+            return 1
         return 0
 
     ## A number field's width: a third of a lone row's span, so numbers line
@@ -223,6 +238,8 @@ extend ParameterPanel:
             return Rect(row.control_x, row.y, row.control_width, height)
         if row.kind == ParameterKind.path:
             return Rect(row.control_x, row.y, math.max(0.0, row.control_width - height - part_gap), height)
+        if is_ramp(row.kind):
+            return self.editor_rect(row, component)
         var left = row.control_x
         var span = row.control_width
         if row.kind == ParameterKind.color:
@@ -276,6 +293,9 @@ extend ParameterPanel:
             if x < row.control_x and row.label_x >= 0.0 and x >= row.label_x:
                 return ((i64)index, part_label, 0)
             if x >= row.control_x and x < row.control_x + row.control_width:
+                if is_ramp(row.kind):
+                    let (part, component) = self.ramp_part(row, x, y)
+                    return ((i64)index, part, component)
                 return ((i64)index, self.part_at(row, x), self.component_at(row, x))
             # Joined rows share a line: find the member under the pointer.
             if x >= row.control_x + row.control_width:
@@ -326,7 +346,7 @@ func math_max_usize(a: usize, b: usize) -> usize:
 
 ## Whether a kind can share a line.
 func joinable(kind: ParameterKind) -> bool:
-    return kind != ParameterKind.folder and kind != ParameterKind.separator
+    return kind != ParameterKind.folder and kind != ParameterKind.separator and not is_ramp(kind)
 
 ## Room before a label for the tick that marks a changed value.
 let tick_room: f64 = 5.0

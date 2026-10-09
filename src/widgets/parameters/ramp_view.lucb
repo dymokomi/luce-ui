@@ -1,0 +1,377 @@
+#==============================================================================================
+#
+#   widgets/parameters/ramp_view - Ramp rows on screen: parts, curve and gradient, gestures
+#
+#==============================================================================================
+#
+#   A ramp row is the curve (a float ramp: the curve over a filled area, its
+#   points as squares) or the gradient (a color ramp: a strip with a marker
+#   under each point), then a line of the selected point's position field,
+#   value field or color swatch, and interpolation menu. Both are drawn
+#   through luce-std's `ramp.lookup`, the function a host's cook calls.
+#
+#==============================================================================================
+
+## A color ramp's band of markers under its gradient.
+let marker_band: f64 = 10.0
+## How near a press must come to a point to take it, in points.
+let point_reach: f64 = 6.0
+## A float ramp's points, drawn as squares this wide.
+let point_side: f64 = 7.0
+
+extend ParameterPanel:
+    # -- Geometry.
+
+    ## The curve's or gradient's height, and the whole row's.
+    func curve_height(kind: ParameterKind) -> f64:
+        if kind == ParameterKind.color_ramp:
+            return self.row_height() + marker_band
+        return math.floor(self.row_height() * 4.0)
+
+    func ramp_height(kind: ParameterKind) -> f64:
+        return self.curve_height(kind) + line_gap + self.row_height()
+
+    func curve_rect(row: Row) -> Rect:
+        return Rect(row.control_x, row.y, row.control_width, self.curve_height(row.kind))
+
+    ## Where a float ramp plots values: inside the well, room kept for the points.
+    func plot_rect(row: Row) -> Rect:
+        let area = self.curve_rect(row)
+        let room = math.ceil(point_side * 0.5) + 1.0
+        return Rect(area.x + room, area.y + room, math.max(1.0, area.width - room * 2.0), math.max(1.0, area.height - room * 2.0))
+
+    ## A color ramp's gradient strip, its markers below.
+    func strip_rect(row: Row) -> Rect:
+        let area = self.curve_rect(row)
+        let room = math.ceil(point_side * 0.5)
+        return Rect(area.x + room, area.y, math.max(1.0, area.width - room * 2.0), self.row_height())
+
+    ## Where positions run across: the plot or the strip.
+    func track_rect(row: Row) -> Rect:
+        return self.strip_rect(row) if row.kind == ParameterKind.color_ramp else self.plot_rect(row)
+
+    ## Part `part` of the line under the curve: 0 position, 1 value or swatch, 2 the menu.
+    func editor_rect(row: Row, part: i64) -> Rect:
+        let height = self.row_height()
+        let y = row.y + self.curve_height(row.kind) + line_gap
+        let each = math.floor((row.control_width - part_gap * 2.0) / 3.0)
+        let x = row.control_x + (f64)part * (each + part_gap)
+        if part == 2:
+            return Rect(x, y, math.max(0.0, row.control_x + row.control_width - x), height)
+        return Rect(x, y, math.max(0.0, each), height)
+
+    ## The values a float ramp's curve spans: its soft range, else 0..1, widened
+    ## to every point; a drag keeps the span it started with.
+    func value_span(index: usize) -> (f64, f64):
+        let row = self.rows[index]
+        if self.press_row == (i64)index and self.press_part == part_curve:
+            return (self.press_values[0], self.press_values[1])
+        var low = row.soft_minimum if row.soft_maximum > row.soft_minimum else 0.0
+        var high = row.soft_maximum if row.soft_maximum > row.soft_minimum else 1.0
+        for point in 0..<ramp_points(row):
+            low = math.min(low, ramp_value(row, point, 0))
+            high = math.max(high, ramp_value(row, point, 0))
+        return (low, high)
+
+    ## Point `point`'s centre: on the curve for a float ramp, on the marker for a color one.
+    func point_spot(index: usize, point: usize) -> Point:
+        let row = self.rows[index]
+        let track = self.track_rect(row)
+        let x = track.x + ramp_position(row, point) * track.width
+        if row.kind == ParameterKind.color_ramp:
+            return Point(x, track.y + track.height + marker_band * 0.5)
+        return Point(x, value_y(track, self.value_span(index), ramp_value(row, point, 0)))
+
+    ## The point within reach of (`x`, `y`), the nearest; -1 for none. A color
+    ## ramp's points are taken by position alone.
+    func point_near(index: usize, x: f64, y: f64) -> i64:
+        let row = self.rows[index]
+        var nearest: i64 = -1
+        var best = point_reach * point_reach
+        for point in 0..<ramp_points(row):
+            let spot = self.point_spot(index, point)
+            let dx = spot.x - x
+            let dy = 0.0 if row.kind == ParameterKind.color_ramp else spot.y - y
+            let distance = dx * dx + dy * dy
+            if distance <= best:
+                best = distance
+                nearest = (i64)point
+        return nearest
+
+    ## The part of a ramp row at (`x`, `y`) inside its control span, and the field's component.
+    func ramp_part(row: Row, x: f64, y: f64) -> (i64, i64):
+        if y < row.y + self.curve_height(row.kind):
+            return (part_curve, 0)
+        if x < self.editor_rect(row, 1).x - part_gap * 0.5:
+            return (part_field, 0)
+        if x < self.editor_rect(row, 2).x - part_gap * 0.5:
+            return (part_swatch, 0) if row.kind == ParameterKind.color_ramp else (part_field, 1)
+        return (part_menu, 0)
+
+    ## A field's number on a ramp row: the selected point's position or value.
+    static func ramp_field(row: Row, component: i64) -> f64:
+        let point = (usize)row.point
+        return ramp_position(row, point) if component == 0 else ramp_value(row, point, 0)
+
+    ## The number field `component` of any row shows, as stored.
+    static func field_number(row: Row, component: i64) -> f64:
+        if is_ramp(row.kind):
+            return ParameterPanel.ramp_field(row, component)
+        return row.values[(usize)component]
+
+    # -- Drawing.
+
+    func paint_ramp(painter: Painter*, index: usize, theme: Theme, enabled: bool) -> !:
+        let row = self.rows[index]
+        let area = self.curve_rect(row)
+        let dragged = self.press_row == (i64)index and self.press_part == part_curve
+        let hot = enabled and self.hot_row == (i64)index and self.hot_part == part_curve
+        let current = self.box.value().is_focused() and self.current == (i64)index
+        try ParameterPanel.paint_well(painter, area, theme, hot, dragged, current)
+        if row.kind == ParameterKind.color_ramp:
+            try self.paint_gradient(painter, index, theme, enabled)
+        else:
+            try self.paint_curve(painter, index, theme, enabled)
+        try self.paint_number(painter, index, 0, theme, enabled)
+        if row.kind == ParameterKind.color_ramp:
+            try self.paint_point_swatch(painter, index, theme, enabled)
+        else:
+            try self.paint_number(painter, index, 1, theme, enabled)
+        try self.paint_interpolation(painter, index, theme, enabled)
+
+    ## The curve over a filled area down to zero (or the bottom), sampled
+    ## every two points across, with the points on it.
+    func paint_curve(painter: Painter*, index: usize, theme: Theme, enabled: bool) -> !:
+        let row = self.rows[index]
+        let plot = self.plot_rect(row)
+        let span = self.value_span(index)
+        let samples = (usize)math.clamp(math.floor(plot.width * 0.5), 8.0, 512.0)
+        var fill = try new Point[samples * 6] --- in memory.heap
+        defer free(fill) in memory.heap
+        var stroke = try new Point[samples * 6] --- in memory.heap
+        defer free(stroke) in memory.heap
+        let base = value_y(plot, span, 0.0)
+        var previous = Point(plot.x, value_y(plot, span, ramps.lookup(row.ramp, 0.0)))
+        for sample in 0..<samples:
+            let t = (f64)(sample + 1) / (f64)samples
+            let next = Point(plot.x + t * plot.width, value_y(plot, span, ramps.lookup(row.ramp, t)))
+            let quad: Point[6] = [Point(previous.x, previous.y), Point(next.x, next.y), Point(next.x, base),
+                                  Point(previous.x, previous.y), Point(next.x, base), Point(previous.x, base)]
+            for corner in 0..<(usize)6:
+                fill[sample * 6 + corner] = quad[corner]
+            segment_quad(stroke[sample * 6..<sample * 6 + 6], previous, next, 1.5)
+            previous = next
+        let ink = theme.accent if enabled else theme.muted
+        try painter.mesh(fill, blend(theme.sunken, ink, 0.22))
+        try painter.mesh(stroke, ink)
+        for point in 0..<ramp_points(row):
+            let spot = self.point_spot(index, point)
+            let half = point_side * 0.5
+            let selected = (i64)point == row.point
+            try painter.rectangle(Rect(spot.x - half - 1.0, spot.y - half - 1.0, point_side + 2.0, point_side + 2.0), theme.background)
+            try painter.rectangle(Rect(spot.x - half, spot.y - half, point_side, point_side), (theme.accent if selected else theme.foreground) if enabled else theme.muted)
+
+    ## The gradient across its strip, a marker under each point: the selected
+    ## one in the accent, each holding its own color.
+    func paint_gradient(painter: Painter*, index: usize, theme: Theme, enabled: bool) -> !:
+        let row = self.rows[index]
+        let strip = self.strip_rect(row)
+        let samples = (usize)math.clamp(math.floor(strip.width * 0.5), 8.0, 512.0)
+        var points = try new Point[samples * 6] --- in memory.heap
+        defer free(points) in memory.heap
+        var colors = try new gpu.Color[samples * 6] --- in memory.heap
+        defer free(colors) in memory.heap
+        let top = strip.y + 3.0
+        let bottom = strip.y + strip.height - 1.0
+        var left = self.shown_color(row, ramps.lookup_color(row.ramp, 0.0))
+        for sample in 0..<samples:
+            let t = (f64)(sample + 1) / (f64)samples
+            let right = self.shown_color(row, ramps.lookup_color(row.ramp, t))
+            let x0 = strip.x + (f64)sample / (f64)samples * strip.width
+            let x1 = strip.x + t * strip.width
+            let corners: Point[6] = [Point(x0, top), Point(x1, top), Point(x1, bottom), Point(x0, top), Point(x1, bottom), Point(x0, bottom)]
+            let tints: gpu.Color[6] = [left, right, right, left, right, left]
+            for corner in 0..<(usize)6:
+                points[sample * 6 + corner] = corners[corner]
+                colors[sample * 6 + corner] = tints[corner]
+            left = right
+        try painter.shaded_mesh(points, colors, 1.0 if enabled else 0.4)
+        for point in 0..<ramp_points(row):
+            let spot = self.point_spot(index, point)
+            let selected = (i64)point == row.point
+            let edge = (theme.accent if selected else theme.foreground) if enabled else theme.muted
+            let tip = strip.y + strip.height
+            try painter.triangle(Point(spot.x, tip), Point(spot.x + 4.5, tip + 5.0), Point(spot.x - 4.5, tip + 5.0), edge)
+            try painter.rectangle(Rect(spot.x - 3.5, tip + 4.0, 7.0, 5.0), edge)
+            let tint = gpu.Color(ramp_value(row, point, 0), ramp_value(row, point, 1), ramp_value(row, point, 2))
+            try painter.rectangle(Rect(spot.x - 2.5, tip + 5.0, 5.0, 3.0), tint if row.linear else srgb_decoded(tint))
+
+    func shown_color(row: Row, color: ramps.Color) -> gpu.Color:
+        let tint = gpu.Color(color.red, color.green, color.blue)
+        return tint if row.linear else srgb_decoded(tint)
+
+    ## A color ramp's selected point as a swatch, opening the color editor.
+    func paint_point_swatch(painter: Painter*, index: usize, theme: Theme, enabled: bool) -> !:
+        let row = self.rows[index]
+        let rect = self.editor_rect(row, 1)
+        let hot = enabled and self.hot_row == (i64)index and self.hot_part == part_swatch
+        let radius = math.min(theme.control_radius, 3.0)
+        try painter.rounded_rectangle(rect, theme.hover_border() if hot else theme.border, radius)
+        let point = (usize)row.point
+        let tint = gpu.Color(ramp_value(row, point, 0), ramp_value(row, point, 1), ramp_value(row, point, 2))
+        try painter.rounded_rectangle(Rect(rect.x + 1.0, rect.y + 1.0, rect.width - 2.0, rect.height - 2.0), tint if row.linear else srgb_decoded(tint),
+                                      math.max(0.0, radius - 1.0), 1.0 if enabled else 0.4)
+
+    ## The selected point's interpolation on a raised face, as a menu row shows its item.
+    func paint_interpolation(painter: Painter*, index: usize, theme: Theme, enabled: bool) -> !:
+        let row = self.rows[index]
+        let rect = self.editor_rect(row, 2)
+        let hot = enabled and self.hot_row == (i64)index and self.hot_part == part_menu
+        let open = self.popup_mode == popup_interpolation and self.popup_row == (i64)index
+        try ParameterPanel.paint_raised(painter, rect, theme, hot or open, open)
+        let code = ramp_code(row, (usize)row.point)
+        let caption = parameter_text.item_label(interpolation_items, (usize)between(code, 0, 4))
+        let inset = math.floor(self.font.value().advance() * 0.6)
+        let y = rect.y + math.max(0.0, math.floor((rect.height - self.font.value().height()) * 0.5))
+        try self.paint_fitted(painter, caption, rect.x + inset, y, rect.width - inset * 2.0 - 12.0, theme.foreground if enabled else theme.muted)
+        let cx = rect.x + rect.width - 10.0
+        let cy = rect.y + rect.height * 0.5
+        try painter.triangle(Point(cx - 4.0, cy - 2.0), Point(cx + 4.0, cy - 2.0), Point(cx, cy + 3.0), theme.foreground if hot else theme.muted)
+
+    # -- Gestures.
+
+    ## A press on the curve: a point within reach is selected and may be
+    ## dragged; elsewhere a point is added there and dragged at once, the add
+    ## and the drag one edit. A float ramp's new point takes the value under
+    ## the pointer, a color ramp's the color the gradient has there.
+    func press_curve(index: usize, event: Event) -> !:
+        let row = (i64)index
+        let span = self.value_span(index)
+        self.press_row = row
+        self.press_part = part_curve
+        self.press_x = event.x
+        self.press_y = event.y
+        self.press_values = [span.0, span.1, 0.0, 0.0]
+        self.scrubbing = false
+        let near = self.point_near(index, event.x, event.y)
+        if near >= 0:
+            self.rows[index].point = near
+            self.press_component = near
+            self.box.value().invalidate()
+            return
+        let track = self.track_rect(self.rows[index])
+        let position = math.clamp((event.x - track.x) / track.width, 0.0, 1.0)
+        let ramp_now = self.rows[index].ramp
+        var values: f64[4] = [0.0, 0.0, 0.0, 0.0]
+        if self.rows[index].kind == ParameterKind.color_ramp:
+            let color = ramps.lookup_color(ramp_now, position)
+            values = [color.red, color.green, color.blue, 0.0]
+        else:
+            values[0] = row_clamp(self.rows[index], span_value(track, span, event.y))
+        # The new point carries on the interpolation of the segment it splits.
+        let before = ParameterPanel.point_before(self.rows[index], position)
+        let code = (f64)ramp_code(self.rows[index], (usize)before) if before >= 0 else 1.0
+        try self.begin(row)
+        let added = try self.insert_point(index, position, values, code)
+        if added < 0:
+            self.press_row = -1
+            self.press_part = part_none
+            try self.finish()
+            return
+        self.press_component = added
+        self.scrubbing = true
+        try self.touch(row)
+
+    ## The last point at or before `position`, or -1.
+    static func point_before(row: Row, position: f64) -> i64:
+        var found: i64 = -1
+        for point in 0..<ramp_points(row):
+            if ramp_position(row, point) <= position:
+                found = (i64)point
+        return found
+
+    ## A drag on the curve moves the pressed point: its position across, and a
+    ## float ramp's value up and down within the span the press saw.
+    func drag_point(event: Event) -> !:
+        let row = self.press_row
+        let index = (usize)row
+        if index >= self.total:
+            return
+        if not self.scrubbing:
+            if math.abs(event.x - self.press_x) < 3.0 and math.abs(event.y - self.press_y) < 3.0:
+                return
+            self.scrubbing = true
+            try self.begin(row)
+        let track = self.track_rect(self.rows[index])
+        let position = math.clamp((event.x - track.x) / track.width, 0.0, 1.0)
+        var value: f64? = none
+        if self.rows[index].kind == ParameterKind.ramp:
+            value = span_value(track, (self.press_values[0], self.press_values[1]), event.y)
+        self.move_point(index, (usize)self.press_component, position, value)
+        try self.touch(row)
+
+    ## A right-click on a ramp's point removes it; true when it did.
+    func remove_at(x: f64, y: f64) -> bool!:
+        let (row, part, component) = self.hit(x, y)
+        _ = component
+        if row < 0 or part != part_curve or not self.enabled((usize)row):
+            return false
+        let near = self.point_near((usize)row, x, y)
+        if near < 0:
+            return false
+        try self.remove_point((usize)row, near)
+        return true
+
+    ## The selected point's interpolations in a popup under the menu, its own ticked.
+    func open_interpolation(index: usize) -> !:
+        let row = self.rows[index]
+        let chosen = ramp_code(row, (usize)row.point)
+        var commands: interop.Reference[Command][5] = ---
+        var made: usize = 0
+        defer release_commands(commands[..<made])
+        for item in 0..<(usize)5:
+            commands[made] = try interop.Reference[Command].adopt(new Command(parameter_text.item_label(interpolation_items, item)) in memory.heap, command_type, memory.heap)
+            commands[made].value().set_checked((i64)item == chosen)
+            made += 1
+        try self.show_popup(commands[..<made], self.editor_rect(row, 2), popup_interpolation, (i64)index)
+
+    ## The color editor under a color ramp's swatch, seeded with the selected point's color.
+    func open_point_color(index: usize) -> !:
+        let row = self.rows[index]
+        let point = (usize)row.point
+        var buffer: u8[8]
+        let written = hex_color(buffer, byte_of(ramp_value(row, point, 0), row.linear), byte_of(ramp_value(row, point, 1), row.linear),
+                                byte_of(ramp_value(row, point, 2), row.linear))
+        let rect = self.editor_rect(row, 1)
+        try self.color_popup.value().open_at(written, rect.x, rect.y + rect.height)
+        self.color_row = (i64)index
+        self.color_shown = self.color_popup.value().rgb()
+        self.box.value().invalidate()
+
+## Where `value` sits in `plot`, given the values `span` covers top to bottom; kept inside.
+func value_y(plot: Rect, span: (f64, f64), value: f64) -> f64:
+    let fraction = (value - span.0) / math.max(1.0e-12, span.1 - span.0)
+    return plot.y + plot.height * (1.0 - math.clamp(fraction, 0.0, 1.0))
+
+## The value at height `y` in `plot`, inside `span`.
+func span_value(plot: Rect, span: (f64, f64), y: f64) -> f64:
+    let fraction = math.clamp(1.0 - (y - plot.y) / plot.height, 0.0, 1.0)
+    return span.0 + fraction * (span.1 - span.0)
+
+## Two triangles stroking `a` to `b`, `width` thick, into `out` (six points).
+func segment_quad(out: Point[], a: Point, b: Point, width: f64):
+    let dx = b.x - a.x
+    let dy = b.y - a.y
+    let length = math.max(1.0e-9, math.sqrt(dx * dx + dy * dy))
+    let x = -dy * width * 0.5 / length
+    let y = dx * width * 0.5 / length
+    out[0] = Point(a.x + x, a.y + y)
+    out[1] = Point(b.x + x, b.y + y)
+    out[2] = Point(b.x - x, b.y - y)
+    out[3] = Point(a.x + x, a.y + y)
+    out[4] = Point(b.x - x, b.y - y)
+    out[5] = Point(a.x - x, a.y - y)
+
+## `a` moved `amount` of the way to `b`.
+func blend(a: gpu.Color, b: gpu.Color, amount: f64) -> gpu.Color:
+    return gpu.Color(a.red + (b.red - a.red) * amount, a.green + (b.green - a.green) * amount, a.blue + (b.blue - a.blue) * amount)

@@ -17,7 +17,8 @@ extend ParameterPanel:
         else:
             var digits: u8[48]
             let row_now = self.rows[index]
-            try self.input.set_text(try format_number(digits, row_now.units.shown(row_now.values[(usize)component]), shown_decimals(row_now)))
+            let shown = ParameterPanel.ramp_field(row_now, component) if is_ramp(kind) and component == 0 else row_now.units.shown(ParameterPanel.field_number(row_now, component))
+            try self.input.set_text(try format_number(digits, shown, shown_decimals(row_now)))
         self.hide_tip()
         self.edit_row = row
         self.edit_component = component
@@ -47,6 +48,11 @@ extend ParameterPanel:
         let kind = self.rows[index].kind
         if kind == ParameterKind.text or kind == ParameterKind.path:
             try self.edit_text(index, typed.value)
+            return
+        if is_ramp(kind):
+            let units = Unit() if component == 0 else row_units(self.rows[index])
+            let typed_value = parameter_text.evaluate(typed.value, ParameterPanel.ramp_field(self.rows[index], component), units) else return
+            try self.edit_point_field(index, component, typed_value)
             return
         let value = parameter_text.evaluate(typed.value, self.rows[index].values[(usize)component], row_units(self.rows[index])) else return
         var values = self.rows[index].values
@@ -164,6 +170,9 @@ extend ParameterPanel:
         if not self.enabled(index):
             return
         let kind = self.rows[index].kind
+        if is_ramp(kind) and (event.key == input.Key.delete or event.key == input.Key.backspace):
+            try self.remove_point(index, self.rows[index].point)
+            return
         if event.key == input.Key.up or event.key == input.Key.down:
             try self.nudge(index, 0, 1.0 if event.key == input.Key.up else -1.0, event)
         elif (event.key == input.Key.enter or event.key == input.Key.space) and not event.repeated:
@@ -212,7 +221,10 @@ extend ParameterPanel:
                 self.color_row = -1
             elif self.color_popup.value().is_open():
                 let channels = self.color_popup.value().rgb()
-                if channels != self.color_shown:
+                if channels != self.color_shown and is_ramp(self.rows[index].kind):
+                    self.color_shown = channels
+                    try self.set_point_color(index, channels)
+                elif channels != self.color_shown:
                     self.color_shown = channels
                     let linear = self.rows[index].linear
                     var values = self.rows[index].values
@@ -226,6 +238,10 @@ extend ParameterPanel:
                 try self.finish()
 
     func chose(mode: i64, row: i64, chosen: i64) -> !:
+        if mode == popup_interpolation:
+            if row >= 0 and row < (i64)self.total:
+                try self.set_interpolation((usize)row, chosen)
+            return
         if mode == popup_items:
             if row < 0 or row >= (i64)self.total:
                 return

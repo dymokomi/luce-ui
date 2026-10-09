@@ -231,6 +231,7 @@ import widgets.parameter_text
 pub type ParameterPanel = parameters.ParameterPanel
 pub type ParameterSpec = parameters.ParameterSpec
 pub type ParameterKind = parameters.ParameterKind
+pub type RampPart = parameters.RampPart
 pub let parameter_panel_type = parameters.parameter_panel_type
 pub let value_ladder_type = parameters.value_ladder_type
 import widgets.tooltip

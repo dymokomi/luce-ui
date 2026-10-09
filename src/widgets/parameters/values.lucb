@@ -280,7 +280,7 @@ extend ParameterPanel:
     func held(index: i64) -> bool:
         if index == self.pending or index == self.color_row:
             return true
-        return index == self.press_row and (self.scrubbing or self.laddering or self.press_part == part_slider)
+        return index == self.press_row and (self.scrubbing or self.laddering or self.press_part == part_slider or self.press_part == part_curve)
 
     func visible(index: usize) -> bool:
         let row = self.rows[index]
@@ -358,6 +358,8 @@ extend ParameterPanel:
         let row = self.rows[index]
         if row.kind == ParameterKind.text or row.kind == ParameterKind.path:
             try self.edit_text(index, row.fallback.value)
+        elif is_ramp(row.kind):
+            try self.edit_ramp(index, row.ramp_default)
         else:
             try self.edit(index, row.defaults)
 
@@ -497,6 +499,8 @@ func at_default(row: Row) -> bool:
         return true
     if row.kind == ParameterKind.text or row.kind == ParameterKind.path:
         return row.text.value == row.fallback.value
+    if is_ramp(row.kind):
+        return same_ramp(row.ramp, row.ramp_default)
     if row.kind == ParameterKind.button or row.kind == ParameterKind.separator or row.kind == ParameterKind.folder or row.kind == ParameterKind.info:
         return true
     for component in 0..<(usize)row.components:

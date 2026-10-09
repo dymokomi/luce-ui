@@ -1,0 +1,275 @@
+#==============================================================================================
+#
+#   widgets/parameters/ramps - Ramp rows' data: the public calls, and editing points
+#
+#==============================================================================================
+
+## The parts of a ramp row, for `ramp_bounds`.
+pub enum RampPart as u8:
+    ## The curve (a float ramp) or the gradient and its markers (a color ramp).
+    curve = 0
+    ## The selected point's position field.
+    position = 1
+    ## Its value field, or a color ramp's swatch.
+    value = 2
+    ## Its interpolation menu.
+    interpolation = 3
+
+## The interpolation menu's items, in luce-std `ramp.Interpolation` code order.
+let interpolation_items: str = "Constant|Linear|Smooth|Monotone|B-Spline"
+
+## A ramp keeps at least this many points: a click on the last two removes nothing.
+let fewest_points: usize = 2
+## And at most this many: a click on a full ramp adds nothing.
+let most_points: usize = 256
+
+extend ParameterPanel:
+    ## A ramp row's data, as luce-std's `ramp.lookup` reads it: a copy the
+    ## caller owns (a `list[float]` in Luce).
+    pub func ramp(index: i64) -> interop.Owned[const f64[]]!:
+        let row = try self.ramp_row(index)
+        return try ramps.copy(row.ramp)
+
+    ## Set a ramp row's data from code: 1 channel for a `ramp`, 3 for a
+    ## `color_ramp`, checked by `ramp.check`; no signal. A ramp under the
+    ## user's drag or color editor keeps what the user set.
+    pub func set_ramp(index: i64, data: const f64[]) -> !:
+        let row = try self.ramp_row(index)
+        try ramp_fits(row, data)
+        if self.held(index) or same_ramp(row.ramp, data):
+            return
+        try self.replace_ramp((usize)index, data)
+
+    ## Change the ramp a reset puts back, and the changed marker compares with.
+    pub func set_ramp_default(index: i64, data: const f64[]) -> !:
+        let row = try self.ramp_row(index)
+        try ramp_fits(row, data)
+        let copy = try copied_ramp(data)
+        free(self.rows[(usize)index].ramp_default) in memory.heap
+        self.rows[(usize)index].ramp_default = copy
+        self.box.value().invalidate()
+
+    ## The point a ramp row's fields edit; a click on a point selects it.
+    pub func selected_point(index: i64) -> i64!:
+        return (try self.ramp_row(index)).point
+
+    pub func select_point(index: i64, point: i64) -> !:
+        let row = try self.ramp_row(index)
+        if point < 0 or point >= (i64)ramp_points(row):
+            error(result.invalid, "no such ramp point")
+        self.rows[(usize)index].point = point
+        self.box.value().invalidate()
+
+    ## Part `part` of a ramp row in the panel's points, as last placed; empty
+    ## while it does not show (and a color ramp's value is its swatch).
+    pub func ramp_bounds(index: i64, part: RampPart = RampPart.curve) -> Rect!:
+        let row = try self.ramp_row(index)
+        if not row.shown:
+            return Rect()
+        if part == RampPart.curve:
+            return self.curve_rect(row)
+        return self.editor_rect(row, (i64)part - 1)
+
+    # -- Inside.
+
+    func ramp_row(index: i64) -> Row!:
+        let row = try self.row(index)
+        if not is_ramp(row.kind):
+            error(result.invalid, "the parameter is not a ramp")
+        return row
+
+    ## Put a copy of `data` in row `index`, the selection kept on a point.
+    func replace_ramp(index: usize, data: const f64[]) -> !:
+        let copy = try copied_ramp(data)
+        free(self.rows[index].ramp) in memory.heap
+        self.rows[index].ramp = copy
+        let last = (i64)ramp_points(self.rows[index]) - 1
+        self.rows[index].point = between(self.rows[index].point, 0, last)
+        self.box.value().invalidate()
+
+    ## Set row `index`'s ramp to `data` as one edit: begin, change, commit.
+    func edit_ramp(index: usize, data: const f64[]) -> !:
+        if same_ramp(self.rows[index].ramp, data):
+            return
+        try self.begin((i64)index)
+        if index < self.total:
+            try self.replace_ramp(index, data)
+        try self.touch((i64)index)
+        try self.finish()
+
+    ## A field under the curve typed in: the selected point's position (moved
+    ## among the others, the selection with it) or its value; one edit.
+    func edit_point_field(index: usize, component: i64, value: f64) -> !:
+        let row = self.rows[index]
+        let point = (usize)row.point
+        if component == 0:
+            if math.clamp(value, 0.0, 1.0) == ramp_position(row, point):
+                return
+            try self.begin((i64)index)
+            self.move_point(index, point, value, none)
+        else:
+            if row_clamp(row, value) == ramp_value(row, point, 0):
+                return
+            try self.begin((i64)index)
+            self.move_point(index, point, ramp_position(row, point), value)
+        try self.touch((i64)index)
+        try self.finish()
+
+    ## The selected point's interpolation, from the menu's `item`; one edit.
+    func set_interpolation(index: usize, item: i64) -> !:
+        let row = self.rows[index]
+        let at = point_offset(row, (usize)row.point) + ramp_stride(row) - 1
+        if item < 0 or item > 4 or row.ramp[at] == (f64)item:
+            return
+        try self.begin((i64)index)
+        self.rows[index].ramp[at] = (f64)item
+        try self.touch((i64)index)
+        try self.finish()
+
+    ## The selected point's color, live from the color editor's 0..255 sRGB channels.
+    func set_point_color(index: usize, channels: (i64, i64, i64)) -> !:
+        let row = self.rows[index]
+        let at = point_offset(row, (usize)row.point) + 1
+        let colors: f64[3] = [component_of(channels.0, row.linear), component_of(channels.1, row.linear), component_of(channels.2, row.linear)]
+        if row.ramp[at] == colors[0] and row.ramp[at + 1] == colors[1] and row.ramp[at + 2] == colors[2]:
+            return
+        try self.begin((i64)index)
+        for channel in 0..<(usize)3:
+            self.rows[index].ramp[at + channel] = colors[channel]
+        try self.touch((i64)index)
+
+    ## Move point `point` of row `index` to `position` (clamped to 0..1) with
+    ## `value` on a float ramp, then among its neighbours until sorted; the
+    ## selection, and a drag's point, follow it. No signal.
+    func move_point(index: usize, point: usize, position: f64, value: f64?):
+        let row = self.rows[index]
+        let stride = ramp_stride(row)
+        let count = ramp_points(row)
+        let data = row.ramp
+        var at = point
+        data[point_offset(row, at)] = math.clamp(position, 0.0, 1.0) if math.is_finite(position) else ramp_position(row, at)
+        if let shown = value:
+            data[point_offset(row, at) + 1] = row_clamp(row, shown)
+        while at > 0 and data[point_offset(row, at)] < data[point_offset(row, at - 1)]:
+            swap_points(data, point_offset(row, at - 1), stride)
+            at -= 1
+        while at + 1 < count and data[point_offset(row, at)] > data[point_offset(row, at + 1)]:
+            swap_points(data, point_offset(row, at), stride)
+            at += 1
+        self.rows[index].point = (i64)at
+        if self.press_row == (i64)index and self.press_part == part_curve:
+            self.press_component = (i64)at
+        self.box.value().invalidate()
+
+    ## Add a point at `position` with `values` and interpolation `code`, after
+    ## any at the same position; selected. Answers its index, or -1 when full.
+    func insert_point(index: usize, position: f64, values: f64[4], code: f64) -> i64!:
+        let row = self.rows[index]
+        let count = ramp_points(row)
+        if count >= most_points:
+            return -1
+        let stride = ramp_stride(row)
+        var at: usize = 0
+        while at < count and ramp_position(row, at) <= position:
+            at += 1
+        var data = try new f64[row.ramp.length + stride] --- in memory.heap
+        let split = point_offset(row, at)
+        for place in 0..<split:
+            data[place] = row.ramp[place]
+        data[split] = position
+        for channel in 0..<stride - 2:
+            data[split + 1 + channel] = values[channel]
+        data[split + stride - 1] = code
+        for place in split..<row.ramp.length:
+            data[place + stride] = row.ramp[place]
+        data[2] = (f64)(count + 1)
+        free(self.rows[index].ramp) in memory.heap
+        self.rows[index].ramp = data
+        self.rows[index].point = (i64)at
+        self.box.value().invalidate()
+        return (i64)at
+
+    ## Remove point `point` of row `index` as one edit, unless the ramp is down
+    ## to its fewest; the point before it is selected.
+    func remove_point(index: usize, point: i64) -> !:
+        let row = self.rows[index]
+        let count = ramp_points(row)
+        if count <= fewest_points or point < 0 or point >= (i64)count:
+            return
+        let stride = ramp_stride(row)
+        var data = try new f64[row.ramp.length - stride] --- in memory.heap
+        let split = point_offset(row, (usize)point)
+        for place in 0..<split:
+            data[place] = row.ramp[place]
+        for place in split + stride..<row.ramp.length:
+            data[place - stride] = row.ramp[place]
+        data[2] = (f64)(count - 1)
+        try self.begin((i64)index)
+        free(self.rows[index].ramp) in memory.heap
+        self.rows[index].ramp = data
+        self.rows[index].point = between(point - 1, 0, (i64)count - 2)
+        try self.touch((i64)index)
+        try self.finish()
+
+## Whether `kind` is a ramp.
+func is_ramp(kind: ParameterKind) -> bool:
+    return kind == ParameterKind.ramp or kind == ParameterKind.color_ramp
+
+## A ramp row's channels, numbers per point, and points.
+func ramp_channels(row: Row) -> usize:
+    return (usize)row.ramp[1]
+
+func ramp_stride(row: Row) -> usize:
+    return ramp_channels(row) + 2
+
+func ramp_points(row: Row) -> usize:
+    return (usize)row.ramp[2]
+
+## Where point `point` starts in the data: its position, then its channels and code.
+func point_offset(row: Row, point: usize) -> usize:
+    return 3 + point * ramp_stride(row)
+
+func ramp_position(row: Row, point: usize) -> f64:
+    return row.ramp[point_offset(row, point)]
+
+func ramp_value(row: Row, point: usize, channel: usize) -> f64:
+    return row.ramp[point_offset(row, point) + 1 + channel]
+
+func ramp_code(row: Row, point: usize) -> i64:
+    return (i64)row.ramp[point_offset(row, point) + ramp_stride(row) - 1]
+
+## Swap the point starting at `first` with the one after it.
+func swap_points(data: f64[], first: usize, stride: usize):
+    for place in first..<first + stride:
+        let kept = data[place]
+        data[place] = data[place + stride]
+        data[place + stride] = kept
+
+## Refuse `data` for `row` unless `ramp.check` reads it with the row's channels.
+func ramp_fits(row: Row, data: const f64[]) -> !:
+    try ramps.check(data)
+    if (usize)data[1] != (usize)row.components:
+        error(result.invalid, "a ramp row takes 1 channel, a color ramp row 3")
+
+func same_ramp(a: const f64[], b: const f64[]) -> bool:
+    if a.length != b.length:
+        return false
+    for place in 0..<a.length:
+        if a[place] != b[place]:
+            return false
+    return true
+
+## A heap copy of `data`.
+func copied_ramp(data: const f64[]) -> f64[]!:
+    var copy = try new f64[data.length] --- in memory.heap
+    for place in 0..<data.length:
+        copy[place] = data[place]
+    return copy
+
+## A new row's ramp: 0 to 1, or black to white, linear.
+func starting_ramp(kind: ParameterKind) -> f64[]!:
+    if kind == ParameterKind.color_ramp:
+        let gradient: f64[13] = [1.0, 3.0, 2.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+        return try copied_ramp(gradient[0..])
+    let rising: f64[9] = [1.0, 1.0, 2.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+    return try copied_ramp(rising[0..])

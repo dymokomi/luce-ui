@@ -1,0 +1,217 @@
+## Ramp parameters through the application's input: a click adds a point, a
+## drag moves it (one undo step for the add and the drag), the fields under
+## the curve edit the selected point, the menu its interpolation, Delete and a
+## right-click remove points down to two, a color point takes the color
+## editor's color, and the data reads and writes as luce-std ramp data.
+from luce_ui.ui import Application, Font, VStack, Event, ParameterPanel, ParameterSpec, ParameterKind, RampPart, Theme
+from luce_std import math, ramp
+from luce_gpu.gpu import Frame
+from luce_window.input import EventKind, Key
+from luce_window import window
+
+class Log:
+    pub var begins: int = 0
+    pub var changes: int = 0
+    pub var commits: int = 0
+    pub func begin(self, index: int):
+        self.begins += 1
+    pub func change(self, index: int):
+        self.changes += 1
+    pub func commit(self, index: int):
+        self.commits += 1
+
+func render(app: Application) -> unit!:
+    let frame = Frame(window.Size(420.0, 700.0, 420.0, 700.0, 1.0))
+    app.layout(420.0, 700.0)
+    app.render(frame.target())
+    frame.close()
+
+func press(app: Application, x: float, y: float, button: int = 0) -> unit!:
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y, button = button))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x, y = y, button = button))
+    render(app)
+
+func drag(app: Application, from_x: float, from_y: float, to_x: float, to_y: float) -> unit!:
+    app.dispatch(Event(kind = EventKind.pointer_down, x = from_x, y = from_y))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = (from_x + to_x) * 0.5, y = (from_y + to_y) * 0.5))
+    render(app)
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = to_x, y = to_y))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = to_x, y = to_y))
+    render(app)
+
+func typed(app: Application, text: str) -> unit!:
+    let raw = text.bytes()
+    for index in 0..<raw.length:
+        app.dispatch(Event(kind = EventKind.text_input, codepoint = raw[index]))
+
+func key(app: Application, which: Key) -> unit!:
+    app.dispatch(Event(kind = EventKind.key_down, key = which))
+    render(app)
+
+## The middle of `part` of ramp `index`, in the window.
+func middle(panel: ParameterPanel, index: int, part: RampPart) -> (float, float)!:
+    let origin = panel.layout().bounds()
+    let rect = panel.ramp_bounds(index, part)
+    assert(rect.width > 0.0)
+    return (origin.x + rect.x + rect.width * 0.5, origin.y + rect.y + rect.height * 0.5)
+
+## Where a float ramp draws position `t` at value `v` (the curve spans 0..1): the
+## well less the room kept for the points' squares.
+func spot(panel: ParameterPanel, index: int, t: float, v: float) -> (float, float)!:
+    let origin = panel.layout().bounds()
+    let area = panel.ramp_bounds(index)
+    return (origin.x + area.x + 5.0 + t * (area.width - 10.0), origin.y + area.y + 5.0 + (1.0 - v) * (area.height - 10.0))
+
+## Point `point`'s position and channel `channel`.
+func position(panel: ParameterPanel, index: int, point: int) -> float!:
+    let data = panel.ramp(index)
+    return data[3 + point * (int(data[1]) + 2)]
+
+func value(panel: ParameterPanel, index: int, point: int, channel: int = 0) -> float!:
+    let data = panel.ramp(index)
+    return data[4 + point * (int(data[1]) + 2) + channel]
+
+func code(panel: ParameterPanel, index: int, point: int) -> int!:
+    let data = panel.ramp(index)
+    let stride = int(data[1]) + 2
+    return int(data[3 + point * stride + stride - 1])
+
+func near(a: float, b: float, within: float = 1.0e-9) -> bool:
+    return math.abs(a - b) < within
+
+pub func ramps() -> unit!:
+    let font = Font()
+    let panel = ParameterPanel([ParameterSpec(name = "size", label = "Size", value = 1.0),
+                                ParameterSpec(name = "falloff", label = "Falloff", kind = ParameterKind.ramp, doc = "Weight by distance."),
+                                ParameterSpec(name = "tint", label = "Tint", kind = ParameterKind.color_ramp)], font = font)
+    let log = Log()
+    let began = panel.on_begin(log.begin)
+    let changed = panel.on_change(log.change)
+    let committed = panel.on_commit(log.commit)
+    let app = Application(VStack([panel], spacing = 0.0))
+    render(app)
+    let falloff = panel.find("falloff")
+    let tint = panel.find("tint")
+    assert(panel.kind(falloff) == ParameterKind.ramp and panel.kind(tint) == ParameterKind.color_ramp)
+    # A new ramp runs 0 to 1, linear; a color ramp black to white. The row is a curve and a line of fields.
+    assert(panel.ramp(falloff) == [1.0, 1.0, 2.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0] and panel.is_default(falloff))
+    assert(panel.ramp(tint) == [1.0, 3.0, 2.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+    let row = panel.row_bounds(falloff)
+    let curve = panel.ramp_bounds(falloff)
+    assert(curve.height >= 60.0 and row.height > curve.height and panel.ramp_bounds(falloff, RampPart.interpolation).y > curve.y + curve.height)
+    assert(panel.row_bounds(tint).y >= row.y + row.height)
+
+    # A click on empty curve adds a point at the pointer, selected: one edit.
+    let (add_x, add_y) = spot(panel, falloff, 0.5, 0.8)
+    press(app, add_x, add_y)
+    assert(ramp.count(panel.ramp(falloff)) == 3 and panel.selected_point(falloff) == 1)
+    assert(near(position(panel, falloff, 1), 0.5) and near(value(panel, falloff, 1), 0.8) and code(panel, falloff, 1) == 1)
+    assert(log.begins == 1 and log.commits == 1 and log.changes == 1 and not panel.is_default(falloff))
+
+    # A drag moves it, position and value, as one edit.
+    let (to_x, to_y) = spot(panel, falloff, 0.25, 0.4)
+    drag(app, add_x, add_y, to_x, to_y)
+    assert(near(position(panel, falloff, 1), 0.25, 1.0e-6) and near(value(panel, falloff, 1), 0.4, 1.0e-6))
+    assert(log.begins == 2 and log.commits == 2 and log.changes >= 2)
+    # A click on a point only selects it: nothing changes, no edit.
+    let (first_x, first_y) = spot(panel, falloff, 0.0, 0.0)
+    press(app, first_x, first_y)
+    assert(panel.selected_point(falloff) == 0 and log.begins == 2)
+    panel.select_point(falloff, 1)
+
+    # A click and drag in empty space adds and moves in one edit.
+    let (empty_x, empty_y) = spot(panel, falloff, 0.75, 0.2)
+    let (moved_x, moved_y) = spot(panel, falloff, 0.8, 0.3)
+    drag(app, empty_x, empty_y, moved_x, moved_y)
+    assert(ramp.count(panel.ramp(falloff)) == 4 and panel.selected_point(falloff) == 2)
+    assert(near(position(panel, falloff, 2), 0.8, 1.0e-6) and near(value(panel, falloff, 2), 0.3, 1.0e-6))
+    assert(log.begins == 3 and log.commits == 3)
+
+    # The fields under the curve: the position moves the point among the others.
+    let (field_x, field_y) = middle(panel, falloff, RampPart.position)
+    press(app, field_x, field_y)
+    assert(panel.is_editing())
+    typed(app, "0.1")
+    key(app, Key.enter)
+    assert(panel.selected_point(falloff) == 1 and near(position(panel, falloff, 1), 0.1) and near(position(panel, falloff, 2), 0.25, 1.0e-6))
+    assert(log.begins == 4 and log.commits == 4)
+    let (value_x, value_y) = middle(panel, falloff, RampPart.value)
+    press(app, value_x, value_y)
+    typed(app, "1.5")
+    key(app, Key.enter)
+    assert(near(value(panel, falloff, 1), 1.5) and log.begins == 5 and log.commits == 5)
+    # The curve widens to show it; a drag stays inside what it saw.
+    ramp.check(panel.ramp(falloff))
+
+    # The interpolation menu: Down and Enter choose another for the selected point.
+    let (menu_x, menu_y) = middle(panel, falloff, RampPart.interpolation)
+    press(app, menu_x, menu_y)
+    key(app, Key.down)
+    key(app, Key.enter)
+    assert(code(panel, falloff, 1) == 2 and code(panel, falloff, 0) == 1)
+    assert(log.begins == 6 and log.commits == 6)
+
+    # Delete removes the selected point; the one before is selected.
+    key(app, Key.delete)
+    assert(ramp.count(panel.ramp(falloff)) == 3 and panel.selected_point(falloff) == 0 and log.commits == 7)
+    # A right-click on a point removes it too; two points stay whatever is pressed.
+    let (third_x, third_y) = spot(panel, falloff, position(panel, falloff, 1), value(panel, falloff, 1))
+    press(app, third_x, third_y, button = 1)
+    assert(ramp.count(panel.ramp(falloff)) == 2 and log.commits == 8)
+    key(app, Key.backspace)
+    press(app, first_x, first_y, button = 1)
+    assert(ramp.count(panel.ramp(falloff)) == 2 and log.commits == 8)
+
+    # Down to its own two points the ramp is its default again; one more point
+    # changes it, and Revert to Default from the context menu, off the points, undoes that.
+    assert(panel.is_default(falloff))
+    press(app, add_x, add_y)
+    assert(not panel.is_default(falloff) and log.commits == 9)
+    let (blank_x, blank_y) = spot(panel, falloff, 0.1, 0.9)
+    press(app, blank_x, blank_y, button = 1)
+    key(app, Key.enter)
+    assert(panel.is_default(falloff) and log.commits == 10)
+
+    # From code: no signal, the selection kept, the data checked; a reset puts the default back.
+    let changes = log.changes
+    let steps = [1.0, 1.0, 3.0, 0.0, 0.2, 0.0, 0.5, 0.8, 4.0, 1.0, 0.4, 3.0]
+    panel.set_ramp(falloff, steps)
+    assert(panel.ramp(falloff) == steps and log.changes == changes and panel.selected_point(falloff) == 1)
+    var refused = 0
+    panel.set_ramp(falloff, [1.0, 1.0, 2.0, 0.5, 0.0, 1.0, 0.2, 1.0, 1.0]) catch failure:
+        refused += 1
+    panel.set_ramp(falloff, panel.ramp(tint)) catch failure:
+        refused += 1
+    assert(refused == 2 and panel.ramp(falloff) == steps)
+    panel.set_ramp_default(falloff, steps)
+    assert(panel.is_default(falloff))
+    panel.reset(falloff)
+    assert(panel.ramp(falloff) == steps)
+
+    # A color ramp: a click on the gradient adds the color it shows there.
+    let strip = panel.ramp_bounds(tint)
+    let origin = panel.layout().bounds()
+    let strip_x = origin.x + strip.x + 4.0 + 0.5 * (strip.width - 8.0)
+    press(app, strip_x, origin.y + strip.y + 8.0)
+    assert(ramp.count(panel.ramp(tint)) == 3 and panel.selected_point(tint) == 1)
+    assert(near(position(panel, tint, 1), 0.5, 1.0e-9) and near(value(panel, tint, 1, 1), 0.5, 1.0e-9))
+    let color_commits = log.commits
+    # Its swatch opens the color editor; dragging red to the end makes the point red, live,
+    # and closing the editor ends the edit.
+    let (swatch_x, swatch_y) = middle(panel, tint, RampPart.value)
+    press(app, swatch_x, swatch_y)
+    let swatch = panel.ramp_bounds(tint, RampPart.value)
+    let editor_top = origin.y + swatch.y + swatch.height
+    let rung = Theme().row_height(font)
+    # The editor is 260 points wide, kept inside the 420-point window: its red
+    # track ends well before the window's right edge.
+    press(app, 415.0, editor_top + rung * 1.5)
+    assert(value(panel, tint, 1, 0) == 1.0 and near(value(panel, tint, 1, 2), 0.5, 0.01) and log.commits == color_commits)
+    key(app, Key.escape)
+    assert(log.commits == color_commits + 1)
+
+    began.disconnect()
+    changed.disconnect()
+    committed.disconnect()
+    app.close()
+    print("PASS ramp parameters: add, drag, fields, interpolation, delete, color, data")

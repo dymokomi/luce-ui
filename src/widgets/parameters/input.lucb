@@ -26,7 +26,8 @@ extend ParameterPanel:
         elif kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
             try self.press(event)
         elif kind == input.EventKind.pointer_down and event.button == 1:
-            try self.open_context(event.x, event.y)
+            if not try self.remove_at(event.x, event.y):
+                try self.open_context(event.x, event.y)
         elif kind == input.EventKind.pointer_down and event.button == 2 and event.inside:
             try self.start_ladder(event)
         elif kind == input.EventKind.pointer_up and event.button == 0:
@@ -42,7 +43,7 @@ extend ParameterPanel:
     ## The press is gone (focus moved, the window lost it): a drag keeps what
     ## it reached and commits; typing keeps what was typed, as a field left does.
     func cancel() -> !:
-        let dragged = self.scrubbing or self.laddering or self.press_part == part_slider
+        let dragged = self.scrubbing or self.laddering or self.press_part == part_slider or self.press_part == part_curve
         self.scrubbing = false
         self.laddering = false
         self.press_row = -1
@@ -87,6 +88,9 @@ extend ParameterPanel:
         if self.press_part == part_slider and self.press_row >= 0:
             try self.slide(event.x)
             return
+        if self.press_part == part_curve and self.press_row >= 0:
+            try self.drag_point(event)
+            return
         if (self.press_part == part_field or self.press_part == part_label) and self.press_row >= 0 and numeric(self.rows[(usize)self.press_row].kind):
             try self.scrub(event)
             return
@@ -121,6 +125,9 @@ extend ParameterPanel:
             var values = self.rows[index].values
             values[0] = 0.0 if values[0] != 0.0 else 1.0
             try self.edit(index, values)
+            return
+        if part == part_curve:
+            try self.press_curve(index, event)
             return
         if part == part_chip:
             var values = self.rows[index].values
@@ -157,7 +164,7 @@ extend ParameterPanel:
         self.box.value().invalidate()
         if row < 0 or row >= (i64)self.total:
             return
-        if scrubbed or part == part_slider:
+        if scrubbed or part == part_slider or part == part_curve:
             try self.finish()
             return
         let (at, over, over_component) = self.hit(event.x, event.y)
@@ -166,8 +173,12 @@ extend ParameterPanel:
         let index = (usize)row
         if part == part_field:
             try self.begin_editing(row, component)
+        elif part == part_menu and is_ramp(self.rows[index].kind):
+            try self.open_interpolation(index)
         elif part == part_menu:
             try self.open_items(index)
+        elif part == part_swatch and is_ramp(self.rows[index].kind):
+            try self.open_point_color(index)
         elif part == part_swatch:
             try self.open_color(index)
         elif part == part_browse or part == part_button:

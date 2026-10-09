@@ -35,7 +35,7 @@ All objects and callbacks belong to the main thread.
 | `Theme` | Semantic colors, `control_lines`, `inset_cells`, `header_inset_cells`, `row_height`, `inset` |
 | `TextEditor` | Unicode text, selection, history and decorations; see [text controls](TEXT-EDITOR.md) |
 | `ListView` | `ListItem(text, icon=IconKind.blank)` entries and optional row height/font; `select`, `set_items`, `on_activate` |
-| `ParameterPanel` | `ParameterPanel(specs, font=..., label_width=0)` from `ParameterSpec`s: one compact row a parameter; values by index (`value`, `component`, `text`, `set_*`), `find(name)`, `on_change`/`on_begin`/`on_commit`/`on_action`; see [parameter panels](#parameter-panels) |
+| `ParameterPanel` | `ParameterPanel(specs, font=..., label_width=0)` from `ParameterSpec`s: one compact row a parameter; values by index (`value`, `component`, `text`, `ramp`, `set_*`), `find(name)`, `on_change`/`on_begin`/`on_commit`/`on_action`; see [parameter panels](#parameter-panels) |
 
 Constructors that allocate are fallible. Luce propagates automatically inside a
 function declared `-> T!`: `let button = Button("Pause")`. Base uses one explicit
@@ -211,6 +211,7 @@ folder, `linear` for a linear-light color, `resettable`, and the host's `tag`.
 | `button` | a button (`on_action`) |
 | `separator`, `folder` | a rule; a collapsible heading over the rows after it, remembered by name across `set_specs` |
 | `info` | read-only text |
+| `ramp`, `color_ramp` | Houdini's ramps: a curve over 0..1 or a gradient, edited by its points, with the selected point's fields under it; see [ramps](#ramps) |
 
 Numbers scrub: drag a field or its label (Shift ten times faster, Alt ten
 times finer; the label moves every component of a vector); the middle button
@@ -233,6 +234,62 @@ while the user drags a row a refresh from the host does not pull it back.
 Only rows the window shows are drawn, so hundreds of parameters in a
 `ScrollView` stay cheap. One spec makes a standalone row; `set_margin(0)`
 fits it inside another layout.
+
+### Ramps
+
+A `ramp` row edits a float over 0..1 and a `color_ramp` row a gradient, as
+Houdini's ramp parameters do (VEX reads one with `chramp`). The row is the
+curve, its area filled, or the gradient strip with a marker under each point,
+and under it a line for the selected point: its position, its value (a color
+ramp's swatch, which opens `ColorEditor`) and its interpolation menu
+(Constant, Linear, Smooth, Monotone, B-Spline).
+
+- A click on the curve away from the points adds one there: on a float ramp at
+  the value under the pointer, on a color ramp in the color the gradient has
+  there. It takes the interpolation of the segment it splits and is selected.
+- A press on a point selects it; dragging moves it across (and, on a float
+  ramp, up and down within the values the curve showed when the drag began).
+  Points keep their order by position: one dragged past another changes places
+  with it, and the selection follows. A click and drag in empty space adds and
+  moves the new point.
+- Delete or Backspace removes the selected point, a right-click any point;
+  a ramp keeps at least two points. A right-click elsewhere opens the usual
+  context menu, whose Revert to Default puts the default ramp back.
+- The fields type numbers as other fields do (Tab between them); a typed
+  position moves the point among the others.
+
+The data is luce-std's `ramp` list, the same numbers `ramp.lookup` evaluates
+when the host cooks, so what the panel draws is what the host computes:
+
+```
+[1, channels, count, then per point: position, channels..., interpolation]
+```
+
+with 1 channel for a `ramp` and 3 (red, green, blue; sRGB-encoded unless the
+spec says `linear`) for a `color_ramp`, interpolation codes 0 constant, 1
+linear, 2 smooth (Catmull-Rom), 3 monotone cubic, 4 B-spline; the luce-std
+README defines each. A new row starts at 0 to 1 (black to white), linear.
+
+```luce
+let panel = ParameterPanel([ParameterSpec(name = "falloff", label = "Falloff", kind = ParameterKind.ramp)])
+let row = panel.find("falloff")
+panel.set_ramp_default(row, [1.0, 1.0, 2.0, 0.0, 1.0, 3.0, 1.0, 0.0, 3.0])
+panel.set_ramp(row, node.values["falloff"])        # a list[float], checked, no signal
+let data = panel.ramp(row)                         # a copy, list[float] in Luce
+let weight = ramp.lookup(data, 0.25)               # from luce_std import ramp
+```
+
+`set_ramp` refuses data `ramp.check` refuses or with the other kind's channels,
+keeps the selected point where it can, and leaves a ramp the user is dragging
+(or coloring) alone. `selected_point`, `select_point` and
+`ramp_bounds(index, RampPart.curve | position | value | interpolation)` serve
+hosts and tests. Every change reports through `on_change` (live while
+dragging, once a frame); `on_begin` and `on_commit` bracket each edit: an
+added point with the drag that follows it, a drag, a typed field, an
+interpolation chosen, a removal, the color editor's changes until it closes. A plain
+click on a point selects it and reports nothing. The spec's soft range, when
+set, is the span a float ramp's curve shows (else 0..1), widened to every
+point's value; its hard range bounds the values.
 
 ### Units
 

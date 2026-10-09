@@ -21,6 +21,8 @@
 #       input.lucb     pointer gestures: scrubbing, the value ladder, clicks, the context menu
 #       editing.lucb   typing into a field, keys, Tab between fields, and polled popups
 #       popups.lucb    the value ladder, a small popup beside the row tooltip
+#       ramps.lucb     ramp rows' data: the public calls, adding, moving and removing points
+#       ramp_view.lucb ramp rows on screen: their parts, the curve or gradient, presses and drags
 #
 #==============================================================================================
 
@@ -28,6 +30,7 @@ from luce_gpu import gpu
 from luce_window import input
 import interop
 from luce_std import math
+from luce_std import ramp as ramps
 import memory
 import ownership
 import strings
@@ -58,8 +61,10 @@ import icons
 ## `menu` a choice of `items`, `text` a line of text, `path` a file path with a
 ## browse button, `color` an RGB swatch with three fields, `button` an action,
 ## `separator` a rule, `folder` a collapsible heading over the rows after it,
-## `info` read-only text, and `swatches` a row of color chips choosing one of
-## `items` (`label=#RRGGBB` each; the value is the chip's index).
+## `info` read-only text, `swatches` a row of color chips choosing one of
+## `items` (`label=#RRGGBB` each; the value is the chip's index), and
+## `ramp` and `color_ramp` Houdini's ramps: a curve over 0..1 or a gradient,
+## edited by its points, kept as luce-std `ramp` data (see `set_ramp`).
 pub enum ParameterKind as u8:
     number = 0
     integer = 1
@@ -74,6 +79,8 @@ pub enum ParameterKind as u8:
     folder = 10
     info = 11
     swatches = 12
+    ramp = 13
+    color_ramp = 14
 
 ## One parameter as the host describes it. Only `name` and `kind` are needed;
 ## every other field has a default. Texts are copied when the panel takes it.
@@ -126,7 +133,7 @@ pub struct ParameterSpec:
     pub var join: bool = false
     ## A folder starts open.
     pub var open: bool = true
-    ## A color's components are linear light rather than sRGB-encoded.
+    ## A color's or a color ramp's components are linear light rather than sRGB-encoded.
     pub var linear: bool = false
     ## The host's own number for the parameter (a slot), returned by `tag`.
     pub var tag: i64 = 0
@@ -155,6 +162,10 @@ struct Row:
     var stop_count: usize
     var values: f64[4]
     var defaults: f64[4]
+    ## A ramp row's luce-std ramp data and its default, heap arrays; the selected point.
+    var ramp: f64[]
+    var ramp_default: f64[]
+    var point: i64
     var minimum: f64
     var maximum: f64
     var soft_minimum: f64
@@ -195,11 +206,15 @@ let part_swatch: i64 = 7
 let part_button: i64 = 8
 let part_folder: i64 = 9
 let part_chip: i64 = 11
+## A ramp's curve or gradient, where its points are pressed, added and dragged.
+let part_curve: i64 = 12
 
 ## Which popup is open for which row: none, a menu parameter's items, the context menu.
 let popup_none: i64 = 0
 let popup_items: i64 = 1
 let popup_context: i64 = 2
+## A ramp point's interpolation.
+let popup_interpolation: i64 = 3
 
 ## A tooltip shows after the pointer rests this long on a row (nanoseconds), unless set.
 let tip_wait: u64 = 600000000
@@ -446,7 +461,7 @@ func make_row(spec: ParameterSpec) -> Row!:
     var components = spec.components
     if spec.kind == ParameterKind.vector:
         components = between(components if components > 0 else 3, 2, 4)
-    elif spec.kind == ParameterKind.color:
+    elif spec.kind == ParameterKind.color or spec.kind == ParameterKind.color_ramp:
         components = 3
     else:
         components = 1
@@ -460,15 +475,16 @@ func make_row(spec: ParameterSpec) -> Row!:
         error(result.invalid, "a unit needs a finite, positive scale and nonnegative lengths")
     var minimum = spec.minimum
     var maximum = spec.maximum
-    if spec.kind == ParameterKind.color:
+    if spec.kind == ParameterKind.color or spec.kind == ParameterKind.color_ramp:
         minimum = math.max(minimum, 0.0)
         maximum = maximum if spec.maximum != 1.0e9 else 1.0
     var defaults: f64[4] = [spec.value, spec.y, spec.z, spec.w]
+    var no_ramp: f64[]
     var row = Row(kind = spec.kind, name = try interop.copy_text(spec.name), label = interop.Owned[str](""), suffix = interop.Owned[str](""),
                   items = interop.Owned[str](""), doc = interop.Owned[str](""), text = interop.Owned[str](""), fallback = interop.Owned[str](""),
                   hide_when = interop.Owned[str](""), disable_when = interop.Owned[str](""), components = components,
                   units = Unit(scale = spec.units.scale, millimeter = spec.units.millimeter, pixel = spec.units.pixel),
-                  values = defaults, defaults = defaults, minimum = minimum, maximum = maximum,
+                  values = defaults, defaults = defaults, ramp = no_ramp, ramp_default = no_ramp, point = 0, minimum = minimum, maximum = maximum,
                   soft_minimum = spec.soft_minimum, soft_maximum = spec.soft_maximum, step = spec.step,
                   decimals = 0 if spec.kind == ParameterKind.integer else spec.decimals,
                   slider = spec.slider, join = spec.join, linear = spec.linear, tag = spec.tag, resettable = spec.resettable,
@@ -484,6 +500,9 @@ func make_row(spec: ParameterSpec) -> Row!:
     row.fallback = try interop.copy_text(spec.text)
     row.hide_when = try interop.copy_text(spec.hide_when)
     row.disable_when = try interop.copy_text(spec.disable_when)
+    if is_ramp(spec.kind):
+        row.ramp_default = try starting_ramp(spec.kind)
+        row.ramp = try copied_ramp(row.ramp_default)
     for component in 0..<4:
         row.defaults[component] = row_clamp(row, row.defaults[component])
     row.values = row.defaults
@@ -569,6 +588,10 @@ func release_row(row: Row):
     row.fallback.release()
     row.hide_when.release()
     row.disable_when.release()
+    if row.ramp.length > 0:
+        free(row.ramp) in memory.heap
+    if row.ramp_default.length > 0:
+        free(row.ramp_default) in memory.heap
 
 func release_rows(rows: Row[], count: usize):
     for index in 0..<count:

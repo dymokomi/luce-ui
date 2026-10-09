@@ -1,0 +1,48 @@
+## Ramp rows on real pixels: a float ramp fills the area under its curve in the
+## accent mixed into the well and leaves the well above it, and a color ramp's
+## gradient shows its points' colors (constant segments, so each half is flat).
+from luce_gpu import gpu
+import interop
+import memory
+from luce_ui import ui
+from luce_window import window
+import native
+import style_pixels
+from luce_ui.ui import Application, ParameterPanel, ParameterSpec, ParameterKind, RampPart, Widget
+
+pub func check(host: window.Window, surface: gpu.Surface) -> !:
+    try host.resize(260, 220)
+    let font = try interop.Reference[ui.Font].adopt(new ui.Font() in memory.heap, ui.font_type, memory.heap)
+    defer font.release()
+    let specs: ParameterSpec[2] = [ParameterSpec(name = "falloff", kind = ParameterKind.ramp),
+                                   ParameterSpec(name = "tint", kind = ParameterKind.color_ramp)]
+    let panel = try interop.Reference[ParameterPanel].adopt(new ParameterPanel(specs[0..], font) in memory.heap, ui.parameter_panel_type, memory.heap)
+    defer panel.release()
+    # Red over its left half, green over its right, in sRGB.
+    let halves: f64[13] = [1.0, 3.0, 2.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.5, 0.0, 1.0, 0.0, 0.0]
+    try panel.value().set_ramp(1, halves[0..])
+    let root = panel.as_interface[Widget](panel.value())
+    defer root.release()
+    let white = gpu.Color(1.0, 1.0, 1.0)
+    let black = gpu.Color()
+    let theme = ui.Theme(background = white, panel = white, sunken = black, border = black, foreground = white, muted = white,
+                         accent = gpu.Color(0.0, 0.0, 1.0))
+    let app = try interop.Reference[Application].adopt(new Application(root, theme = theme) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    let scale = (try host.size()).scale
+    native.begin("UI pixel contracts")
+    defer native.end()
+    try style_pixels.render(app, host, surface)
+    let box = panel.value().layout()
+    defer box.release()
+    let origin = box.value().bounds()
+    # The linear ramp 0 to 1: low on the right is under the curve, the fill
+    # 22% of the blue accent over the black well (linear 0.22 is sRGB 129);
+    # high on the left is above it, the black well.
+    let curve = try panel.value().ramp_bounds(0, RampPart.curve)
+    style_pixels.pixel(scale, origin.x + curve.x + curve.width * 0.8, origin.y + curve.y + curve.height - 10.0, 0, 0, 129)
+    style_pixels.pixel(scale, origin.x + curve.x + curve.width * 0.2, origin.y + curve.y + 10.0, 0, 0, 0)
+    let strip = try panel.value().ramp_bounds(1, RampPart.curve)
+    let y = origin.y + strip.y + 8.0
+    style_pixels.pixel(scale, origin.x + strip.x + strip.width * 0.25, y, 255, 0, 0)
+    style_pixels.pixel(scale, origin.x + strip.x + strip.width * 0.75, y, 0, 255, 0)

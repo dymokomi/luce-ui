@@ -85,6 +85,8 @@ extend ParameterPanel:
             try self.paint_fitted(painter, row.text.value, row.control_x, self.text_y(row), row.control_width, ink)
         elif kind == ParameterKind.swatches:
             try self.paint_chips(painter, index, theme, enabled)
+        elif is_ramp(kind):
+            try self.paint_ramp(painter, index, theme, enabled)
 
     ## The label right-aligned against the column's edge (inline for a joined
     ## row), cut with an ellipsis when the column is narrower.
@@ -142,7 +144,7 @@ extend ParameterPanel:
         let row = self.rows[index]
         let rect = self.field_rect(row, component)
         let editing = self.edit_row == (i64)index and self.edit_component == component
-        let scrubbed = (self.scrubbing or self.laddering) and self.press_row == (i64)index and (self.press_part == part_label or self.press_component == component)
+        let scrubbed = (self.scrubbing or self.laddering) and self.press_row == (i64)index and self.press_part != part_curve and (self.press_part == part_label or self.press_component == component)
         let hot = enabled and self.hot_row == (i64)index and (self.hot_part == part_field or self.hot_part == part_label) and (self.hot_component == component or self.hot_part == part_label)
         let current = self.box.value().is_focused() and self.current == (i64)index and component == 0
         try ParameterPanel.paint_well(painter, rect, theme, hot, editing or scrubbed, current)
@@ -153,10 +155,12 @@ extend ParameterPanel:
             return
         var digits: u8[48]
         let room = rect.width - inset * 2.0
-        let suffix = row.suffix.value
+        # A ramp's position is a bare fraction; its value is the row's.
+        let position = is_ramp(row.kind) and component == 0
+        let suffix = "" if position else row.suffix.value
         let suffix_width = text_width(self.font, suffix)
         var decimals = shown_decimals(row)
-        let amount = row.units.shown(row.values[(usize)component])
+        let amount = ParameterPanel.ramp_field(row, component) if position else row.units.shown(ParameterPanel.field_number(row, component))
         var shown = try format_number(digits, amount, decimals)
         while decimals > 0 and text_width(self.font, shown) + suffix_width > room:
             decimals -= 1
