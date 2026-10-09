@@ -93,7 +93,8 @@ pub struct Menu: Widget:
             try painter.rounded_rectangle(whole, theme.menu_selection, theme.control_radius)
         elif self.box.value().is_focused() or self.box.value().contains_pointer():
             try painter.rounded_rectangle(whole, theme.menu_hover, theme.control_radius)
-        let ink = theme.accent_text if self.is_open() and theme.menu_selection == theme.accent else (theme.foreground if self.box.value().is_enabled() else theme.muted)
+        let plain = theme.foreground if self.box.value().is_enabled() else theme.muted
+        let ink = theme.on_menu_selection(plain) if self.is_open() else plain
         try painter.text(self.caption.value, theme.inset(self.font), (size.height - self.font.value().height()) * 0.5, ink, self.font)
 
     pub func event(event: Event) -> interop.Outcome[unit]:

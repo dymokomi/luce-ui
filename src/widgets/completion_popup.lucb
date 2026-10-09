@@ -169,18 +169,20 @@ pub struct CompletionPopup: Widget:
             let index = self.first + row
             let item = list.matching((usize)index)
             let y = 1.0 + (f64)row * height
-            if index == self.selected:
+            let lit = index == self.selected
+            if lit:
                 try painter.rectangle(gpu.Rect(1.0, y, size.width - 2.0, height), theme.menu_selection)
             let text_y = y + math.floor((height - self.font.value().height()) * 0.5)
-            let (letter, ink) = badge(list.kind(item), theme)
-            try painter.text(letter, advance, text_y, ink, self.font)
+            let (letter, badge_ink) = badge(list.kind(item), theme)
+            # The selected row's badge, label and detail all take the selection's ink.
+            try painter.text(letter, advance, text_y, theme.on_menu_selection(badge_ink) if lit else badge_ink, self.font)
             let label = cell_widths.prefix(list.label(item), self.columns - 1)
-            try painter.text(label, self.label_x(), text_y, theme.foreground, self.font)
+            try painter.text(label, self.label_x(), text_y, theme.on_menu_selection(theme.foreground) if lit else theme.foreground, self.font)
             let used = cell_widths.width(label) + 2
             let detail = list.detail(item)
             if detail.length > 0 and used + 1 < self.columns:
                 let fitted = cell_widths.prefix(detail, self.columns - 1 - used)
-                try painter.text(fitted, self.label_x() + (f64)used * advance, text_y, theme.muted, self.font)
+                try painter.text(fitted, self.label_x() + (f64)used * advance, text_y, theme.on_menu_selection(theme.muted) if lit else theme.muted, self.font)
             row += 1
         let doc = self.doc_height()
         if doc > 0.0:

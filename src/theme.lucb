@@ -91,6 +91,16 @@ pub struct Theme:
     pub func hover_border() -> gpu.Color:
         return between(self.border, self.active_border, 0.5)
 
+    ## `ink` (a label, a muted detail, a kind badge) on a selected menu, popup or
+    ## completion row (`menu_selection`): `accent_text` when the row is the accent color,
+    ## where neither the foreground, `muted` nor the accent itself reads; else `ink`.
+    pub func on_menu_selection(ink: gpu.Color) -> gpu.Color:
+        return self.accent_text if self.menu_selection == self.accent else ink
+
+    ## The same for a selected list or table row, or a default button (`selection`).
+    pub func on_selection(ink: gpu.Color) -> gpu.Color:
+        return self.accent_text if self.selection == self.accent else ink
+
     pub func gutter_active() -> gpu.Color:
         return lift(self.gutter, self.foreground, 0.12)
 

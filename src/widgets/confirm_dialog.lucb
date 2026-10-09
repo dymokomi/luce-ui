@@ -125,15 +125,19 @@ pub struct ConfirmDialog: Widget:
             if not self.has_role(role):
                 continue
             let x = (f64)slot * cell
+            var selected = role == 0
             if role == 0:
                 try painter.rectangle(gpu.Rect(x, button_y, cell, row), theme.selection)
             if self.pressed == role:
                 try painter.rectangle(gpu.Rect(x, button_y, cell, row), theme.pressed)
+                selected = false
             elif over and (i64)((pointer.x - 0.0) / cell) == (i64)slot:
                 try painter.rectangle(gpu.Rect(x, button_y, cell, row), theme.hover())
+                selected = false
             let label = self.label_for(role)
             let label_width = try self.font.value().measure(label)
-            try painter.text(label, x + math.max(0.0, (cell - label_width) * 0.5), button_y + (row - self.font.value().height()) * 0.5, theme.foreground, self.font)
+            let ink = theme.on_selection(theme.foreground) if selected else theme.foreground
+            try painter.text(label, x + math.max(0.0, (cell - label_width) * 0.5), button_y + (row - self.font.value().height()) * 0.5, ink, self.font)
         try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.active_border)
         try painter.rectangle(gpu.Rect(y = size.height - 1.0, width = size.width, height = 1.0), theme.active_border)
         try painter.rectangle(gpu.Rect(y = button_y - 1.0, width = size.width, height = 1.0), theme.border)

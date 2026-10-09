@@ -272,12 +272,14 @@ pub struct ActionPopup: Widget:
                 y += height
                 index += 1
                 continue
-            if index == self.selected:
+            let lit = index == self.selected
+            if lit:
                 try painter.rectangle(gpu.Rect(y = y, width = size.width, height = height), theme.menu_selection)
             let caption = action.value().text()
             defer caption.release()
             let text_y = y + (height - self.font.value().height()) * 0.5
-            let ink = theme.foreground if action.value().is_enabled() else theme.muted
+            let plain = theme.foreground if action.value().is_enabled() else theme.muted
+            let ink = theme.on_menu_selection(plain) if lit else plain
             try painter.text(caption.value, self.pad_x(), text_y, ink, self.font)
             if action.value().is_checked():
                 # A tick drawn, not a glyph: every UI font has the lines.
@@ -290,7 +292,7 @@ pub struct ActionPopup: Widget:
             if chord_len > 0:
                 let label = (str)chord[..<chord_len]
                 let chord_width = try self.font.value().measure(label)
-                try painter.text(label, math.max(self.pad_x(), size.width - self.pad_x() - chord_width), text_y, theme.muted, self.font)
+                try painter.text(label, math.max(self.pad_x(), size.width - self.pad_x() - chord_width), text_y, theme.on_menu_selection(theme.muted) if lit else theme.muted, self.font)
             y += height
             index += 1
         try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.border)

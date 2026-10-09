@@ -345,6 +345,11 @@ active_border, gutter, shadow, and `diagnostic_error`, `diagnostic_warning` and
 `diagnostic_info` for problem severities. The interaction states `hover()`, `hover_border()`,
 `gutter_active()` and `gutter_hover()` are derived from those base colors through
 `luce_color` (Oklab), so a palette is always internally consistent.
+Text on a selected row follows its fill: `on_menu_selection(ink)` for menus, popups and
+completion rows on `menu_selection`, `on_selection(ink)` for list and table rows and
+default buttons on `selection`. Each gives `accent_text` when that fill is the accent
+color (where the foreground, `muted` and the accent would not read), else `ink`, so a
+row's label, muted detail and badge all stay legible.
 `control_lines` accepts 1..4 and `inset_cells` accepts 0..4; all values must be finite.
 Defaults give controls one text line vertically and one glyph advance of inset.
 `TextEditor(theme=EditorTheme(...))` can override editor-specific colors.

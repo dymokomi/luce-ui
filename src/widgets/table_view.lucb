@@ -252,7 +252,8 @@ pub struct TableView: Widget:
             if y >= size.height:
                 break
             if y + rh > hh:
-                if self.picked.contains((i64)index):
+                let lit = self.picked.contains((i64)index)
+                if lit:
                     try painter.rectangle(gpu.Rect(0.0, y, size.width, rh), theme.selection)
                     if (i64)index == self.picked.lead:
                         try painter.rectangle(gpu.Rect(0.0, y, 2.0, rh), theme.accent)
@@ -261,7 +262,7 @@ pub struct TableView: Widget:
                 var x: f64 = 0.0
                 for column in 0..<self.columns.length:
                     let cell = self.cells[index * self.columns.length + column]
-                    try self.paint_cell(&painter, cell, self.columns[column], x, y, widths[column], rh, inset, theme)
+                    try self.paint_cell(&painter, cell, self.columns[column], x, y, widths[column], rh, inset, theme, lit)
                     x += widths[column]
             index += 1
         if self.show_header:
@@ -284,13 +285,14 @@ pub struct TableView: Widget:
             let position = hh + self.scroll / math.max(1.0, content - viewport) * math.max(0.0, viewport - thumb)
             try painter.rectangle(gpu.Rect(math.max(0.0, size.width - 6.0), position, 4.0, thumb), theme.border)
 
+    ## One cell; `lit` on a selected row, whose ink is the selection's (`Theme.on_selection`).
     func paint_cell(painter: Painter*, cell: StoredCell, column: StoredColumn, x: f64, y: f64,
-                    width: f64, rh: f64, inset: f64, theme: Theme) -> !:
+                    width: f64, rh: f64, inset: f64, theme: Theme, lit: bool) -> !:
         var text_x = x + inset
         if cell.icon != IconKind.blank:
             let extent = self.font.value().height()
             let color = theme.accent if cell.icon == IconKind.folder or cell.icon == IconKind.folder_open else theme.muted
-            try icons.draw(painter, cell.icon, gpu.Rect(text_x, y + (rh - extent) * 0.5, extent, extent), color)
+            try icons.draw(painter, cell.icon, gpu.Rect(text_x, y + (rh - extent) * 0.5, extent, extent), theme.on_selection(color) if lit else color)
             text_x += extent + inset
         if cell.text.value.length == 0:
             return
@@ -299,6 +301,8 @@ pub struct TableView: Widget:
             color = theme.muted
         if let tint = cell.tint:
             color = tint
+        if lit:
+            color = theme.on_selection(color)
         var buffer: u8[512]
         let label = elide(self.font, cell.text.value, x + width - inset - text_x, buffer)
         if label.length == 0:
