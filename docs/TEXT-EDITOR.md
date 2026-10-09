@@ -159,6 +159,119 @@ old text. `diagnostic_count()` and `diagnostic_range(index)` (zero-based scalar
 offsets) report what is left, so a stale set can be republished after the next
 build.
 
+## Completion
+
+`set_completion_provider(provider)` installs a callback that offers completions;
+`set_completion_provider(none)` or `clear_completion_provider()` removes it. The
+editor calls it with its `CompletionList`, synchronously, in three cases: after a
+`.` is typed, after the first identifier character of a word is typed (one
+character is enough; a word starting with a digit is a number and does not ask),
+and on Ctrl+Space on every platform, or `complete()` from code. Cmd+Space stays
+the system's (Spotlight on macOS). Ctrl+Space is a chord, so an application
+command bound to it is matched first. A read-only editor never asks.
+
+During the call the list answers `caret()` and `start()`, scalar offsets like
+every other editor offset, and `trigger()`: `CompletionTrigger.typed`, `dot` or
+`invoked`. `start()` is where the word being completed begins: the run of
+identifier characters before the caret (ASCII letters and digits, `_` and any
+non-ASCII scalar), or the caret itself after a `.`. `set_start(offset)` moves it
+back, on the caret's line. `text()` and `text_range(start, end)` read the document,
+so the provider needs no other access; `editor.text()` works too. The provider
+adds items with `add(label, kind, detail = "", doc = "")`: `label` is what accepting
+inserts, one line; `kind` is a `CompletionKind`; `detail` is a signature, shown muted
+after the label; `doc` shows under the list in the markup described under
+[Hover](#hover). After the call the list refuses `add`, `set_start` and the text
+calls, so a provider that keeps it cannot change the shown list. A list holds at
+most 16384 items and 16 MiB of text; an error from the provider ends the session
+and reaches the application's error handler like any input failure.
+
+A builder rather than a returned list: a Luce callback cannot hand Base a list of
+structs across the interop boundary, so the provider adds one item a call.
+
+| `CompletionKind` | Letter | Color |
+| --- | --- | --- |
+| `function` | f | accent |
+| `method` | m | accent |
+| `field` | p | `vcs_added` |
+| `variable` | v | `vcs_added` |
+| `datatype` | T | `vcs_modified` |
+| `module` | M | foreground |
+| `keyword` | k | muted |
+
+(`type` belongs to the language, hence `datatype`.)
+
+The popup opens under the caret's row, its labels lined up with the word, or
+above the row when the window has no room below. It shows up to ten rows, each a
+kind letter, the label and the detail, and under them the selected item's detail
+as a signature and its doc. With no items, or no item matching, nothing shows.
+
+The provider is asked once per session, not per keystroke. While the caret stays
+in the word, typing more identifier characters, Backspace and Delete filter the
+same items again by the text from `start()` to the caret: labels that start with
+it first, then labels holding its characters in order (a subsequence), both
+ignoring ASCII case; within each, labels matching in case come first, then the
+provider's order. The provider is asked again only on another `.` or Ctrl+Space,
+and is never asked more than once for one key or typed character. It runs after
+`on_change` has heard the edit, so an analysis updated there is current. A
+session whose provider added nothing stays quiet for the rest of the word.
+
+While the popup shows, Up and Down move the selection (wrapping at the ends),
+Page Up and Page Down move it by ten rows, and Enter or Tab accept: the text from
+`start()` to the caret becomes the label, as one undoable edit. These keys go to
+the popup, not the text; with Shift, Ctrl, Alt or Cmd held they go to the text.
+Escape hides the popup for the rest of the word; Ctrl+Space or a `.` brings it back.
+A click on a row accepts it (on the next frame, as the editor polls its popup)
+and leaves the keyboard with the editor; the wheel scrolls the rows. The session
+ends when the caret leaves the word (a move, a non-identifier character, a
+Backspace past `start()`, a selection), on a press anywhere in the editor, on
+focus loss, and when the provider is removed. `close_completion()` ends it from
+code. `completion_shown()`, `completion_count()`, `completion_label(index)` and
+`completion_selection()` report the popup's state.
+
+```luce
+from luce_ui.ui import TextEditor, CompletionList, CompletionKind, CompletionTrigger
+
+editor.set_completion_provider(func(items: CompletionList) -> unit!:
+    if items.trigger() == CompletionTrigger.dot:
+        for member in members_before(editor.text(), items.start() - 1):
+            items.add(member.name, CompletionKind.method, member.signature, member.doc)
+    else:
+        items.add("print", CompletionKind.function, "func print(text: str)", "Writes `text` and a newline.")
+)
+```
+
+## Hover
+
+`set_hover_provider(provider)` installs a callback asked what to show when the
+pointer rests on a word; `set_hover_provider(none)` or `clear_hover_provider()`
+removes it. After the tooltip delay (`set_tip_delay`, half a second unless set)
+over an identifier character, the editor calls it with that scalar's offset. It
+returns the text to show, or an empty text for nothing. It is asked once per
+word the pointer rests on; moving within the word keeps the tooltip, moving to
+another word waits and asks again. A press, key, scroll or edit hides it, and
+`shown_tip()` returns the text as given.
+
+The text is light markup. Its first line is a signature, set in the code
+(accent) color with a rule under it when more follows. In the rest, text between
+backticks is a `code span`, set in the code color, its backticks hidden; a span
+ends at the end of its line. Newlines break lines, a blank line leaves an empty
+one, and long lines wrap at a space to 72 cells. Nothing else is markup: `*`,
+`_` and `#` show as typed. Completion docs use the same rules, with the item's
+detail as the signature.
+
+A diagnostic wins: over an underline or a gutter mark the tooltip shows the
+diagnostic's messages, and the hover provider is not asked.
+
+```luce
+editor.set_hover_provider(func(offset: int) -> str!:
+    let symbol = symbol_at(offset) else return ""
+    return f"{symbol.signature}\n{symbol.doc}"
+)
+```
+
+Both providers are retained by the editor and traced, so a closure that captures
+the editor is collected with it; `close` releases them.
+
 ## Editing commands and context menus
 
 `copy`, `cut`, `paste`, `select_all`, `undo` and `redo` expose the same operations

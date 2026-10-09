@@ -28,11 +28,20 @@ extend TextEditor:
             self.pending_swatch = -1
             return self.swatch_activated.emit(offset)
         if self.document.version() != before:
-            return self.notify_changed()
+            let changed = self.notify_changed()
+            if not changed.is_success():
+                return changed
+            changed.release()
+        # Completion follows the edit only once on_change has heard of it.
+        self.follow_completion() catch failure:
+            return result.failure[unit](failure.code, failure.message)
         return result.success[unit](())
 
     func handle(event: Event) -> !:
         try self.refresh_view()
+        # A press anywhere in the editor, or losing focus, ends a completion session.
+        if event.cancelled or event.kind == input.EventKind.focus_lost or event.kind == input.EventKind.pointer_down:
+            self.end_completion()
         if event.cancelled:
             self.dragging = false
             self.dragging_scroll = false
@@ -94,11 +103,18 @@ extend TextEditor:
             self.dragging_scroll = false
             return
         if event.kind == input.EventKind.text_input and not self.read_only:
+            # The space a Ctrl+Space press may also type is not text.
+            if self.swallow_space and event.codepoint == 32:
+                self.swallow_space = false
+                return
             var bytes: u8[4]
             let count = utf8.encode((u32)event.codepoint, bytes) else error(result.invalid, "text input is not a Unicode scalar")
             try self.document.insert((str)bytes[..<count])
+            self.completion_typed((u32)event.codepoint)
             return
         if event.kind != input.EventKind.key_down:
+            return
+        if try self.completion_key(event):
             return
         try self.key(event)
         self.active_since = time.now()

@@ -1,0 +1,174 @@
+## Light markup for hover text and completion docs: a signature line, then text in
+## which `code spans` between backticks are set in the code color, their backticks
+## hidden. A newline ends a line and a blank line leaves an empty one; long lines
+## wrap at a space. Nothing else is markup: `*`, `#` and `_` show as typed. Lines
+## wrap by monospace cells, as the tooltip's plain text does.
+from luce_gpu import gpu
+from luce_std import utf8
+from luce_std import math
+from luce_fonts import fonts
+import interop
+from font import Font
+from painter import Painter
+
+## Space between the signature and the text under it, where a rule is drawn.
+pub let rule_gap: f64 = 7.0
+
+## `text` split at its first newline: the signature line and the rest.
+pub func split(text: str) -> (str, str):
+    for index in 0..<text.length:
+        if text.bytes[index] == '\n':
+            return ((str)text.bytes[..<index], (str)text.bytes[index + 1..])
+    return (text, "")
+
+## The cells of the longest line of `text`, backticks taking none.
+pub func longest(text: str) -> usize:
+    var best: usize = 0
+    var used: usize = 0
+    var at: usize = 0
+    while at < text.length:
+        let byte = text.bytes[at]
+        if byte == '\n':
+            best = best if best > used else used
+            used = 0
+            at += 1
+            continue
+        if byte == '`':
+            at += 1
+            continue
+        let (cells, step) = scalar_at(text, at)
+        used += cells
+        at += step
+    return best if best > used else used
+
+## The rows `text` wraps to in `columns` cells, at most `limit`.
+pub func rows(text: str, columns: usize, limit: usize) -> usize:
+    var count: usize = 0
+    var at: usize = 0
+    while at < text.length and count < limit:
+        let (end, next) = wrap(text, at, columns)
+        _ = end
+        at = next
+        count += 1
+    return count
+
+## The height of `signature` over `body` in `columns` cells, each at most
+## `limit` rows, with a rule between them when both have text.
+pub func height(signature: str, body: str, columns: usize, line: f64, limit: usize) -> f64:
+    let above = rows(signature, columns, limit)
+    let below = rows(body, columns, limit)
+    return (f64)(above + below) * line + (rule_gap if above > 0 and below > 0 else 0.0)
+
+## Draw `signature`, all in `code`, then a rule in `rule` and `body` in `ink` with
+## its code spans in `code`, from (`x`, `y`), `columns` cells wide, each at most
+## `limit` rows. `y` is the top of the first row's line.
+pub func paint(painter: Painter*, signature: str, body: str, columns: usize, x: f64, y: f64,
+               font: interop.Reference[Font], ink: gpu.Color, code: gpu.Color, rule: gpu.Color, limit: usize) -> !:
+    let line = font.value().line_height()
+    let inset = math.floor((line - font.value().height()) * 0.5)
+    var top = y
+    var at: usize = 0
+    var count: usize = 0
+    while at < signature.length and count < limit:
+        let (end, next) = wrap(signature, at, columns)
+        _ = try paint_row(painter, signature, at, end, true, x, top + inset, font, code, code)
+        at = next
+        top += line
+        count += 1
+    if count > 0 and body.length > 0:
+        try painter.rectangle(gpu.Rect(x, top + rule_gap * 0.5 - 0.5, (f64)columns * font.value().advance(), 1.0), rule)
+        top += rule_gap
+    at = 0
+    count = 0
+    var spanning = false
+    while at < body.length and count < limit:
+        let (end, next) = wrap(body, at, columns)
+        spanning = try paint_row(painter, body, at, end, spanning, x, top + inset, font, ink, code)
+        # A newline ends any open span, so a stray backtick spoils one line only.
+        if next > 0 and body.bytes[next - 1] == '\n':
+            spanning = false
+        at = next
+        top += line
+        count += 1
+
+## Draw bytes `start..<end` of `text` as runs split at backticks, `code` runs
+## in `code_ink` and the rest in `ink`, starting inside a span when `spanning`.
+## Answers whether a span is still open at the row's end.
+func paint_row(painter: Painter*, text: str, start: usize, end: usize, spanning: bool, x: f64, y: f64,
+               font: interop.Reference[Font], ink: gpu.Color, code_ink: gpu.Color) -> bool!:
+    let advance = font.value().advance()
+    var code = spanning
+    var cells: usize = 0
+    var run = start
+    var at = start
+    while at <= end:
+        if at == end or text.bytes[at] == '`':
+            if at > run:
+                let piece = (str)text.bytes[run..<at]
+                try painter.text(piece, x + (f64)cells * advance, y, code_ink if code else ink, font)
+                cells += cells_of(piece)
+            if at == end:
+                break
+            code = not code
+            run = at + 1
+        at += 1
+    return code
+
+## The cells of `text`, backticks taking none.
+func cells_of(text: str) -> usize:
+    var total: usize = 0
+    var at: usize = 0
+    while at < text.length:
+        if text.bytes[at] == '`':
+            at += 1
+            continue
+        let (cells, step) = scalar_at(text, at)
+        total += cells
+        at += step
+    return total
+
+## The cells and UTF-8 width of the scalar at byte `at`; a malformed byte is one of each.
+func scalar_at(text: str, at: usize) -> (usize, usize):
+    let decoded = utf8.decode(text.bytes, at) else return (1, 1)
+    return ((usize)fonts.cells((u32)decoded.scalar), decoded.width)
+
+## The row of `text` from byte `start` that fits `columns` cells, backticks taking
+## none, broken at a space when it can be: where it ends and where the next
+## begins. A newline always ends a row, and a row takes at least one scalar.
+pub func wrap(text: str, start: usize, columns: usize) -> (usize, usize):
+    var used: usize = 0
+    var at = start
+    var space: usize? = none
+    while at < text.length:
+        let byte = text.bytes[at]
+        if byte == '\n':
+            return (at, at + 1)
+        if byte == '`':
+            at += 1
+            continue
+        let (cells, step) = scalar_at(text, at)
+        if used + cells > columns and at > start:
+            break
+        if byte == ' ':
+            space = at
+        used += cells
+        at += step
+    if at >= text.length:
+        return (text.length, text.length)
+    if text.bytes[at] == ' ':
+        return (at, at + 1)
+    if let broken = space:
+        if broken > start:
+            return (broken, broken + 1)
+    return (at, at)
+
+test "markup wraps by cells without counting backticks":
+    assert(longest("`abc` de\nx") == 6)
+    let (signature, body) = split("func f(x)\nTakes `x`.")
+    assert(signature == "func f(x)" and body == "Takes `x`.")
+    # Backticks take no room: "`ab` cd" is five cells and fits five columns.
+    let (end, next) = wrap("`ab` cd ef", 0, 5)
+    assert(end == 7 and next == 8)
+    let (broken, after) = wrap("abcdef", 0, 4)
+    assert(broken == 4 and after == 4)
+    assert(rows("one\n\nthree", 10, 8) == 3 and rows("one two three", 4, 2) == 2)

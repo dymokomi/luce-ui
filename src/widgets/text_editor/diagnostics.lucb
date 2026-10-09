@@ -42,21 +42,34 @@ extend TextEditor:
             error(result.invalid, "a tooltip delay is 0..60 seconds")
         self.tip_delay = (u64)(seconds * 1.0e9)
 
-    ## The messages the diagnostic tooltip shows, or an empty text when it is hidden.
+    ## The text the tooltip shows (diagnostic messages, or hover markup as the
+    ## provider gave it), or an empty text when it is hidden.
     pub func shown_tip() -> interop.Owned[str]!:
         let tip = self.tip else return try interop.copy_text("")
         return try interop.copy_text(tip.value().text() if tip.value().is_open() else "")
 
-    ## Track the pointer at editor-local (`x`, `y`): resting on another diagnostic
-    ## hides the tip and starts its wait over.
+    ## Track the pointer at editor-local (`x`, `y`): resting on another diagnostic,
+    ## or off diagnostics on another word to hover, hides the tip and starts its
+    ## wait over. A diagnostic wins over the word under it.
     func rest_pointer(x: f64, y: f64):
-        let (row, first) = self.diagnostic_at(x, y)
+        var (row, first) = self.diagnostic_at(x, y)
+        var word: i64 = -1
+        var offset: i64 = -1
+        if row < 0:
+            let (hovered, start, under) = self.word_at(x, y)
+            if hovered >= 0:
+                row = hovered
+                first = -2
+                word = start
+                offset = under
         self.tip_x = x
-        if row == self.tip_row and first == self.tip_first:
+        if row == self.tip_row and first == self.tip_first and word == self.tip_word:
             return
         self.forget_tip()
         self.tip_row = row
         self.tip_first = first
+        self.tip_word = word
+        self.tip_offset = offset
         self.tip_since = time.now()
         if row >= 0:
             layout.wake_at(self.tip_since + self.tip_delay)
@@ -67,6 +80,9 @@ extend TextEditor:
     func forget_tip():
         self.tip_row = -1
         self.tip_first = -1
+        self.tip_word = -1
+        self.tip_offset = -1
+        self.tip_asked = false
         if let tip = self.tip:
             if tip.value().is_open():
                 tip.value().hide()
@@ -132,6 +148,9 @@ extend TextEditor:
             return
         if time.now() < self.tip_since + self.tip_delay:
             layout.wake_at(self.tip_since + self.tip_delay)
+            return
+        if self.tip_first == -2:
+            try self.show_hover_tip()
             return
         var length: usize = 0
         for index in 0..<self.diagnostics.values().length:

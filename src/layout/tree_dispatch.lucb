@@ -147,15 +147,20 @@ extend Tree:
             if not capture_cancelled.is_success():
                 return capture_cancelled
             capture_cancelled.release()
-            if destination != self.focus:
+            let selected = self.find(destination)
+            # A box that keeps focus (a completion list) takes the press alone.
+            var keeps = false
+            if let index = selected:
+                keeps = self.entries[index].box.value().keeps_focus
+            if destination != self.focus and not keeps:
                 let focus_cancelled = self.leave(self.focus)
                 if not focus_cancelled.is_success():
                     return focus_cancelled
                 focus_cancelled.release()
             self.capture = destination
-            let selected = self.find(destination)
             if let index = selected:
-                self.set_focus(destination if self.entries[index].box.value().accepts_focus else 0)
+                if not keeps:
+                    self.set_focus(destination if self.entries[index].box.value().accepts_focus else 0)
             else:
                 self.set_focus(0)
         elif event.kind == input.EventKind.pointer_down and event.button >= 2:

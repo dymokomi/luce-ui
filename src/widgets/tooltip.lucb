@@ -1,7 +1,9 @@
 ## The Tooltip: a small popup of wrapped text, with an optional muted note under
-## it. It floats over the window at a point its owner gives, in the owner's
-## points, and takes no input: the pointer passes through it. The parameter
-## panel shows a row's doc in one, the text editor a diagnostic's message.
+## it, or of light markup (`show_marked`: a signature line, then text with code
+## spans; see text.markup). It floats over the window at a point its owner gives,
+## in the owner's points, and takes no input: the pointer passes through it. The
+## parameter panel shows a row's doc in one, the text editor a diagnostic's
+## message or a hover provider's text.
 from luce_gpu import gpu
 import interop
 import ownership
@@ -9,18 +11,24 @@ from luce_std import math
 import layout
 import result
 import text.cells as cell_widths
+import text.markup as markup
 from layout import Widget, Layout, Size, Constraints, Event, Rect
 from painter import Painter
 from font import Font
 
 ## Characters to a line at most; a shorter text makes a narrower tip.
 let widest: usize = 44
+## The same for markup, whose signatures run longer.
+let widest_marked: usize = 72
+## Rows of a marked signature, and of the text under it, at most.
+let marked_rows: usize = 24
 
 pub struct Tooltip: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]
     var body: interop.Owned[str]
     var note: interop.Owned[str]
+    var marked: bool
 
     pub func init(font: interop.Reference[Font]) -> !:
         let box = try layout.make_layout()
@@ -32,6 +40,7 @@ pub struct Tooltip: Widget:
         self.font = font.clone()
         self.body = interop.Owned[str]("")
         self.note = interop.Owned[str]("")
+        self.marked = false
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -48,6 +57,16 @@ pub struct Tooltip: Widget:
     pub func show(body: str, note: str, x: f64, y: f64) -> !:
         try replace(&self.body, body)
         try replace(&self.note, note)
+        self.marked = false
+        try self.box.value().set_popup_point(x, y)
+        self.box.value().set_visible(true)
+
+    ## Show `text` as markup: its first line a signature set in the code color,
+    ## with a rule under it, then the rest with `code spans`; see text.markup.
+    pub func show_marked(text: str, x: f64, y: f64) -> !:
+        try replace(&self.body, text)
+        try replace(&self.note, "")
+        self.marked = true
         try self.box.value().set_popup_point(x, y)
         self.box.value().set_visible(true)
 
@@ -55,6 +74,9 @@ pub struct Tooltip: Widget:
         self.box.value().set_visible(false)
 
     func columns() -> usize:
+        if self.marked:
+            let longest = markup.longest(self.body.value)
+            return longest if longest < widest_marked else widest_marked
         let body = cell_widths.width(self.body.value)
         let fitted = body if body < widest else widest
         let note = cell_widths.width(self.note.value)
@@ -73,6 +95,10 @@ pub struct Tooltip: Widget:
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         let advance = self.font.value().advance()
         let line = self.font.value().line_height()
+        if self.marked:
+            let (signature, rest) = markup.split(self.body.value)
+            return result.success[Size](Size((f64)self.columns() * advance + advance * 2.0,
+                                             markup.height(signature, rest, self.columns(), line, marked_rows) + 8.0))
         return result.success[Size](Size((f64)self.columns() * advance + advance * 2.0, (f64)self.lines() * line + 8.0))
 
     pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
@@ -89,6 +115,11 @@ pub struct Tooltip: Widget:
         try painter.rectangle(Rect(1.0, 1.0, size.width - 2.0, size.height - 2.0), theme.raised)
         let advance = self.font.value().advance()
         let line = self.font.value().line_height()
+        if self.marked:
+            let (signature, rest) = markup.split(self.body.value)
+            try markup.paint(&painter, signature, rest, self.columns(), advance, 4.0, self.font,
+                             theme.foreground, theme.accent, theme.border, marked_rows)
+            return
         var y = math.floor((line - self.font.value().height()) * 0.5) + 4.0
         var at: usize = 0
         while at < self.body.value.length:

@@ -3,4 +3,6 @@ commands.lucb
 events.lucb
 decorations.lucb
 diagnostics.lucb
+completion.lucb
+hover.lucb
 view.lucb

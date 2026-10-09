@@ -40,6 +40,8 @@ pub struct Layout:
     var dialog: bool
     var popup_placement: PopupPlacement
     var popup_point: Point
+    ## Where a point popup's bottom goes when it does not fit below its point.
+    var popup_above: f64?
     var animate_open: bool
     var opening: bool
     var context_menu: bool
@@ -48,6 +50,8 @@ pub struct Layout:
     var accepts_pointer: bool
     var accepts_text: bool
     var accepts_tab: bool
+    ## A press here leaves keyboard focus where it is (`set_keeps_focus`).
+    var keeps_focus: bool
     ## A press to take over at the next arrangement (`claim_press`).
     var claims_press: bool
     var active: bool
@@ -104,6 +108,7 @@ pub struct Layout:
         self.dialog = false
         self.popup_placement = PopupPlacement.below
         self.popup_point = Point()
+        self.popup_above = none
         self.animate_open = false
         self.opening = false
         self.context_menu = false
@@ -112,6 +117,7 @@ pub struct Layout:
         self.accepts_pointer = false
         self.accepts_text = false
         self.accepts_tab = false
+        self.keeps_focus = false
         self.claims_press = false
         self.active = true
         self.focused = false
@@ -150,6 +156,11 @@ pub struct Layout:
         self.modal = modal
         self.invalidate()
 
+    ## A press on this box goes to it but leaves keyboard focus where it is: a
+    ## completion list clicked while its editor keeps typing.
+    pub func set_keeps_focus(keeps: bool):
+        self.keeps_focus = keeps
+
     ## A dialog card: while it is open, Escape and Enter go to its widget (to
     ## cancel or accept) before any shortcut sees them.
     pub func set_dialog(dialog: bool):
@@ -157,11 +168,17 @@ pub struct Layout:
 
     ## A point is local to the popup's parent. Window placement clamps every
     ## edge; centered command surfaces stay independent of surrounding flow.
-    pub func set_popup_point(x: f64, y: f64) -> !:
+    ## With `above`, a popup that does not fit below the window's bottom goes
+    ## above instead, its bottom at `above` (a list under a caret flips over it).
+    pub func set_popup_point(x: f64, y: f64, above: f64? = none) -> !:
         if not math.is_finite(x) or not math.is_finite(y):
             error(result.invalid, "popup coordinates must be finite")
+        if let flip = above:
+            if not math.is_finite(flip):
+                error(result.invalid, "popup coordinates must be finite")
         self.popup_placement = PopupPlacement.point
         self.popup_point = Point(x, y)
+        self.popup_above = above
         self.invalidate()
 
     ## Move a window-centred popup by (`x`, `y`) from the centre: a dialog

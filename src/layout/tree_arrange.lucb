@@ -73,7 +73,7 @@ extend Tree:
             let box = entry.box.value()
             if box.popup and entry.parent >= 0:
                 let anchor = replacement[(usize)entry.parent].box.value().rectangle
-                var placed = popup_rectangle(box.popup_placement, box.popup_point, box.measured, anchor, bounds)
+                var placed = popup_rectangle(box.popup_placement, box.popup_point, box.popup_above, box.measured, anchor, bounds)
                 if box.animate_open and box.visible:
                     if box.opening:
                         # Grow downward from the pinned top: start at half height with the
@@ -211,8 +211,9 @@ func discard_replacement(entries: Entry[], count: usize*, committed: bool*):
         release_entries(entries, *count)
 
 ## Where a popup of `measured` size goes for its `placement`, opened from `anchor`
-## (its parent's box) and kept inside the window `bounds`.
-func popup_rectangle(placement: PopupPlacement, point: Point, measured: Size, anchor: Rect, bounds: Rect) -> Rect:
+## (its parent's box) and kept inside the window `bounds`. A point popup with
+## `above` that does not fit below goes above, its bottom there.
+func popup_rectangle(placement: PopupPlacement, point: Point, above: f64?, measured: Size, anchor: Rect, bounds: Rect) -> Rect:
     let popup_width = math.min(measured.width, bounds.width)
     let popup_height = math.min(measured.height, bounds.height)
     var x = math.clamp(anchor.x, 0.0, bounds.width - popup_width)
@@ -220,7 +221,11 @@ func popup_rectangle(placement: PopupPlacement, point: Point, measured: Size, an
     var y = below if below + popup_height <= bounds.height else math.max(0.0, anchor.y - popup_height)
     if placement == PopupPlacement.point:
         x = math.clamp(anchor.x + point.x, 0.0, bounds.width - popup_width)
-        y = math.clamp(anchor.y + point.y, 0.0, bounds.height - popup_height)
+        y = anchor.y + point.y
+        if let flip = above:
+            if y + popup_height > bounds.height:
+                y = anchor.y + flip - popup_height
+        y = math.clamp(y, 0.0, bounds.height - popup_height)
     elif placement == PopupPlacement.window_top:
         x = (bounds.width - popup_width) * 0.5
         y = math.min(math.min(40.0, bounds.height * 0.1), bounds.height - popup_height)
@@ -229,3 +234,16 @@ func popup_rectangle(placement: PopupPlacement, point: Point, measured: Size, an
         x = math.clamp((bounds.width - popup_width) * 0.5 + point.x, 0.0, math.max(0.0, bounds.width - popup_width))
         y = math.clamp((bounds.height - popup_height) * 0.5 + point.y, 0.0, math.max(0.0, bounds.height - popup_height))
     return Rect(x, y, popup_width, popup_height)
+
+test "a point popup with a flip goes above its point when it does not fit below":
+    let window = Rect(0.0, 0.0, 200.0, 100.0)
+    let editor = Rect(10.0, 10.0, 180.0, 80.0)
+    let size = Size(50.0, 40.0)
+    # Room below: under the point.
+    let below = popup_rectangle(PopupPlacement.point, Point(5.0, 20.0), 4.0, size, editor, window)
+    assert(below.x == 15.0 and below.y == 30.0)
+    # No room below: its bottom at `above`; without a flip, clamped inside.
+    let flipped = popup_rectangle(PopupPlacement.point, Point(5.0, 70.0), 54.0, size, editor, window)
+    assert(flipped.y == 24.0)
+    let clamped = popup_rectangle(PopupPlacement.point, Point(5.0, 70.0), none, size, editor, window)
+    assert(clamped.y == 60.0)

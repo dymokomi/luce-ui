@@ -67,6 +67,7 @@ extend TextEditor:
         return result.success[unit](())
 
     func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        try self.poll_completion()
         try self.refresh_view()
         try self.show_due_tip()
         var painter = try Painter(target)

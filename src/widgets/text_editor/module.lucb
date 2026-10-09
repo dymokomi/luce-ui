@@ -6,14 +6,16 @@
 #
 #   DESCRIPTION:
 #       A multiline code editor with highlighting, color chips, folding, soft wrap,
-#       change bars and diagnostics. The TextEditor's methods are split by concern across the
-#       fragments, each under `extend TextEditor:`. In ORDER:
+#       change bars, diagnostics, completion and hover. The TextEditor's methods are split by
+#       concern across the fragments, each under `extend TextEditor:`. In ORDER:
 #
 #       module.lucb       the struct, construction, closing and the widget type
 #       commands.lucb     the text, selection and edit commands; change notification
 #       events.lucb       keys and pointer gestures turned into edits and selections
 #       decorations.lucb  highlights, color chips, folds, change bars and AI lines
 #       diagnostics.lucb  diagnostic underlines and gutter marks, and their tooltip
+#       completion.lucb   the completion provider, its popup, keys and accepting
+#       hover.lucb        the hover provider's tooltip over a word
 #       view.lucb         layout and drawing: projection, scrolling, wrap, painting
 #
 #==============================================================================================
@@ -41,6 +43,8 @@ from text.diff import LineDiff
 from text.diagnostics import Diagnostic, Diagnostics
 import text.diagnostic_drawing as diagnostic_drawing
 from widgets.tooltip import Tooltip, tooltip_type
+from widgets.completion_popup import CompletionPopup, completion_popup_type, completion_rows
+from text.completions import CompletionList, CompletionTrigger, completion_list_type
 from font import Font, selected_font
 from layout import Widget, Layout, Size, Constraints, Event, Point
 from painter import Painter
@@ -84,12 +88,38 @@ pub struct TextEditor: Widget:
     ## The diagnostic tooltip, a popup child; emptied in close before its release.
     var tip: interop.Reference[Tooltip]?
     ## What the pointer rests on: a visual row (-1 for nothing), the first
-    ## diagnostic it touches there (-1 for a gutter mark), the pointer's x, and since when.
+    ## diagnostic it touches there (-1 for a gutter mark, -2 for a word to hover),
+    ## the pointer's x, and since when.
     var tip_row: i64
     var tip_first: i64
     var tip_x: f64
     var tip_since: u64
     var tip_delay: u64
+    ## The hovered word's start and the scalar under the pointer (-1 for none), and
+    ## whether the hover provider was asked about them already.
+    var tip_word: i64
+    var tip_offset: i64
+    var tip_asked: bool
+    ## The providers; each slot is emptied before its callback is released.
+    var completer: interop.Callback[interop.Reference[CompletionList], unit]?
+    var hover: interop.Callback[i64, str]?
+    ## The list handed to the completion provider and the popup showing it, a
+    ## popup child; both emptied in close before their release.
+    var completions: interop.Reference[CompletionList]?
+    var suggestions: interop.Reference[CompletionPopup]?
+    ## A completion session: whether one is open, whether Escape hid its popup,
+    ## where the replaced word starts, the caret when the provider ran, and the
+    ## version and caret last filtered for.
+    var completing: bool
+    var completion_hidden: bool
+    var completion_start: usize
+    var completion_origin: usize
+    var completion_version: u64
+    var completion_caret: usize
+    ## The request the event being handled makes, made once it is handled.
+    var completion_request: CompletionTrigger?
+    ## Ctrl+Space was pressed: a space typed by the same press is not text.
+    var swallow_space: bool
 
     pub func init(text: str = "", read_only: bool = false, line_numbers: bool = true,
                   font: interop.Reference[Font]? = none, theme: EditorTheme? = none, wrap: bool = false) -> !:
@@ -114,12 +144,18 @@ pub struct TextEditor: Widget:
         errdefer swatch_activated.release()
         let tip = try interop.Reference[Tooltip].adopt(new Tooltip(selected) in memory.heap, tooltip_type, memory.heap)
         errdefer tip.release()
-        let children: interop.Interface[Widget][1] = [tip.as_interface[Widget](tip.value())]
+        let completions = try interop.Reference[CompletionList].adopt(new CompletionList() in memory.heap, completion_list_type, memory.heap)
+        errdefer completions.release()
+        let suggestions = try interop.Reference[CompletionPopup].adopt(new CompletionPopup(completions, selected) in memory.heap, completion_popup_type, memory.heap)
+        errdefer suggestions.release()
+        let children: interop.Interface[Widget][2] = [tip.as_interface[Widget](tip.value()), suggestions.as_interface[Widget](suggestions.value())]
         box.value().set_children(children) catch failure:
             children[0].release()
+            children[1].release()
             error(failure.code, failure.message)
-        # The layout retained its child; this carrier was ours to drop.
+        # The layout retained its children; these carriers were ours to drop.
         children[0].release()
+        children[1].release()
         let highlights = Decorations()
         let swatches = Swatches()
         var folds = Folding()
@@ -163,6 +199,21 @@ pub struct TextEditor: Widget:
         self.tip_x = 0.0
         self.tip_since = 0
         self.tip_delay = tip_wait
+        self.tip_word = -1
+        self.tip_offset = -1
+        self.tip_asked = false
+        self.completer = none
+        self.hover = none
+        self.completions = completions
+        self.suggestions = suggestions
+        self.completing = false
+        self.completion_hidden = false
+        self.completion_start = 0
+        self.completion_origin = 0
+        self.completion_version = 0
+        self.completion_caret = 0
+        self.completion_request = none
+        self.swallow_space = false
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -186,6 +237,22 @@ pub struct TextEditor: Widget:
         self.tip = none
         if let held = tip:
             held.release()
+        let completer = self.completer
+        self.completer = none
+        if let held = completer:
+            held.release()
+        let hover = self.hover
+        self.hover = none
+        if let held = hover:
+            held.release()
+        let suggestions = self.suggestions
+        self.suggestions = none
+        if let held = suggestions:
+            held.release()
+        let completions = self.completions
+        self.completions = none
+        if let held = completions:
+            held.release()
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
@@ -195,6 +262,14 @@ pub struct TextEditor: Widget:
         self.swatch_activated.trace(visit, context)
         if let tip = self.tip:
             tip.trace(visit, context)
+        if let completer = self.completer:
+            completer.trace(visit, context)
+        if let hover = self.hover:
+            hover.trace(visit, context)
+        if let completions = self.completions:
+            completions.trace(visit, context)
+        if let suggestions = self.suggestions:
+            suggestions.trace(visit, context)
 
 ## A diagnostic's tooltip shows after the pointer rests this long on it (nanoseconds), unless set.
 let tip_wait: u64 = 500000000

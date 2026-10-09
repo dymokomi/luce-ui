@@ -1,0 +1,259 @@
+## The text editor's completion popup: the matching items of a CompletionList,
+## one row each (a letter for the kind, the label, the detail muted), at most ten
+## rows at a time, and under them the selected item's detail and doc. It floats
+## under the caret and leaves keyboard focus with the editor, which moves the
+## selection and accepts; a click here selects a row and records it, and the
+## editor takes it at its next draw (`take_chosen`), as a parameter panel polls
+## its menus. The wheel scrolls the rows.
+from luce_gpu import gpu
+from luce_window import input
+import interop
+from luce_std import math
+import ownership
+import layout
+import result
+import text.cells as cell_widths
+import text.markup as markup
+from text.completions import CompletionList, CompletionKind
+from layout import Widget, Layout, Size, Constraints, Event
+from painter import Painter
+from font import Font
+from theme import Theme
+
+## Rows shown at once; more scroll.
+pub let completion_rows: i64 = 10
+## Rows of a selected item's detail, and of its doc, at most.
+let doc_rows: usize = 12
+## The list's width in cells, at least and at most.
+let narrowest: usize = 24
+let widest: usize = 64
+
+pub struct CompletionPopup: Widget:
+    let box: interop.Reference[Layout]
+    let font: interop.Reference[Font]
+    let list: interop.Reference[CompletionList]
+    var selected: i64
+    var first: i64
+    var pressed: i64
+    var picked: i64
+    var wheel: f64
+    var columns: usize
+
+    pub func init(list: interop.Reference[CompletionList], font: interop.Reference[Font]) -> !:
+        let box = try layout.make_layout()
+        box.value().set_popup(true)
+        box.value().set_modal(false)
+        box.value().set_popup_placement(layout.PopupPlacement.point)
+        box.value().set_interactive(true)
+        box.value().set_keeps_focus(true)
+        box.value().set_takes_scroll(true)
+        box.value().set_cursor(input.Cursor.pointer)
+        box.value().set_visible(false)
+        self.box = box
+        self.font = font.clone()
+        self.list = list.clone()
+        self.selected = 0
+        self.first = 0
+        self.pressed = -1
+        self.picked = -1
+        self.wheel = 0.0
+        self.columns = narrowest
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func is_open() -> bool:
+        return self.box.value().is_visible()
+
+    ## Show the list with its top-left at (`x`, `y`) in the editor's points, or
+    ## its bottom at `above` when it does not fit below.
+    pub func show(x: f64, y: f64, above: f64) -> !:
+        let placed = self.box.value().popup_offset()
+        if not self.is_open() or placed.x != x or placed.y != y:
+            try self.box.value().set_popup_point(x, y, above)
+        if not self.is_open():
+            self.box.value().set_visible(true)
+
+    pub func hide():
+        if self.is_open():
+            self.box.value().set_visible(false)
+        self.pressed = -1
+
+    ## Select the first match and size to the matches, after a new filter.
+    pub func reset():
+        self.selected = 0
+        self.first = 0
+        self.pressed = -1
+        self.wheel = 0.0
+        let list = self.list.value()
+        var widest_row: usize = 0
+        for index in 0..<list.matches():
+            let item = list.matching(index)
+            let detail = list.detail(item)
+            let cells = cell_widths.width(list.label(item)) + (cell_widths.width(detail) + 2 if detail.length > 0 else 0)
+            widest_row = widest_row if widest_row > cells else cells
+        self.columns = (usize)math.clamp((f64)(widest_row + 3), (f64)narrowest, (f64)widest)
+        self.box.value().invalidate()
+
+    ## The selected match's place, best first.
+    pub func selection() -> i64:
+        return self.selected
+
+    ## Move the selection by `rows`: one row wraps around the ends, a page stops at them.
+    pub func move(rows: i64):
+        let count = (i64)self.list.value().matches()
+        if count == 0:
+            return
+        if rows == 1 or rows == -1:
+            self.selected = (self.selected + rows + count) % count
+        else:
+            self.selected = (i64)math.clamp((f64)(self.selected + rows), 0.0, (f64)(count - 1))
+        if self.selected < self.first:
+            self.first = self.selected
+        elif self.selected >= self.first + completion_rows:
+            self.first = self.selected - completion_rows + 1
+        self.box.value().invalidate()
+
+    ## The place of the row last clicked, forgetting it; -1 for none.
+    pub func take_chosen() -> i64:
+        let picked = self.picked
+        self.picked = -1
+        return picked
+
+    ## Where a label starts, from the popup's left: the editor lines labels up
+    ## with the word being completed.
+    pub func label_x() -> f64:
+        return self.font.value().advance() * 3.0
+
+    func row_height() -> f64:
+        return self.box.value().theme().row_height(self.font)
+
+    func shown_rows() -> i64:
+        let count = (i64)self.list.value().matches()
+        return count if count < completion_rows else completion_rows
+
+    func list_height() -> f64:
+        return (f64)self.shown_rows() * self.row_height() + 2.0
+
+    func doc_height() -> f64:
+        let list = self.list.value()
+        if self.selected < 0 or self.selected >= (i64)list.matches():
+            return 0.0
+        let item = list.matching((usize)self.selected)
+        if list.detail(item).length == 0 and list.doc(item).length == 0:
+            return 0.0
+        let pad = self.font.value().advance() * 0.5
+        return markup.height(list.detail(item), list.doc(item), self.columns, self.font.value().line_height(), doc_rows) + pad * 2.0
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let width = (f64)(self.columns + 2) * self.font.value().advance()
+        return result.success[Size](Size(width, self.list_height() + self.doc_height()))
+
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        var painter = try Painter(target)
+        defer painter.close()
+        let size = try target.get().size()
+        let theme = self.box.value().theme()
+        let list = self.list.value()
+        let advance = self.font.value().advance()
+        let height = self.row_height()
+        try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.border)
+        try painter.rectangle(gpu.Rect(1.0, 1.0, size.width - 2.0, size.height - 2.0), theme.menu)
+        var row: i64 = 0
+        while row < self.shown_rows() and self.first + row < (i64)list.matches():
+            let index = self.first + row
+            let item = list.matching((usize)index)
+            let y = 1.0 + (f64)row * height
+            if index == self.selected:
+                try painter.rectangle(gpu.Rect(1.0, y, size.width - 2.0, height), theme.menu_selection)
+            let text_y = y + math.floor((height - self.font.value().height()) * 0.5)
+            let (letter, ink) = badge(list.kind(item), theme)
+            try painter.text(letter, advance, text_y, ink, self.font)
+            let label = cell_widths.prefix(list.label(item), self.columns - 1)
+            try painter.text(label, self.label_x(), text_y, theme.foreground, self.font)
+            let used = cell_widths.width(label) + 2
+            let detail = list.detail(item)
+            if detail.length > 0 and used + 1 < self.columns:
+                let fitted = cell_widths.prefix(detail, self.columns - 1 - used)
+                try painter.text(fitted, self.label_x() + (f64)used * advance, text_y, theme.muted, self.font)
+            row += 1
+        let doc = self.doc_height()
+        if doc > 0.0:
+            let item = list.matching((usize)self.selected)
+            let top = self.list_height() - 1.0
+            let pad = advance * 0.5
+            try painter.rectangle(gpu.Rect(1.0, top, size.width - 2.0, 1.0), theme.border)
+            try markup.paint(&painter, list.detail(item), list.doc(item), self.columns, advance, top + pad, self.font,
+                             theme.foreground, theme.accent, theme.border, doc_rows)
+
+    pub func event(event: Event) -> interop.Outcome[unit]:
+        if event.cancelled:
+            self.pressed = -1
+        elif event.kind == input.EventKind.pointer_down and event.button == 0:
+            let index = self.index_at(event.y)
+            if index >= 0:
+                self.selected = index
+                self.pressed = index
+                self.box.value().invalidate()
+        elif event.kind == input.EventKind.pointer_up and event.button == 0:
+            let index = self.index_at(event.y)
+            if index >= 0 and index == self.pressed and event.inside:
+                self.picked = index
+                self.box.value().invalidate()
+            self.pressed = -1
+        elif event.kind == input.EventKind.scroll:
+            self.scroll(event)
+        return result.success[unit](())
+
+    ## The match on the row at `y`, or -1 off the rows.
+    func index_at(y: f64) -> i64:
+        if y < 1.0:
+            return -1
+        let row = (i64)((y - 1.0) / self.row_height())
+        let index = self.first + row
+        return index if row < self.shown_rows() and index < (i64)self.list.value().matches() else -1
+
+    ## The wheel scrolls the rows, three to a notch (a trackpad's points by the row).
+    func scroll(event: Event):
+        let height = self.row_height()
+        self.wheel += event.scroll_y if event.scroll_unit == input.ScrollUnit.points else event.scroll_y * 3.0 * height
+        let rows = (i64)(self.wheel / height)
+        if rows == 0:
+            return
+        self.wheel -= (f64)rows * height
+        let last = math.max(0.0, (f64)((i64)self.list.value().matches() - completion_rows))
+        self.first = (i64)math.clamp((f64)(self.first - rows), 0.0, last)
+        self.box.value().invalidate()
+
+    pub func close():
+        self.list.release()
+        self.font.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.box.trace(visit, context)
+        self.font.trace(visit, context)
+        self.list.trace(visit, context)
+
+pub let completion_popup_type: interop.Type[CompletionPopup] = interop.Type[CompletionPopup]("Completion popup", CompletionPopup.close, CompletionPopup.trace, closeable = true, main_thread = true)
+
+## The letter a kind shows before its label, and its color.
+func badge(kind: CompletionKind, theme: Theme) -> (str, gpu.Color):
+    if kind == CompletionKind.function:
+        return ("f", theme.accent)
+    if kind == CompletionKind.method:
+        return ("m", theme.accent)
+    if kind == CompletionKind.field:
+        return ("p", theme.vcs_added)
+    if kind == CompletionKind.variable:
+        return ("v", theme.vcs_added)
+    if kind == CompletionKind.datatype:
+        return ("T", theme.vcs_modified)
+    if kind == CompletionKind.module:
+        return ("M", theme.foreground)
+    return ("k", theme.muted)

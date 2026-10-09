@@ -25,6 +25,7 @@ from scene_views import scene_views
 from parameters import parameters
 from ramps import ramps
 from diagnostics import diagnostics
+from completion import completion, hover_text
 from appearance import appearance_follows
 
 class Custom: Widget:
@@ -177,6 +178,8 @@ pub func main(arguments: list[str]) -> int!:
     frame.close()
     text_views()
     diagnostics()
+    completion()
+    hover_text()
     wide_text()
     panes()
     scene_views()

@@ -1,0 +1,67 @@
+#==============================================================================================
+#
+#   widgets/text_editor/hover - The hover provider's tooltip over a word
+#
+#==============================================================================================
+
+extend TextEditor:
+    ## Ask `provider` what to show when the pointer rests on a word, or with none
+    ## stop asking. It is called with the scalar offset under the pointer once the
+    ## tooltip delay (`set_tip_delay`) has passed, and answers markup (an empty text
+    ## shows nothing); see TEXT-EDITOR.md "Hover". A diagnostic there wins.
+    pub func set_hover_provider(provider: interop.Callback[i64, str]?):
+        var replacement: interop.Callback[i64, str]? = none
+        if let given = provider:
+            replacement = given.clone()
+        # Replace, then release: a release can run the cycle collector, which traces this.
+        let previous = self.hover
+        self.hover = replacement
+        self.forget_tip()
+        if let old = previous:
+            old.release()
+
+    ## Stop asking for hover text; the same as `set_hover_provider(none)`.
+    pub func clear_hover_provider():
+        self.set_hover_provider(none)
+
+    ## The visual row, the hovered word's start and the scalar under (`x`, `y`)
+    ## when a hover provider is set and the pointer is on an identifier character;
+    ## (-1, -1, -1) otherwise.
+    func word_at(x: f64, y: f64) -> (i64, i64, i64):
+        if self.hover == none or x < self.gutter_width():
+            return (-1, -1, -1)
+        let top = y - drawing.vertical_padding(self.font) + self.scroll_y
+        if top < 0.0:
+            return (-1, -1, -1)
+        let row = (usize)(top / self.font.value().line_height())
+        if row >= self.projection.visible_count():
+            return (-1, -1, -1)
+        let segment = self.projection.row(row)
+        let cells = (x - self.gutter_width() - self.font.value().advance() + self.scroll_x) / self.font.value().advance()
+        if cells < 0.0:
+            return (-1, -1, -1)
+        let offset = editing.at_column(&self.document, segment.physical, segment.column + (usize)cells, self.active_swatches())
+        if offset < segment.start or offset >= segment.end or not editing.word_character(self.document.scalar(offset)):
+            return (-1, -1, -1)
+        return ((i64)row, (i64)self.word_start(offset), (i64)offset)
+
+    ## Ask the hover provider about the scalar the pointer rests on, once, and
+    ## show its markup under the row.
+    func show_hover_tip() -> !:
+        let tip = self.tip else return
+        let provider = self.hover else return
+        if self.tip_asked or self.tip_offset < 0:
+            return
+        self.tip_asked = true
+        # The call keeps its own reference: the provider may replace itself.
+        let callback = provider.clone()
+        defer callback.release()
+        let outcome = callback.invoke(self.tip_offset)
+        defer outcome.release()
+        let text = outcome.get() catch failure:
+            error(failure.code, failure.message)
+        if text.length == 0 or self.tip_row < 0:
+            return
+        let line = self.font.value().line_height()
+        let y = (f64)(self.tip_row + 1) * line - self.scroll_y + drawing.vertical_padding(self.font) + 2.0
+        try tip.value().show_marked(text, math.max(0.0, self.tip_x), y)

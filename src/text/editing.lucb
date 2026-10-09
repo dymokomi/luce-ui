@@ -207,7 +207,9 @@ pub func normalize_lines(text: str) -> interop.Owned[str]!:
 func whitespace(scalar: u32) -> bool:
     return scalar == 32 or scalar == 9 or scalar == 10 or scalar == 13
 
-func word_character(scalar: u32) -> bool:
+## Whether `scalar` belongs to a word: ASCII letters and digits, `_`, and any
+## non-ASCII scalar. Completion and hover use the same words.
+pub func word_character(scalar: u32) -> bool:
     return ((scalar >= 65 and scalar <= 90) or (scalar >= 97 and scalar <= 122) or (scalar >= 48 and scalar <= 57) or scalar == 95 or scalar >= 128)
 
 test "indentation and deletion restore selections on undo":

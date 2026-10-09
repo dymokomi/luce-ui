@@ -1,0 +1,239 @@
+#==============================================================================================
+#
+#   widgets/text_editor/completion - The completion provider, its popup, keys and accepting
+#
+#==============================================================================================
+#
+#   DESCRIPTION:
+#       A session starts when the provider is asked: on a `.`, on the first identifier
+#       character of a word, or on Ctrl+Space. The provider fills the CompletionList
+#       once; while the caret stays in the word, typing and deleting only filter it
+#       again. The provider is asked once at most per key or typed character, after
+#       `on_change` has heard the edit. The session ends when the caret leaves the
+#       word, on a press, on focus loss or when an item is accepted.
+#
+#==============================================================================================
+
+extend TextEditor:
+    ## Ask `provider` for completions, or with none stop asking. It is called with the
+    ## editor's CompletionList, during which it reads `caret()`, `start()`,
+    ## `trigger()` and the text and `add`s items; see TEXT-EDITOR.md "Completion".
+    pub func set_completion_provider(provider: interop.Callback[interop.Reference[CompletionList], unit]?):
+        self.replace_completer(provider)
+
+    ## Stop asking for completions; the same as `set_completion_provider(none)`.
+    pub func clear_completion_provider():
+        self.replace_completer(none)
+
+    ## Ask the provider at the caret now, as Ctrl+Space does.
+    pub func complete() -> !:
+        try self.request_completion(CompletionTrigger.invoked)
+
+    ## Close the completion popup and end its session.
+    pub func close_completion():
+        self.end_completion()
+
+    ## Whether the completion popup shows.
+    pub func completion_shown() -> bool:
+        let popup = self.suggestions else return false
+        return popup.value().is_open()
+
+    ## How many items match the word typed so far, shown or not.
+    pub func completion_count() -> i64:
+        let list = self.completions else return 0
+        return (i64)list.value().matches() if self.completing else 0
+
+    ## The label of match `index`, best first.
+    pub func completion_label(index: i64) -> interop.Owned[str]!:
+        let list = self.completions else error(result.invalid, "the editor is closed")
+        if index < 0 or index >= self.completion_count():
+            error(result.invalid, "no completion has that index")
+        return try interop.copy_text(list.value().label(list.value().matching((usize)index)))
+
+    ## The selected match's place, best first; -1 when none shows.
+    pub func completion_selection() -> i64:
+        let popup = self.suggestions else return -1
+        return popup.value().selection() if popup.value().is_open() else -1
+
+    func replace_completer(provider: interop.Callback[interop.Reference[CompletionList], unit]?):
+        var replacement: interop.Callback[interop.Reference[CompletionList], unit]? = none
+        if let given = provider:
+            replacement = given.clone()
+        # Replace, then release: a release can run the cycle collector, which traces this.
+        let previous = self.completer
+        self.completer = replacement
+        if let old = previous:
+            old.release()
+        if replacement == none:
+            self.end_completion()
+
+    ## Keys for completion, before the editor's own: Ctrl+Space asks; while the
+    ## popup shows, Up, Down, Page Up and Page Down move its selection, Enter and
+    ## Tab accept and Escape hides it. Answers whether the key was taken.
+    func completion_key(event: Event) -> bool!:
+        if event.key == input.Key.space and event.control and not event.alt and not event.meta:
+            if self.read_only or self.completer == none:
+                return false
+            self.completion_request = CompletionTrigger.invoked
+            self.swallow_space = true
+            return true
+        self.swallow_space = false
+        if not self.completion_shown() or event.shift or event.control or event.alt or event.meta:
+            return false
+        let popup = self.suggestions else return false
+        if event.key == input.Key.up:
+            popup.value().move(-1)
+        elif event.key == input.Key.down:
+            popup.value().move(1)
+        elif event.key == input.Key.page_up:
+            popup.value().move(-completion_rows)
+        elif event.key == input.Key.page_down:
+            popup.value().move(completion_rows)
+        elif event.key == input.Key.enter or event.key == input.Key.tab:
+            try self.accept_completion(popup.value().selection())
+        elif event.key == input.Key.escape:
+            self.completion_hidden = true
+            popup.value().hide()
+        else:
+            return false
+        return true
+
+    ## After `scalar` was typed: a `.` asks again, the first identifier character
+    ## of a word asks (not a digit, which starts a number), and anything else ends
+    ## the session. Further identifier characters only filter.
+    func completion_typed(scalar: u32):
+        if self.completer == none or self.read_only:
+            return
+        if scalar == (u32)'.':
+            self.completion_request = CompletionTrigger.dot
+        elif editing.word_character(scalar):
+            let caret = self.document.caret()
+            let word = self.word_start(caret)
+            let digit = self.document.scalar(word) >= (u32)'0' and self.document.scalar(word) <= (u32)'9'
+            if not self.completing and not digit:
+                self.completion_request = CompletionTrigger.typed
+        else:
+            self.end_completion()
+
+    ## Make the request the handled event left, or follow the caret: called once
+    ## per event, after `on_change`.
+    func follow_completion() -> !:
+        let request = self.completion_request
+        self.completion_request = none
+        if let trigger = request:
+            try self.request_completion(trigger)
+        else:
+            try self.sync_completion()
+
+    ## The start of the identifier run before `caret`.
+    func word_start(caret: usize) -> usize:
+        var start = caret
+        while start > 0 and editing.word_character(self.document.scalar(start - 1)):
+            start -= 1
+        return start
+
+    ## Call the provider at the caret and show what it adds, filtered by the word.
+    func request_completion(trigger: CompletionTrigger) -> !:
+        let provider = self.completer else return
+        let list = self.completions else return
+        if self.read_only or self.document.first() != self.document.last():
+            self.end_completion()
+            return
+        let caret = self.document.caret()
+        list.value().begin(&self.document, caret, self.word_start(caret), trigger)
+        # The call keeps its own reference: the provider may replace itself.
+        let callback = provider.clone()
+        defer callback.release()
+        let outcome = callback.invoke(list)
+        defer outcome.release()
+        list.value().finish()
+        outcome.get() catch failure:
+            self.end_completion()
+            error(failure.code, failure.message)
+        self.completing = true
+        self.completion_hidden = false
+        self.completion_start = (usize)list.value().start()
+        self.completion_origin = caret
+        try self.sync_completion(true)
+
+    ## Keep the session while the caret stays in its word, filtering again when
+    ## the word changed (or when `force`d); end it otherwise.
+    func sync_completion(force: bool = false) -> !:
+        if not self.completing:
+            return
+        let caret = self.document.caret()
+        let start = self.completion_start
+        if self.document.first() != self.document.last() or caret < start or caret - start > 256 or caret > self.document.length():
+            self.end_completion()
+            return
+        let typed = self.completion_origin if self.completion_origin < caret else caret
+        for index in start..<caret:
+            let scalar = self.document.scalar(index)
+            if scalar == (u32)'\n' or (index >= typed and not editing.word_character(scalar)):
+                self.end_completion()
+                return
+        if force or self.completion_version != self.document.version() or self.completion_caret != caret:
+            let list = self.completions else return
+            let word = try self.document.text(start, caret)
+            defer word.release()
+            list.value().filter(word.value)
+            if let popup = self.suggestions:
+                popup.value().reset()
+            self.completion_version = self.document.version()
+            self.completion_caret = caret
+        try self.place_completion()
+
+    ## Show the popup when the session has matches and the editor has focus, its
+    ## labels under the word, or above the caret's row when there is no room below.
+    func place_completion() -> !:
+        let popup = self.suggestions else return
+        let list = self.completions else return
+        if not self.completing or self.completion_hidden or list.value().matches() == 0 or not self.box.value().is_focused():
+            popup.value().hide()
+            return
+        try self.refresh_view()
+        let advance = self.font.value().advance()
+        let line = self.font.value().line_height()
+        let start = self.completion_start
+        let segment = self.projection.row(self.projection.visual_row(start))
+        let column = editing.column(&self.document, start, self.active_swatches())
+        let shift = (f64)(column - segment.column) if column >= segment.column else 0.0
+        let x = self.gutter_width() + advance - self.scroll_x + shift * advance - popup.value().label_x()
+        let top = (f64)self.projection.visual_row(self.document.caret()) * line - self.scroll_y + drawing.vertical_padding(self.font)
+        try popup.value().show(math.max(0.0, x), top + line, top)
+
+    ## Replace the word with match `index`'s label, as one undoable edit, and end the session.
+    func accept_completion(index: i64) -> !:
+        let list = self.completions else return
+        if not self.completing or index < 0 or index >= (i64)list.value().matches():
+            return
+        let label = list.value().label(list.value().matching((usize)index))
+        let caret = self.document.caret()
+        let start = self.completion_start
+        self.end_completion()
+        if start <= caret:
+            try self.document.replace(start, caret, label)
+
+    ## Each frame: accept a clicked row, follow edits made by code, and close
+    ## when focus has gone.
+    func poll_completion() -> !:
+        let popup = self.suggestions else return
+        let chosen = popup.value().take_chosen()
+        if chosen >= 0 and self.completing:
+            let before = self.document.version()
+            try self.accept_completion(chosen)
+            if self.document.version() != before:
+                let changed = self.notify_changed()
+                defer changed.release()
+                changed.get() catch failure:
+                    error(failure.code, failure.message)
+        if self.completing and not self.box.value().is_focused():
+            self.end_completion()
+        try self.sync_completion()
+
+    func end_completion():
+        self.completing = false
+        self.completion_hidden = false
+        self.completion_request = none
+        if let popup = self.suggestions:
+            popup.value().hide()

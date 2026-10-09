@@ -1,10 +1,11 @@
 ## Wide text on real pixels: in "田a" the ideograph takes two cells, so selecting
 ## the 'a' paints the third cell of the line, not the second. Sampled below the
 ## glyphs, where only the selection and background show. A diagnostic's gutter
-## mark is checked the same way.
+## mark and the completion popup's rows are checked the same way.
 from luce_gpu import gpu
 import interop
 import memory
+import ownership
 from luce_ui import ui
 from luce_window import window
 import native
@@ -63,3 +64,71 @@ pub func diagnostic_marks(host: window.Window, surface: gpu.Surface) -> !:
     let line = font.value().line_height()
     style_pixels.pixel(scale, advance * 0.5, line * 0.5, 255, 0, 0)
     style_pixels.pixel(scale, advance * 0.5, line * 1.5, 255, 255, 255)
+
+## The completion popup: asked at the caret, it draws under the line, the selected
+## first row in the menu selection color and the next in the menu color. Sampled
+## right of the labels, where only row backgrounds show.
+pub func completion_popup(host: window.Window, surface: gpu.Surface) -> !:
+    try host.resize(205, 120)
+    let font = try interop.Reference[ui.Font].adopt(new ui.Font() in memory.heap, ui.font_type, memory.heap)
+    defer font.release()
+    let white = gpu.Color(1.0, 1.0, 1.0)
+    let theme = ui.EditorTheme(background = white, foreground = gpu.Color(), gutter = white, current_line = white)
+    let editor = try interop.Reference[TextEditor].adopt(new TextEditor("s.", line_numbers = false, font = font, theme = theme) in memory.heap, ui.text_editor_type, memory.heap)
+    defer editor.release()
+    let names = try interop.Reference[Names].adopt(new Names() in memory.heap, names_type, memory.heap)
+    defer names.release()
+    let provider = try interop.Callback[interop.Reference[ui.CompletionList], unit].bind_mutating(names, Names.provide)
+    defer provider.release()
+    editor.value().set_completion_provider(provider)
+    let root = editor.as_interface[Widget](editor.value())
+    defer root.release()
+    let colors = ui.Theme(background = white, menu = gpu.Color(0.0, 0.0, 1.0), menu_selection = gpu.Color(0.0, 1.0, 0.0), border = gpu.Color(),
+                         shadow_opacity = 0.0)
+    let app = try interop.Reference[Application].adopt(new Application(root, theme = colors) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    let editor_box = editor.value().layout()
+    defer editor_box.release()
+    try app.value().focus(editor_box)
+    let scale = (try host.size()).scale
+    # The first frame applies focus; the popup shows only in a focused editor.
+    try style_pixels.render(app, host, surface)
+    try editor.value().set_selection(2, 2)
+    try editor.value().complete()
+    assert(names.value().calls == 1 and editor.value().completion_shown())
+    native.begin("UI pixel contracts")
+    defer native.end()
+    try style_pixels.render(app, host, surface)
+    let child = try editor_box.value().child(1)
+    defer child.release()
+    try child.enter()
+    let popup_box = child.value().layout()
+    child.leave()
+    defer popup_box.release()
+    let popup = popup_box.value().bounds()
+    let row = colors.row_height(font)
+    let x = font.value().advance() * 24.0
+    assert(popup.y >= font.value().line_height() and x < popup.x + popup.width)
+    style_pixels.pixel(scale, x, popup.y + 1.0 + row * 0.5, 0, 255, 0)
+    style_pixels.pixel(scale, x, popup.y + 1.0 + row * 1.5, 0, 0, 255)
+    # Below the popup (drawn without a shadow here), the editor shows again.
+    style_pixels.pixel(scale, x, popup.y + popup.height + 4.0, 255, 255, 255)
+
+## A completion provider in Base: two names.
+struct Names:
+    var calls: i64
+
+    func provide(items: interop.Reference[ui.CompletionList]) -> interop.Outcome[unit]:
+        self.calls += 1
+        items.value().add("ab", ui.CompletionKind.variable) catch failure: trap(failure.message)
+        items.value().add("cd", ui.CompletionKind.function) catch failure: trap(failure.message)
+        return interop.Outcome[unit].success(interop.Owned[unit](()))
+
+    func close():
+        self.calls = 0
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        _ = visit
+        _ = context
+
+let names_type: interop.Type[Names] = interop.Type[Names]("completion test names", Names.close, Names.trace)

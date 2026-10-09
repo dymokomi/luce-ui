@@ -156,6 +156,13 @@ import text.diagnostics
 ## columns, columns in Unicode scalars, `column_start..<column_end`.
 pub type Diagnostic = diagnostics.Diagnostic
 pub type Severity = diagnostics.Severity
+import text.completions
+## What `TextEditor.set_completion_provider`'s provider fills: it reads the caret,
+## the word's start, the trigger and the text, and `add`s items.
+pub type CompletionList = completions.CompletionList
+pub type CompletionKind = completions.CompletionKind
+pub type CompletionTrigger = completions.CompletionTrigger
+pub let completion_list_type = completions.completion_list_type
 
 import widgets.list_view
 pub type ListView = list_view.ListView

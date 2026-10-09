@@ -1,0 +1,336 @@
+## The completion list a text editor hands its completion provider. During the
+## provider's call it answers where the caret is, what triggered the request and
+## the document's text, and takes items with `add`; after the call it refuses
+## both, so a provider that keeps it cannot change a shown list. The editor then
+## filters the items by the word typed so far.
+##
+## A builder rather than a returned list: a Luce callback cannot hand Base a list
+## of structs, so the provider adds items one call each. Items are copied into
+## one byte block, so the list holds no references and traces nothing.
+import interop
+import memory
+import ownership
+import result
+from text.document import Document
+
+## What a completion item is, shown as a letter before its label.
+pub enum CompletionKind as u8:
+    function = 0
+    method = 1
+    field = 2
+    variable = 3
+    datatype = 4
+    module = 5
+    keyword = 6
+
+## Why the editor asked: an identifier character `typed` (the first of a word),
+## a `dot` typed, or completion `invoked` with Ctrl+Space or `complete()`.
+pub enum CompletionTrigger as u8:
+    typed = 0
+    dot = 1
+    invoked = 2
+
+## One item: its kind and where its label, detail and doc sit in the byte block.
+struct Entry:
+    let kind: CompletionKind
+    let label: usize
+    let label_length: usize
+    let detail_length: usize
+    let doc_length: usize
+
+let most_items: usize = 16384
+let most_bytes: usize = 16777216
+
+pub struct CompletionList:
+    var entries: Entry[]
+    var entry_count: usize
+    var texts: u8[]
+    var used: usize
+    ## The items matching the typed word, best first, as indices into entries.
+    var order: u32[]
+    var matched: usize
+    var ranks: u8[]
+    var position: i64
+    var word: i64
+    var replaced: i64
+    var reason: CompletionTrigger
+    ## The editor's document while the provider runs, none otherwise.
+    var source: Document*?
+
+    pub func init():
+        var entries: Entry[]
+        var texts: u8[]
+        var order: u32[]
+        var ranks: u8[]
+        self.entries = entries
+        self.entry_count = 0
+        self.texts = texts
+        self.used = 0
+        self.order = order
+        self.matched = 0
+        self.ranks = ranks
+        self.position = 0
+        self.word = 0
+        self.replaced = 0
+        self.reason = CompletionTrigger.invoked
+        self.source = none
+
+    # -- What the provider reads and adds during its call.
+
+    ## The caret's scalar offset.
+    pub func caret() -> i64:
+        return self.position
+
+    ## Where the word being completed starts, a scalar offset: the run of
+    ## identifier characters before the caret unless `set_start` moved it.
+    ## Accepting an item replaces `start()..<caret()` with its label.
+    pub func start() -> i64:
+        return self.replaced
+
+    pub func trigger() -> CompletionTrigger:
+        return self.reason
+
+    ## The document's whole text; only during the provider's call.
+    pub func text() -> interop.Owned[str]!:
+        let document = self.source else error(result.invalid, "a completion list reads text only during its provider's call")
+        return try document.text()
+
+    ## The text of scalar offsets `start..<end`; only during the provider's call.
+    pub func text_range(start: i64, end: i64) -> interop.Owned[str]!:
+        let document = self.source else error(result.invalid, "a completion list reads text only during its provider's call")
+        if start < 0 or end < start or end > (i64)document.length():
+            error(result.invalid, "text interval is outside the document")
+        return try document.text((usize)start, (usize)end)
+
+    ## Replace from scalar offset `offset` instead of the word's start: on the
+    ## caret's line, at or before the caret. Only during the provider's call.
+    pub func set_start(offset: i64) -> !:
+        let document = self.source else error(result.invalid, "a completion list changes only during its provider's call")
+        if offset < 0 or offset > self.position or (usize)offset < document.line_start((usize)self.position):
+            error(result.invalid, "a completion starts on the caret's line, at or before the caret")
+        self.replaced = offset
+
+    ## Add an item: its `label` (what accepting inserts; one line, not empty),
+    ## `kind`, `detail` (a signature, shown muted after the label) and `doc`
+    ## (shown under the list; see the markup in TEXT-EDITOR.md). Only during the
+    ## provider's call; at most 16384 items and 16 MiB of text.
+    pub func add(label: str, kind: CompletionKind, detail: str = "", doc: str = "") -> !:
+        if self.source == none:
+            error(result.invalid, "a completion list takes items only during its provider's call")
+        if label.length == 0:
+            error(result.invalid, "a completion label is not empty")
+        for byte in label.bytes:
+            if byte == '\n' or byte == '\r':
+                error(result.invalid, "a completion label is one line")
+        if self.entry_count == most_items:
+            error(result.limit, "a completion list holds at most 16384 items")
+        let length = label.length + detail.length + doc.length
+        if self.used + length > most_bytes:
+            error(result.limit, "a completion list holds at most 16 MiB of text")
+        try self.reserve(self.entry_count + 1, self.used + length)
+        let at = self.used
+        self.copy(label)
+        self.copy(detail)
+        self.copy(doc)
+        self.entries[self.entry_count] = Entry(kind, at, label.length, detail.length, doc.length)
+        self.entry_count += 1
+
+    ## The items added so far.
+    pub func count() -> i64:
+        return (i64)self.entry_count
+
+    # -- What the editor uses.
+
+    ## Start a provider call: forget the items, and answer from `document`.
+    pub func begin(document: Document*, caret: usize, word: usize, trigger: CompletionTrigger):
+        self.entry_count = 0
+        self.used = 0
+        self.matched = 0
+        self.position = (i64)caret
+        self.word = (i64)word
+        self.replaced = (i64)word
+        self.reason = trigger
+        self.source = document
+
+    ## End the provider call: the list no longer reads or takes anything.
+    pub func finish():
+        self.source = none
+
+    ## Forget the items.
+    pub func clear():
+        self.entry_count = 0
+        self.used = 0
+        self.matched = 0
+
+    pub func label(item: usize) -> str:
+        let entry = self.entries[item]
+        return (str)self.texts[entry.label..<entry.label + entry.label_length]
+
+    pub func detail(item: usize) -> str:
+        let entry = self.entries[item]
+        let at = entry.label + entry.label_length
+        return (str)self.texts[at..<at + entry.detail_length]
+
+    pub func doc(item: usize) -> str:
+        let entry = self.entries[item]
+        let at = entry.label + entry.label_length + entry.detail_length
+        return (str)self.texts[at..<at + entry.doc_length]
+
+    pub func kind(item: usize) -> CompletionKind:
+        return self.entries[item].kind
+
+    ## The items matching the last `filter`.
+    pub func matches() -> usize:
+        return self.matched
+
+    ## The item at place `index` among the matches, best first.
+    pub func matching(index: usize) -> usize:
+        return (usize)self.order[index]
+
+    ## Keep the items matching `word`, best first: labels starting with it, then
+    ## labels holding its characters in order, ignoring ASCII case; within each,
+    ## those matching in case first, then in the provider's order. An empty
+    ## word keeps every item in the provider's order.
+    pub func filter(word: str):
+        var counts: usize[4] = [0, 0, 0, 0]
+        for item in 0..<self.entry_count:
+            let place = rank(self.label(item), word)
+            self.ranks[item] = place
+            if place < 4:
+                counts[(usize)place] += 1
+        var starts: usize[4] = [0, counts[0], counts[0] + counts[1], counts[0] + counts[1] + counts[2]]
+        for item in 0..<self.entry_count:
+            let place = (usize)self.ranks[item]
+            if place < 4:
+                self.order[starts[place]] = (u32)item
+                starts[place] += 1
+        self.matched = counts[0] + counts[1] + counts[2] + counts[3]
+
+    func copy(text: str):
+        for index in 0..<text.length:
+            self.texts[self.used + index] = text.bytes[index]
+        self.used += text.length
+
+    ## Room for `items` entries and `bytes` of text, doubling as needed.
+    func reserve(items: usize, bytes: usize) -> !:
+        if items > self.entries.length:
+            var capacity = self.entries.length * 2 if self.entries.length > 0 else 64
+            capacity = capacity if capacity < most_items else most_items
+            let entries = try new Entry[capacity] --- in memory.heap
+            errdefer free(entries) in memory.heap
+            let order = try new u32[capacity] --- in memory.heap
+            errdefer free(order) in memory.heap
+            let ranks = try new u8[capacity] --- in memory.heap
+            for index in 0..<self.entry_count:
+                entries[index] = self.entries[index]
+            self.release_items()
+            self.entries = entries
+            self.order = order
+            self.ranks = ranks
+            self.matched = 0
+        if bytes > self.texts.length:
+            var capacity = self.texts.length * 2 if self.texts.length > 0 else 4096
+            while capacity < bytes:
+                capacity *= 2
+            let texts = try new u8[capacity] --- in memory.heap
+            for index in 0..<self.used:
+                texts[index] = self.texts[index]
+            if self.texts.length > 0:
+                free(self.texts) in memory.heap
+            self.texts = texts
+
+    func release_items():
+        if self.entries.length > 0:
+            free(self.entries) in memory.heap
+            free(self.order) in memory.heap
+            free(self.ranks) in memory.heap
+
+    pub func close():
+        self.release_items()
+        if self.texts.length > 0:
+            free(self.texts) in memory.heap
+        var entries: Entry[]
+        var texts: u8[]
+        var order: u32[]
+        var ranks: u8[]
+        self.entries = entries
+        self.texts = texts
+        self.order = order
+        self.ranks = ranks
+        self.entry_count = 0
+        self.used = 0
+        self.matched = 0
+        self.source = none
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        _ = visit
+        _ = context
+
+pub let completion_list_type: interop.Type[CompletionList] = interop.Type[CompletionList]("Completion list", CompletionList.close, CompletionList.trace, closeable = true, main_thread = true)
+
+## How well `label` matches `word`: 0 a prefix in case, 1 a prefix ignoring
+## ASCII case, 2 a subsequence in case, 3 one ignoring case, 4 no match.
+func rank(label: str, word: str) -> u8:
+    if word.length > label.length:
+        return 4
+    var exact = true
+    var folded = true
+    for index in 0..<word.length:
+        if label.bytes[index] != word.bytes[index]:
+            exact = false
+            if lower(label.bytes[index]) != lower(word.bytes[index]):
+                folded = false
+                break
+    if exact:
+        return 0
+    if folded:
+        return 1
+    if subsequence(label, word, false):
+        return 2
+    if subsequence(label, word, true):
+        return 3
+    return 4
+
+func subsequence(label: str, word: str, fold: bool) -> bool:
+    var at: usize = 0
+    for byte in label.bytes:
+        if at == word.length:
+            return true
+        if byte == word.bytes[at] or (fold and lower(byte) == lower(word.bytes[at])):
+            at += 1
+    return at == word.length
+
+func lower(byte: u8) -> u8:
+    return byte + 32 if byte >= 'A' and byte <= 'Z' else byte
+
+test "completion filtering ranks prefixes, then subsequences, case breaking ties":
+    var document = try Document("x")
+    defer document.close()
+    var list = CompletionList()
+    defer list.close()
+    list.begin(&document, 1, 0, CompletionTrigger.typed)
+    try list.add("Print", CompletionKind.function, "func Print()")
+    try list.add("sprint", CompletionKind.function)
+    try list.add("print", CompletionKind.function, "func print(text: str)", "Writes `text`.")
+    try list.add("pointer", CompletionKind.variable)
+    try list.add("other", CompletionKind.keyword)
+    list.finish()
+    var refused = false
+    list.add("late", CompletionKind.keyword) catch failure:
+        refused = failure.code == result.invalid
+    assert(refused and list.count() == 5)
+    list.filter("pr")
+    # "print" in case, then "Print" ignoring case, then "sprint" and "pointer" holding p..r.
+    assert(list.matches() == 4 and list.matching(0) == 2 and list.matching(1) == 0 and list.matching(2) == 1 and list.matching(3) == 3)
+    assert(list.label(2) == "print" and list.detail(2) == "func print(text: str)" and list.doc(2) == "Writes `text`.")
+    list.filter("")
+    assert(list.matches() == 5 and list.matching(4) == 4)
+    list.filter("zz")
+    assert(list.matches() == 0)
+    # Growing past the first block keeps every item.
+    list.begin(&document, 1, 0, CompletionTrigger.invoked)
+    for index in 0..<200:
+        try list.add("name", CompletionKind.field, "", "doc")
+    list.finish()
+    list.filter("nm")
+    assert(list.matches() == 200 and list.label(199) == "name" and list.doc(199) == "doc")

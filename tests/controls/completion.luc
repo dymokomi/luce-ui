@@ -1,0 +1,216 @@
+## Completion and hover in the text editor, driven by input events: the triggers,
+## filtering, the popup's keys, accepting as one undo step, closing, the provider
+## asked once a keystroke, an empty answer, clicking a row, hover text, the
+## diagnostic winning over it, and clearing both providers.
+from luce_ui.ui import Application, TextEditor, Font, Event, Diagnostic, Severity, CompletionList, CompletionKind, CompletionTrigger
+from luce_window.input import EventKind, Key
+from luce_gpu.gpu import Frame
+from luce_window import window
+import text
+
+func render(app: Application) -> unit!:
+    let frame = Frame(window.Size(400.0, 300.0, 400.0, 300.0, 1.0))
+    app.layout(400.0, 300.0)
+    app.render(frame.target())
+    frame.close()
+
+func type_text(app: Application, typed: str) -> unit!:
+    for character in typed:
+        app.dispatch(Event(kind = EventKind.text_input, codepoint = text.code_of(character)))
+
+func press(app: Application, key: Key, control: bool = false) -> unit!:
+    app.dispatch(Event(kind = EventKind.key_down, key = key, control = control))
+
+## What the provider saw, and whether it answers with items.
+class Calls:
+    var count: int = 0
+    var caret: int = -1
+    var start: int = -1
+    var dotted: bool = false
+    var invoked: bool = false
+    var answers: bool = true
+
+func provide(calls: Calls, items: CompletionList) -> unit!:
+    calls.count += 1
+    calls.caret = items.caret()
+    calls.start = items.start()
+    calls.dotted = items.trigger() == CompletionTrigger.dot
+    calls.invoked = items.trigger() == CompletionTrigger.invoked
+    if calls.answers:
+        items.add("print", CompletionKind.function, "func print(text: str)", "Writes `text` and a newline.")
+        items.add("Print", CompletionKind.datatype, "class Print")
+        items.add("sprint", CompletionKind.method, "func sprint() -> str")
+        items.add("pointer", CompletionKind.field, "pointer: int")
+        items.add("len", CompletionKind.function)
+
+pub func completion() -> unit!:
+    let font = Font()
+    let editor = TextEditor("x = s\nend", font = font)
+    let app = Application(editor)
+    app.layout(400.0, 300.0)
+    app.focus(editor.layout())
+    render(app)
+    let calls = Calls()
+    editor.set_completion_provider(func(items: CompletionList) -> unit!:
+        provide(calls, items)
+    )
+    editor.set_selection(5, 5)
+    # A dot asks, replacing from the caret: every item shows, in the provider's order.
+    type_text(app, ".")
+    assert(calls.count == 1 and calls.dotted and calls.caret == 6 and calls.start == 6)
+    render(app)
+    assert(editor.completion_shown() and editor.completion_count() == 5 and editor.completion_label(0) == "print")
+    # Typing filters without asking again: prefixes first, case breaking ties, then subsequences.
+    type_text(app, "p")
+    assert(calls.count == 1 and editor.completion_count() == 4)
+    assert(editor.completion_label(0) == "print" and editor.completion_label(1) == "pointer" and editor.completion_label(2) == "Print")
+    type_text(app, "r")
+    assert(calls.count == 1 and editor.completion_count() == 4)
+    assert(editor.completion_label(1) == "Print" and editor.completion_label(2) == "sprint" and editor.completion_label(3) == "pointer")
+    # Up and Down go to the popup, not the caret; Enter accepts as one undo step.
+    press(app, Key.down)
+    press(app, Key.down)
+    press(app, Key.up)
+    press(app, Key.down)
+    assert(editor.completion_selection() == 2 and editor.line() == 1)
+    press(app, Key.enter)
+    assert(editor.text() == "x = s.sprint\nend" and editor.caret() == 12 and not editor.completion_shown())
+    press(app, Key.z, control = true)
+    assert(editor.text() == "x = s.pr\nend")
+    # The first identifier character of a word asks; Tab accepts the first match.
+    editor.set_selection(8, 8)
+    type_text(app, "i")
+    assert(calls.count == 2 and not calls.dotted and calls.start == 6 and editor.completion_count() == 3)
+    press(app, Key.tab)
+    assert(editor.text() == "x = s.print\nend" and not editor.completion_shown())
+    # Escape hides the list for the rest of the word; Ctrl+Space asks again.
+    type_text(app, ".")
+    assert(calls.count == 3 and editor.completion_shown())
+    press(app, Key.escape)
+    assert(not editor.completion_shown() and editor.text() == "x = s.print.\nend")
+    type_text(app, "l")
+    assert(calls.count == 3 and not editor.completion_shown())
+    press(app, Key.space, control = true)
+    assert(calls.count == 4 and calls.invoked and editor.completion_shown() and editor.completion_count() == 1)
+    # A space the same press types is not text.
+    type_text(app, " ")
+    assert(editor.text() == "x = s.print.l\nend")
+    # The caret leaving the word closes the list.
+    press(app, Key.home)
+    assert(not editor.completion_shown())
+    render(app)
+    # Ending the word with a space closes it too, and Backspace past its start.
+    editor.set_selection(13, 13)
+    type_text(app, ".")
+    assert(calls.count == 5 and editor.completion_shown())
+    press(app, Key.backspace)
+    assert(not editor.completion_shown())
+    type_text(app, ".")
+    assert(calls.count == 6 and editor.completion_shown())
+    type_text(app, " ")
+    assert(calls.count == 6 and not editor.completion_shown())
+    # A digit starts a number, not a name.
+    type_text(app, "1")
+    assert(calls.count == 6)
+    # No items: nothing shows, and the rest of the word does not ask again.
+    calls.answers = false
+    type_text(app, " q")
+    assert(calls.count == 7 and not editor.completion_shown() and editor.completion_count() == 0)
+    type_text(app, "q")
+    assert(calls.count == 7 and not editor.completion_shown())
+    calls.answers = true
+    # A click on a row accepts it once drawn; the editor keeps the keyboard.
+    editor.set_text("s")
+    editor.set_selection(1, 1)
+    type_text(app, ".")
+    render(app)
+    assert(editor.completion_shown())
+    let popup = editor.layout().child(1).layout().bounds()
+    assert(popup.width > 0.0 and popup.height > 0.0)
+    app.dispatch(Event(kind = EventKind.pointer_down, x = popup.x + 30.0, y = popup.y + 4.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = popup.x + 30.0, y = popup.y + 4.0))
+    render(app)
+    assert(editor.text() == "s.print" and not editor.completion_shown())
+    type_text(app, "x")
+    assert(editor.text() == "s.printx")
+    # A press in the text closes the list.
+    type_text(app, ".")
+    assert(editor.completion_shown())
+    app.dispatch(Event(kind = EventKind.pointer_down, x = 40.0, y = 4.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = 40.0, y = 4.0))
+    assert(not editor.completion_shown())
+    # Without a provider nothing asks.
+    let before = calls.count
+    editor.set_completion_provider(none)
+    editor.set_selection(editor.length(), editor.length())
+    type_text(app, ".")
+    press(app, Key.space, control = true)
+    assert(calls.count == before and not editor.completion_shown())
+    editor.set_completion_provider(func(items: CompletionList) -> unit!:
+        provide(calls, items)
+    )
+    type_text(app, ".")
+    assert(calls.count == before + 1 and editor.completion_shown())
+    editor.clear_completion_provider()
+    assert(not editor.completion_shown())
+    type_text(app, ".")
+    assert(calls.count == before + 1)
+    render(app)
+    app.close()
+
+## What the hover provider was asked.
+class Hovered:
+    var count: int = 0
+    var offset: int = -1
+
+## Rest the pointer on cell `column` (0-based, after the gutter) of visual row `row`, and draw.
+func rest(app: Application, font: Font, row: float, column: float) -> unit!:
+    let x = font.advance() * 3.0 + font.advance() * (column + 1.5)
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x, y = font.line_height() * (row + 0.5)))
+    render(app)
+
+pub func hover_text() -> unit!:
+    let font = Font()
+    let editor = TextEditor("let value = print(x)\nend", font = font)
+    let app = Application(editor)
+    render(app)
+    editor.set_tip_delay(0.0)
+    let hovered = Hovered()
+    editor.set_hover_provider(func(offset: int) -> str!:
+        hovered.count += 1
+        hovered.offset = offset
+        return "func print(text: str)\nWrites `text` and a newline." if offset >= 12 and offset < 17 else ""
+    )
+    # Resting on a word asks once with the scalar under the pointer, and shows the text.
+    rest(app, font, 0.0, 13.0)
+    assert(hovered.count == 1 and hovered.offset == 13)
+    assert(editor.shown_tip() == "func print(text: str)\nWrites `text` and a newline.")
+    render(app)
+    rest(app, font, 0.0, 14.0)
+    assert(hovered.count == 1 and editor.shown_tip() != "")
+    # An empty answer shows nothing; off a word nothing is asked.
+    rest(app, font, 0.0, 5.0)
+    assert(hovered.count == 2 and editor.shown_tip() == "")
+    rest(app, font, 0.0, 10.0)
+    assert(hovered.count == 2 and editor.shown_tip() == "")
+    # A diagnostic on the word wins: its message shows and hover is not asked.
+    editor.set_diagnostics([Diagnostic(1, 13, 18, Severity.error, "unknown name")])
+    rest(app, font, 0.0, 13.0)
+    assert(editor.shown_tip() == "unknown name" and hovered.count == 2)
+    editor.clear_diagnostics()
+    rest(app, font, 1.0, 1.0)
+    assert(hovered.count == 3)
+    # Cleared, nothing is asked.
+    editor.set_hover_provider(none)
+    rest(app, font, 0.0, 13.0)
+    assert(hovered.count == 3 and editor.shown_tip() == "")
+    editor.set_hover_provider(func(offset: int) -> str!:
+        hovered.count += 1
+        return "sig"
+    )
+    rest(app, font, 0.0, 1.0)
+    assert(hovered.count == 4 and editor.shown_tip() == "sig")
+    editor.clear_hover_provider()
+    rest(app, font, 0.0, 13.0)
+    assert(hovered.count == 4 and editor.shown_tip() == "")
+    app.close()

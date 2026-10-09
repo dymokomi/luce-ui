@@ -33,7 +33,8 @@ All objects and callbacks belong to the main thread.
 | `CommandPalette` | Searchable actions; `open`, `query`, `result_count`, `is_open`, `layout` |
 | `TextPrompt` | Text entry or confirmation; `open`, `value`, `on_submit`, `is_open`, `layout` |
 | `Theme` | Semantic colors, `control_lines`, `inset_cells`, `header_inset_cells`, `row_height`, `inset` |
-| `TextEditor` | Unicode text, selection, history and decorations; see [text controls](TEXT-EDITOR.md) |
+| `TextEditor` | Unicode text, selection, history, decorations, diagnostics, completion and hover; see [text controls](TEXT-EDITOR.md) |
+| `CompletionList` | What a TextEditor's completion provider fills during its call: `caret`, `start`, `set_start`, `trigger`, `text`, `text_range`, `add(label, kind, detail, doc)`, `count`; see [completion](TEXT-EDITOR.md#completion) |
 | `ListView` | `ListItem(text, icon=IconKind.blank)` entries and optional row height/font; `select`, `set_items`, `on_activate` |
 | `ParameterPanel` | `ParameterPanel(specs, font=..., label_width=0)` from `ParameterSpec`s: one compact row a parameter; values by index (`value`, `component`, `text`, `ramp`, `set_*`), `find(name)`, `on_change`/`on_begin`/`on_commit`/`on_action`; see [parameter panels](#parameter-panels) |
 
@@ -351,7 +352,26 @@ Defaults give controls one text line vertically and one glyph advance of inset.
 `Tooltip(font)` is the shared tooltip: a popup child that shows wrapped text,
 with an optional muted note, at a point in its owner's coordinates, and lets the
 pointer through. The parameter panel shows a row's doc in one and the text editor
-a diagnostic's messages.
+a diagnostic's messages. `show_marked(text, x, y)` shows light markup instead, a
+signature line and text with `code spans`, as the editor's hover provider gives it.
+
+`TextEditor.set_completion_provider(provider)` and `set_hover_provider(provider)`
+take Luce callbacks, `func(items: CompletionList) -> unit!` and
+`func(offset: int) -> str!`; `none` or `clear_completion_provider()` and
+`clear_hover_provider()` remove them. Offsets are Unicode scalar offsets, as
+everywhere in the editor. `CompletionKind` is `function`, `method`, `field`,
+`variable`, `datatype`, `module` or `keyword`; `CompletionTrigger` is `typed`,
+`dot` or `invoked`. [Text controls](TEXT-EDITOR.md#completion) has the triggers,
+keys, filtering and markup.
+
+```luce
+editor.set_completion_provider(func(items: CompletionList) -> unit!:
+    items.add("print", CompletionKind.function, "func print(text: str)", "Writes `text`.")
+)
+editor.set_hover_provider(func(offset: int) -> str!:
+    return "func print(text: str)\nWrites `text`."
+)
+```
 
 A `Command(text, shortcut=Shortcut(), id="")` owns its label, enabled state and
 signal, plus an optional registry id. `set_commands` registers the application's
@@ -546,7 +566,11 @@ click dismisses without submission. `editable=false` provides a confirmation
 surface with the same callback contract. Text is bounded to 1024 scalars and
 cannot contain control characters.
 
-`Layout.set_popup_point(x, y)` anchors a popup at a parent-local point.
+`Layout.set_popup_point(x, y, above=none)` anchors a popup at a parent-local point;
+with `above`, a popup that does not fit below the window's bottom goes above
+instead, its bottom at that y (the completion list flips over the caret's row).
+`set_keeps_focus(true)` lets a non-modal popup take presses without taking the
+keyboard from what has it, as the completion list does for its editor.
 `set_popup_placement(PopupPlacement.window_top)` centers it near the window top;
 the default `below` placement remains appropriate for menu triggers.
 `copy_sizing_from(layout)` copies the current limits, flex and shrink policy for
