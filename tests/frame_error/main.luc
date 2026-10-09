@@ -1,0 +1,31 @@
+## A frame callback whose error escapes (a Text given a line break) reaches the
+## application's error handler and the run goes on; nothing traps afterwards.
+from luce_ui.ui import Application, Text, VStack
+
+class Recorder:
+    pub var errors: int = 0
+    pub var frames: int = 0
+    pub let label: Text
+
+    pub func init(self, label: Text) -> unit!:
+        self.label = label
+
+    pub func failed(self, message: str):
+        self.errors += 1
+
+    pub func frame(self, seconds: float) -> unit!:
+        self.frames += 1
+        self.label.set_text("a\nb")
+
+pub func main(arguments: list[str]) -> int!:
+    let label = Text("start")
+    let recorder = Recorder(label)
+    let app = Application(VStack([label]))
+    app.set_error_handler(recorder.failed)
+    let connection = app.on_frame(recorder.frame)
+    app.run(frame_limit = 5)
+    connection.disconnect()
+    app.close()
+    assert(recorder.frames >= 1 and recorder.errors >= 1)
+    print("PASS frame error reaches the handler")
+    return 0
