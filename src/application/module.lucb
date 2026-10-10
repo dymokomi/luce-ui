@@ -477,6 +477,8 @@ pub struct Application:
         let target = frame.value().target() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer target.release()
+        target.value().allow_draws(window_draws) catch failure:
+            return result.failure[unit](failure.code, failure.message)
         let rendered = self.render(target)
         if not rendered.is_success():
             return rendered
@@ -641,6 +643,10 @@ pub struct Application:
                     self.dirty = true
                     continue
                 defer target.release()
+                # A whole window's widgets share the frame: an editor's panels pass
+                # luce-gpu's default 4096 draws (wires and labels are a draw each).
+                target.value().allow_draws(window_draws) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
                 let rendered = self.render(target)
                 if not rendered.is_success():
                     if rendered.code == gpu.frame_resized:
@@ -863,6 +869,10 @@ pub struct Application:
 func check_fps(fps: f64) -> !:
     if not math.is_finite(fps) or fps < 0.0 or fps > 1000.0:
         error(result.invalid, "game fps must be finite and in 0..1000")
+
+## The draws a window's frame may record: luce-gpu's ceiling. Storage grows
+## only with what is drawn.
+let window_draws: usize = 65536
 
 pub let application_type: interop.Type[Application] = interop.Type[Application]("UI application", Application.dispose, Application.trace, main_thread = true)
 
