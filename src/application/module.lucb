@@ -519,11 +519,12 @@ pub struct Application:
     func drive(frame_limit: i64, opened: bool*) -> interop.Outcome[unit]:
         # A windowed program has nowhere to print a trap: report crashes under the
         # program's own name unless it chose one, and, in a run that is not a test's
-        # bounded one, show the report in a window from a fresh process.
+        # bounded one nor run by a tool (LUCE_CRASH_WINDOW=0), show the report in a
+        # window from a fresh process.
         if not core.crash_reports_enabled():
             crash.enable() catch failure:
                 _ = failure
-        if frame_limit == 0:
+        if frame_limit == 0 and crash_window_wanted():
             crash.relaunch_on_crash() catch failure:
                 _ = failure
         self.session_host = window.Window.open(window.Options(title = self.title_text.value, width = (u32)self.width, height = (u32)self.height, fullscreen = self.fullscreen)) catch failure:

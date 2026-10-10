@@ -10,12 +10,16 @@
 #       version, the report in a read-only editor, and Copy, Reopen and Quit. Then the
 #       process ends. Nothing is drawn from the process that crashed, and nothing is sent.
 #
+#       A program run unattended sets LUCE_CRASH_WINDOW=0: then a trap writes the
+#       report and ends the process, and nothing is started again.
+#
 #       An error that ends `Application.run` is no crash: the process is sound, so the
 #       same window shows it from there (`show_failure`) before `run` returns it.
 #
 #==============================================================================================
 
 from luce_clipboard import clipboard
+import c
 import os
 import widgets.text
 import widgets.button
@@ -31,6 +35,16 @@ import strings
 ## Whether this process is showing a crash report already: the window's own
 ## Application must not start another.
 var showing_crash: bool = false
+
+## Whether a crash starts the program again to show its report: unless
+## LUCE_CRASH_WINDOW is "0". Tools that run a windowed program unattended (a
+## capture, a test harness, an agent) set it, so a trap ends the process and no
+## crash window is left waiting for a click that never comes.
+func crash_window_wanted() -> bool:
+    let value = os.env(crash_window_variable) else return true
+    return value != "0"
+
+let crash_window_variable: c.str = "LUCE_CRASH_WINDOW"
 
 ## Show the report at `path` in place of the program's window, then end the process:
 ## what `Application.init` does in a process started to show a report. Where no window

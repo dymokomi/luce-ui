@@ -42,8 +42,9 @@ luc test
 That runs every module's `test` blocks and four test programs: `tests/ownership` (a Base
 consumer) and `tests/controls` (Luce custom widgets) everywhere, and on a macOS desktop
 `tests/pixels` (Metal pixels, clipping, resize and expired viewport references) and
-`tests/crash_relaunch` (a program that traps is started again to show its crash window);
-without a desktop those two are skipped.
+`tests/crash_relaunch` (a program that traps is started again to show its crash window) and
+`tests/crash_quiet` (with `LUCE_CRASH_WINDOW=0`, a trap in the run loop or on a worker
+thread ends the process and starts nothing); without a desktop those are skipped.
 Test binaries and compiler scratch files are temporary. A specifically requested
 consumer binary can be built with `python3 tools/build.py ENTRY -o OUTPUT`.
 

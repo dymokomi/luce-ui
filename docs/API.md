@@ -162,7 +162,12 @@ and version (see `crash` in luce-std), and, unless it is a test's bounded run
    the program again as an ordinary run.
 
 So code that runs before the `Application` is made also runs in that second process, with no
-arguments; keep it to building the window. A crash inside the crash window itself starts
+arguments; keep it to building the window.
+
+A tool that runs a windowed program unattended (a capture, a test harness, an agent) sets
+`LUCE_CRASH_WINDOW=0` in its environment. Then a trap writes the report and ends the process,
+and nothing is started again: otherwise each crash would leave a crash window waiting for a
+click that never comes, a process the tool does not know about. A crash inside the crash window itself starts
 nothing further. Reports stay on the computer; nothing is sent anywhere.
 
 `app.on_crash(callback)` runs `callback` after a trap, before the process ends, on the thread

@@ -1,0 +1,89 @@
+# A luce-ui program run unattended (LUCE_CRASH_WINDOW=0, as a capture or a test
+# harness runs it) ends when it traps, in its run loop or on a worker thread: it
+# exits with status 1 within seconds, writes its report, and starts nothing again,
+# so no crash window is left waiting for a click. app.lucb is built as a package of
+# its own ("crash-quiet") and run in a scratch home. It needs a window: macOS with
+# a desktop session; elsewhere, a display.
+from luce_std import files, paths, process
+import platform
+import thread
+import time
+
+let failed = ErrorCode.package(1)
+
+# Whether a window can open here: a logged-in macOS desktop (launchd's manager is
+# Aqua there, Background over SSH), a Linux display, or Windows' interactive session.
+func windowed() -> bool:
+    if platform.macos:
+        let done = process.run("launchctl", ["managername"]) catch failure:
+            return false
+        return done.output.trim() == "Aqua"
+    if platform.linux:
+        return (process.variable("DISPLAY") else "") != "" or (process.variable("WAYLAND_DISPLAY") else "") != ""
+    return false
+
+# The processes running `binary`, by PID: its path is unique to this run.
+func processes_of(binary: str) -> list[str]!:
+    var found: list[str] = []
+    for line in process.run("ps", ["-axo", "pid=,command="]).output.lines():
+        let words = line.trim().split(" ")
+        if words.length >= 2 and line.trim().remove_prefix(words[0]).trim().starts_with(binary):
+            found.append(words[0])
+    return found
+
+func end(pids: list[str]) -> unit!:
+    for pid in pids:
+        _ = process.run("kill", ["-KILL", pid])
+
+pub func main(arguments: list[str]) -> int!:
+    if not windowed():
+        print("skip: no window can open here")
+        return 0
+    let here = process.variable("LUC_TEST_DIR") else "tests/crash_quiet"
+    let base = process.variable("LUCE_BASE") else "luce-base"
+    let root = process.current_directory()
+    let work = paths.join(root, "build/tests/crash_quiet/work")
+    if files.exists(work):
+        files.remove_tree(work)
+    let home = paths.join(work, "home")
+    let project = paths.join(work, "project")
+    files.ensure_directory(paths.join(project, "src"))
+    files.write_text(paths.join(project, "src/main.lucb"), files.read_text(paths.join(here, "app.lucb")))
+    let workspace = paths.directory(root)
+    files.write_text(paths.join(project, "package.prisma"), f"#prisma 4.0\ndef package \"crash-quiet\" {{\n    str version = \"0.0.1\"\n    def dependency \"luce-ui\" {{\n        str path = \"{root}\"\n    }}\n    def dependency \"luce-std\" {{\n        str path = \"{paths.join(workspace, "luce-std")}\"\n    }}\n}}\n")
+    let binary = paths.join(work, "crash-quiet")
+    let built = process.run(base, ["build", paths.join(project, "src/main.lucb"), "--native", "-o", binary])
+    if built.exit_code != 0:
+        error(failed, f"app.lucb does not build:\n{built.output}{built.error_output}")
+    for place in ["loop", "worker"]:
+        check(binary, home, place) catch failure:
+            end(processes_of(binary))
+            error(failure.code, failure.message)
+    files.remove_tree(work)
+    return 0
+
+# Run the app trapping at `place` and check it is gone, alone, with its report.
+func check(binary: str, home: str, place: str) -> unit!:
+    let started = time.now()
+    let result = process.run("env", ["-u", "LUCE_CRASH_REPORT", "LUCE_CRASH_WINDOW=0", f"HOME={home}", binary, place])
+    let took = (time.now() - started) // 1000000
+    if result.exit_code != 1:
+        error(failed, f"{place}: the program exited {result.exit_code}: {result.error_output}")
+    if not (f"a deliberate trap" in result.error_output):
+        error(failed, f"{place}: no trap message: {result.error_output}")
+    if took > 20000:
+        error(failed, f"{place}: the program took {took} ms to end after its trap")
+    var found = false
+    let crashes = paths.join(home, ".luce/crashes")
+    if files.exists(crashes):
+        for name in files.list(crashes):
+            if name.starts_with("crash-quiet-") and ".crash" in name:
+                found = true
+                files.remove_file(paths.join(crashes, name))
+    if not found:
+        error(failed, f"{place}: no crash report")
+    # Nothing was started again to show the report.
+    thread.sleep(1500)
+    let left = processes_of(binary)
+    if left.length > 0:
+        error(failed, f"{place}: processes left running: {left}")

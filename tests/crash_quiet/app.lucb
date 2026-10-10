@@ -1,0 +1,54 @@
+## A luce-ui program that traps while its window runs: in the run loop
+## (`loop`) or on a worker thread of its own (`worker`). main.luc beside it runs
+## it with LUCE_CRASH_WINDOW=0, as a capture or test harness does, and checks
+## that the process ends with the report written and nothing started again.
+import interop
+import memory
+import ownership
+import thread
+from luce_ui import ui
+from luce_ui.ui import Application, Spacer, Widget
+
+struct Crasher:
+    var turns: i64
+
+    func boom(argument: unit) -> interop.Outcome[unit]:
+        _ = argument
+        trap("a deliberate trap in the run loop")
+
+    func close():
+        self.turns = 0
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        _ = visit
+        _ = context
+
+let crasher_type: interop.Type[Crasher] = interop.Type[Crasher]("quiet crash test", Crasher.close, Crasher.trace)
+
+## A worker that traps while the main thread runs the window.
+func trap_on_worker(context: void*?):
+    _ = context
+    thread.sleep(300)
+    trap("a deliberate trap on a worker thread")
+
+pub func main(arguments: str[]) -> i32!:
+    let on_worker = arguments.length > 1 and arguments[1] == "worker"
+    let spacer = try interop.Reference[Spacer].adopt(new Spacer(1.0) in memory.heap, ui.spacer_type, memory.heap)
+    defer spacer.release()
+    let content = spacer.as_interface[Widget](spacer.value())
+    defer content.release()
+    let app = try interop.Reference[Application].adopt(new Application(content, title = "Quiet crash", width = 240, height = 120) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    let crasher = try interop.Reference[Crasher].adopt(new Crasher(turns = 0) in memory.heap, crasher_type, memory.heap)
+    defer crasher.release()
+    let boom = try interop.Callback[unit, unit].bind_mutating(crasher, Crasher.boom)
+    defer boom.release()
+    if on_worker:
+        let worker = try thread.spawn(trap_on_worker, none, name = "worker")
+        worker.detach()
+    else:
+        _ = try app.value().after(0.3, boom)
+    let outcome = app.value().run()
+    defer outcome.release()
+    try outcome.get()
+    return 0
