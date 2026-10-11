@@ -26,7 +26,7 @@ All objects and callbacks belong to the main thread.
 | `Raster` | Mutable RGBA surface; `set_pixel`, `put`, `fill`, `fill_rect`, `dab`, `draw`, `color_at` |
 | `Painter` | Checked GPU target; `rectangle(rect, color, opacity=1.0)`, `triangle(a, b, c, color)`, `line(a, b, width, color)`, `text`, `target` |
 | `Font` | Installed monospace family and size; `measure`, `cells`, `advance`, `height`, `line_height` |
-| `Command` | Optional registry `id`, label and `Shortcut`; `id`, `on_trigger`, `trigger`, `set_enabled`, `set_text` |
+| `Command` | Optional registry `id`, label, `Shortcut` and `icon`; `id`, `on_trigger`, `trigger`, `set_enabled`, `set_text`, `set_icon`, `set_items` |
 | `Toolbar` | Heterogeneous children and shared font; compact row, `set_children` |
 | `Menu` | Label, actions and shared font; `open`, `is_open`, `layout` |
 | `ContextMenu` | Decorate a widget with actions; `open_at`, `on_open`, `set_commands`, `is_open`, `layout` |
@@ -383,8 +383,11 @@ editor.set_hover_provider(func(offset: int) -> str!:
 )
 ```
 
-A `Command(text, shortcut=Shortcut(), id="")` owns its label, enabled state and
-signal, plus an optional registry id. `set_commands` registers the application's
+A `Command(text, shortcut=Shortcut(), id="", icon="")` owns its label, enabled state and
+signal, plus an optional registry id and the name of a luciaos-assets icon that
+menus draw before its label. `set_items(commands)` makes it a submenu's row:
+`items()` are what the menu opens beside it, `has_items()` says whether it has
+any, and `set_items([])` makes it an ordinary command again. `set_commands` registers the application's
 commands, and `Application.command(id)` resolves one by id so a keymap or script
 can invoke the same commands the UI does. A button may own its text or reference a
 command. `click` and `on_click` on a command button use that command's signal.
@@ -621,6 +624,16 @@ or clicking outside ends the session. Other popups remain modal: hovering a menu
 title while a context menu, prompt or palette is open does not switch to it.
 Custom triggers opt in with `Layout.set_menu_trigger(true)` and handle
 `Event.menu_requested` by opening their popup.
+
+A row whose command has items opens a submenu beside it (right of the list, or
+left at the window's edge): pointing at the row opens it with nothing selected,
+Right, Enter or a click open it with its first item selected. Pointing at
+another row closes it, Left or Escape goes back to the row, and choosing an item
+closes every level. A press outside closes each level it falls outside of; the
+menu bar keeps switching from inside a submenu. The nested popup is a
+`Layout.set_submenu(true)` box placed with `PopupPlacement.beside`; a list whose
+selected row opens one says so with `set_submenu_selected(true)`, so Right opens
+it instead of moving to the next menu.
 
 Popup shadows use `Theme.shadow` with `shadow_opacity` (0..1, default 0.35) and
 `shadow_offset` (0..32 points, default 4). Setting either metric to zero hides the

@@ -16,9 +16,12 @@ from command import Command, Commands
 from painter import Painter
 from geometry import Point
 from text.line_input import LineInput
+import icons
 
 ## Room after a checked command's caption for its tick.
 let tick_room: f64 = 18.0
+## Room at a submenu row's end for its chevron.
+let chevron_room: f64 = 16.0
 
 ## A hidden popup listing commands, with dividers as slim rules. Opening it
 ## selects the first enabled row; arrows, Tab, the wheel and the pointer move the
@@ -26,7 +29,10 @@ let tick_room: f64 = 18.0
 ## it and closes the list, and Escape or a press outside closes it. A
 ## `searchable` popup is the palette: a query line at the window's top that
 ## lists nothing until something is typed, then the commands whose text contains
-## every typed word.
+## every typed word. A command with items is a submenu's row: pointing at it,
+## Right, Enter or a click opens its items beside the row in a nested popup,
+## and choosing there closes every menu of the chain. Commands with an icon
+## draw it before their caption.
 pub struct ActionPopup: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]
@@ -50,6 +56,12 @@ pub struct ActionPopup: Widget:
     var query: LineInput
     var matches: usize[4096]
     var count: usize
+    ## The submenu popup, made when a row first opens one; inside it, the menu
+    ## it opened from (which owns it, so outlives it).
+    var child: interop.Reference[ActionPopup]?
+    var holder: ActionPopup*?
+    ## The display row whose submenu is open, -1 when none is.
+    var opened: i64
 
     pub func init(commands: const interop.Reference[Command][], font: interop.Reference[Font], searchable: bool = false) -> !:
         if commands.length == 0 or commands.length > 4096:
@@ -86,6 +98,9 @@ pub struct ActionPopup: Widget:
         self.pressed = -1
         self.picked = -1
         self.held = false
+        self.child = none
+        self.holder = none
+        self.opened = -1
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -95,6 +110,7 @@ pub struct ActionPopup: Widget:
     pub func set_commands(commands: const interop.Reference[Command][]) -> !:
         if commands.length == 0 or commands.length > 4096:
             error(result.invalid, "a menu takes 1..4096 actions")
+        self.close_submenu()
         try self.commands.set(commands)
         self.count = commands.length
         for index in 0..<commands.length:
@@ -121,6 +137,7 @@ pub struct ActionPopup: Widget:
 
     ## Show the list with an empty query and the first enabled row selected.
     pub func open(held: bool = false) -> !:
+        self.close_submenu()
         self.held = held
         if held:
             self.box.value().claim_press()
@@ -142,6 +159,73 @@ pub struct ActionPopup: Widget:
                 break
         self.box.value().begin_open()
         self.box.value().set_visible(true)
+        self.note_selection()
+
+    ## The nested popup showing the open row's submenu, if one is open.
+    pub func submenu() -> interop.Reference[ActionPopup]?:
+        let child = self.child else return none
+        if self.opened < 0 or not child.value().is_open():
+            return none
+        return child.clone()
+
+    ## Hide this list and any submenu it opened.
+    func dismiss():
+        self.close_submenu()
+        self.box.value().set_visible(false)
+
+    func close_submenu():
+        if let child = self.child:
+            child.value().dismiss()
+        self.opened = -1
+
+    ## Open display row `index`'s submenu beside it; `select` picks its first
+    ## row (the keyboard opened it), otherwise nothing is selected yet.
+    func open_submenu(index: i64, select: bool) -> !:
+        let command = self.commands.values()[self.matches[(usize)index]]
+        if not command.value().has_items() or not command.value().is_enabled():
+            return
+        if self.opened == index:
+            if let child = self.child:
+                if child.value().is_open():
+                    if select and child.value().selected < 0:
+                        child.value().move(1)
+                    return
+        if self.child == none:
+            let made = try interop.Reference[ActionPopup].adopt(new ActionPopup(command.value().items(), self.font) in memory.heap, action_popup_type, memory.heap)
+            errdefer made.release()
+            made.value().holder = &self
+            let nested = made.value().layout()
+            defer nested.release()
+            nested.value().set_submenu(true)
+            let widget = made.as_interface[Widget](made.value())
+            defer widget.release()
+            try self.box.value().set_children([widget])
+            self.child = made
+        let child = self.child else return
+        try child.value().set_commands(command.value().items())
+        # Beside the row, its first item level with the row.
+        var y = self.top()
+        var row = self.first
+        while row < index:
+            y += self.extent(row)
+            row += 1
+        let nested = child.value().layout()
+        defer nested.release()
+        try nested.value().set_popup_point(0.0, y - child.value().pad_y())
+        nested.value().set_popup_placement(layout.PopupPlacement.beside)
+        try child.value().open()
+        if not select:
+            child.value().selected = -1
+            child.value().note_selection()
+        self.opened = index
+        self.box.value().invalidate()
+
+    ## Tell the tree whether Right opens the selected row's submenu.
+    func note_selection():
+        var opens = false
+        if self.selected >= 0 and self.selected < (i64)self.count:
+            opens = self.commands.values()[self.matches[(usize)self.selected]].value().has_items()
+        self.box.value().set_submenu_selected(opens)
 
     pub func query_text() -> interop.Owned[str]!:
         return try self.query.text()
@@ -222,8 +306,16 @@ pub struct ActionPopup: Widget:
                 total += self.extent(index)
         return total
 
+    ## Room before the captions for icons, when any command has one.
+    func icon_room() -> f64:
+        for action in self.commands.values():
+            if action.value().icon() != "":
+                return math.ceil(self.font.value().height() * 1.6)
+        return 0.0
+
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         var width: f64 = 0.0
+        let icon_room = self.icon_room()
         for action in self.commands.values():
             if action.value().is_divider():
                 continue
@@ -239,7 +331,9 @@ pub struct ActionPopup: Widget:
                 measured += self.font.value().advance() * 2.0 + chord_width
             if action.value().is_checked():
                 measured += tick_room
-            width = math.max(width, measured)
+            if action.value().has_items():
+                measured += chevron_room + self.font.value().advance()
+            width = math.max(width, measured + icon_room)
         return result.success[Size](Size(600.0 if self.searchable else width + self.pad_x() * 2.0, self.header_height() + self.stack_height()))
 
     pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
@@ -259,6 +353,7 @@ pub struct ActionPopup: Widget:
             try self.query.paint(&painter, self.font, theme, self.pad_x(), center, size.width - self.pad_x() * 2.0)
             if self.count > 0:
                 try painter.rectangle(gpu.Rect(y = self.header_height() - 1.0, width = size.width, height = 1.0), theme.border)
+        let icon_room = self.icon_room()
         var y = self.top()
         var index = self.first
         while index < (i64)self.count:
@@ -272,7 +367,7 @@ pub struct ActionPopup: Widget:
                 y += height
                 index += 1
                 continue
-            let lit = index == self.selected
+            let lit = index == self.selected or index == self.opened
             if lit:
                 try painter.rectangle(gpu.Rect(y = y, width = size.width, height = height), theme.menu_selection)
             let caption = action.value().text()
@@ -280,10 +375,19 @@ pub struct ActionPopup: Widget:
             let text_y = y + (height - self.font.value().height()) * 0.5
             let plain = theme.foreground if action.value().is_enabled() else theme.muted
             let ink = theme.on_menu_selection(plain) if lit else plain
-            try painter.text(caption.value, self.pad_x(), text_y, ink, self.font)
+            if action.value().icon() != "":
+                let side = self.font.value().height() * 1.15
+                try icons.draw_named(&painter, action.value().icon(), gpu.Rect(self.pad_x(), y + (height - side) * 0.5, side, side), ink)
+            try painter.text(caption.value, self.pad_x() + icon_room, text_y, ink, self.font)
+            if action.value().has_items():
+                # A chevron drawn, as the tick is.
+                let x = size.width - self.pad_x() - 5.0
+                let middle = y + height * 0.5
+                try painter.line(Point(x - 4.0, middle - 4.5), Point(x, middle), 1.6, ink)
+                try painter.line(Point(x, middle), Point(x - 4.0, middle + 4.5), 1.6, ink)
             if action.value().is_checked():
                 # A tick drawn, not a glyph: every UI font has the lines.
-                let x = self.pad_x() + (try self.font.value().measure(caption.value)) + 8.0
+                let x = self.pad_x() + icon_room + (try self.font.value().measure(caption.value)) + 8.0
                 let middle = y + height * 0.5
                 try painter.line(Point(x, middle), Point(x + 3.5, middle + 3.5), 1.6, ink)
                 try painter.line(Point(x + 3.5, middle + 3.5), Point(x + 10.0, middle - 4.0), 1.6, ink)
@@ -359,9 +463,18 @@ pub struct ActionPopup: Widget:
         defer action.release()
         if not action.value().is_enabled():
             return result.success[unit](())
+        if action.value().has_items():
+            self.open_submenu(self.selected, true) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+            return result.success[unit](())
         # Close before invoking application code, including callbacks which
-        # replace the containing view or fail while saving a document.
-        self.box.value().set_visible(false)
+        # replace the containing view or fail while saving a document; a
+        # submenu's choice closes the menus it opened from too.
+        self.dismiss()
+        var up = self.holder
+        while let menu = up:
+            menu.dismiss()
+            up = menu.holder
         self.pressed = -1
         self.picked = (i64)self.matches[(usize)self.selected]
         return action.value().trigger()
@@ -379,11 +492,14 @@ pub struct ActionPopup: Widget:
                     return result.failure[unit](failure.code, failure.message)
             self.box.value().invalidate()
         if event.cancelled:
-            self.box.value().set_visible(false)
+            self.dismiss()
             self.pressed = -1
         elif event.kind == input.EventKind.key_down:
-            if event.key == input.Key.escape:
-                self.box.value().set_visible(false)
+            if event.key == input.Key.escape or (event.key == input.Key.left and self.holder != none):
+                self.dismiss()
+            elif event.key == input.Key.right and self.selected >= 0 and self.commands.values()[self.matches[(usize)self.selected]].value().has_items():
+                self.open_submenu(self.selected, true) catch failure:
+                    return result.failure[unit](failure.code, failure.message)
             elif event.key == input.Key.down or (event.key == input.Key.tab and not event.shift):
                 self.move(1)
             elif event.key == input.Key.up or (event.key == input.Key.tab and event.shift):
@@ -399,6 +515,12 @@ pub struct ActionPopup: Widget:
                 self.selected = index
                 if event.kind == input.EventKind.pointer_down and event.button == 0:
                     self.pressed = index
+                # Pointing at a row opens its submenu, or closes another's.
+                if self.commands.values()[self.matches[(usize)index]].value().has_items():
+                    self.open_submenu(index, false) catch failure:
+                        return result.failure[unit](failure.code, failure.message)
+                elif self.opened >= 0:
+                    self.close_submenu()
             elif event.kind == input.EventKind.pointer_moved:
                 # Hovering a divider or a gap between rows highlights nothing, so the
                 # last item does not linger as if still under the pointer.
@@ -413,15 +535,22 @@ pub struct ActionPopup: Widget:
             self.held = false
             if activate:
                 return self.activate()
+        self.note_selection()
         return result.success[unit](())
 
     pub func close():
+        if let child = self.child:
+            self.child = none
+            child.release()
+        self.holder = none
         self.query.close()
         self.commands.close()
         self.font.release()
         self.box.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        if let child = self.child:
+            child.trace(visit, context)
         self.commands.trace(visit, context)
         self.font.trace(visit, context)
         self.box.trace(visit, context)

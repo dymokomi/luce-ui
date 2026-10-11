@@ -226,6 +226,10 @@ func popup_rectangle(placement: PopupPlacement, point: Point, above: f64?, measu
             if y + popup_height > bounds.height:
                 y = anchor.y + flip - popup_height
         y = math.clamp(y, 0.0, bounds.height - popup_height)
+    elif placement == PopupPlacement.beside:
+        let right = anchor.x + anchor.width
+        x = right if right + popup_width <= bounds.width else math.max(0.0, anchor.x - popup_width)
+        y = math.clamp(anchor.y + point.y, 0.0, math.max(0.0, bounds.height - popup_height))
     elif placement == PopupPlacement.window_top:
         x = (bounds.width - popup_width) * 0.5
         y = math.min(math.min(40.0, bounds.height * 0.1), bounds.height - popup_height)
@@ -247,3 +251,11 @@ test "a point popup with a flip goes above its point when it does not fit below"
     assert(flipped.y == 24.0)
     let clamped = popup_rectangle(PopupPlacement.point, Point(5.0, 70.0), none, size, editor, window)
     assert(clamped.y == 60.0)
+
+test "a submenu goes right of its menu, or left of it at the window's edge":
+    let window = Rect(0.0, 0.0, 300.0, 100.0)
+    let size = Size(80.0, 40.0)
+    let roomy = popup_rectangle(PopupPlacement.beside, Point(0.0, 20.0), none, size, Rect(10.0, 10.0, 100.0, 60.0), window)
+    assert(roomy.x == 110.0 and roomy.y == 30.0)
+    let crowded = popup_rectangle(PopupPlacement.beside, Point(0.0, 70.0), none, size, Rect(150.0, 10.0, 100.0, 60.0), window)
+    assert(crowded.x == 70.0 and crowded.y == 60.0)

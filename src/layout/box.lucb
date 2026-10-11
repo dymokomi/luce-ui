@@ -46,6 +46,10 @@ pub struct Layout:
     var opening: bool
     var context_menu: bool
     var menu_trigger: bool
+    ## A popup opened from a row of the popup holding it (`set_submenu`).
+    var submenu: bool
+    ## This popup's selected row opens a submenu (`set_submenu_selected`).
+    var submenu_selected: bool
     var accepts_focus: bool
     var accepts_pointer: bool
     var accepts_text: bool
@@ -113,6 +117,8 @@ pub struct Layout:
         self.opening = false
         self.context_menu = false
         self.menu_trigger = false
+        self.submenu = false
+        self.submenu_selected = false
         self.accepts_focus = false
         self.accepts_pointer = false
         self.accepts_text = false
@@ -220,6 +226,18 @@ pub struct Layout:
     pub func set_menu_trigger(enabled: bool):
         self.menu_trigger = enabled
         self.invalidate()
+
+    ## A submenu: a popup opened from a row of the popup holding it. A press
+    ## outside it closes it and each popup holding it that the press is also
+    ## outside of; with a menu bar's menu at the root, pointing at another title
+    ## switches to that menu, and Left goes back to the row it opened from.
+    pub func set_submenu(enabled: bool):
+        self.submenu = enabled
+
+    ## A menu popup whose selected row opens a submenu: Right opens that
+    ## submenu instead of moving to the menu bar's next menu.
+    pub func set_submenu_selected(selected: bool):
+        self.submenu_selected = selected
 
     ## The theme resolved at the last arrangement: this box's own, or else the one
     ## it inherited from its parent (the application's at the root).

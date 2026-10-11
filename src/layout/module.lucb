@@ -61,13 +61,16 @@ pub enum Alignment as u8:
     stretch = 3
 
 ## Where a popup goes: `below` its parent (flipped above when it does not fit),
-## at the `point` given to `set_popup_point`, centered near the `window_top`, or
-## at the `window_center`. Every placement stays inside the window.
+## at the `point` given to `set_popup_point`, centered near the `window_top`, at
+## the `window_center`, or `beside` its parent at the point's height (right of
+## it, or left when it does not fit: a submenu). Every placement stays inside
+## the window.
 pub enum PopupPlacement as u8:
     below = 0
     point = 1
     window_top = 2
     window_center = 3
+    beside = 4
 
 ## Coordinates are local to the receiving widget. Cancellation clears any press.
 pub struct Event:

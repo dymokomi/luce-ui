@@ -61,18 +61,35 @@ extend Tree:
             return result.success[unit](())
         if let popup = self.popup_index():
             let box = self.entries[popup].box.value()
+            # A submenu belongs to the menu it opened from: the outermost one
+            # switches with the menu bar.
+            let root = self.menu_root(popup)
             if event.kind == input.EventKind.pointer_moved or (event.kind == input.EventKind.pointer_down and event.button == 0):
-                if let peer = self.menu_at(popup, event.x, event.y):
-                    if self.entries[popup].parent != (i64)peer:
-                        return self.switch_menu(popup, peer)
+                if let peer = self.menu_at(root, event.x, event.y):
+                    if self.entries[root].parent != (i64)peer:
+                        return self.switch_menu(root, peer)
             if event.kind == input.EventKind.key_down and not event.repeated and (event.key == input.Key.left or event.key == input.Key.right):
-                if let peer = self.next_menu(popup, event.key == input.Key.left):
-                    return self.switch_menu(popup, peer)
+                # Left leaves a submenu, Right opens the selected row's.
+                let left = event.key == input.Key.left
+                if (left and not box.submenu) or (not left and not box.submenu_selected):
+                    if let peer = self.next_menu(root, left):
+                        return self.switch_menu(root, peer)
             if event.kind == input.EventKind.pointer_down and not inside(box.clipping, event.x, event.y):
                 let cancelled = self.cancel(box.identifier)
                 if not cancelled.is_success():
                     return cancelled
                 cancelled.release()
+                # A press outside a submenu and the menus holding it closes them all.
+                var current = popup
+                while self.entries[current].box.value().submenu:
+                    let holder = self.holding_popup(current) else break
+                    if inside(self.entries[holder].box.value().clipping, event.x, event.y):
+                        break
+                    let closed = self.cancel(self.entries[holder].box.value().identifier)
+                    if not closed.is_success():
+                        return closed
+                    closed.release()
+                    current = holder
                 self.capture = 0
                 return self.arrange(self.width, self.height)
             # Tab stays within the popup; its widget chooses how to navigate.
@@ -257,6 +274,22 @@ extend Tree:
                 return index
         return none
 
+    ## The popup holding the box at `index` (above it in the tree), if any.
+    func holding_popup(index: usize) -> usize?:
+        var cursor = self.entries[index].parent
+        while cursor >= 0:
+            if self.entries[(usize)cursor].box.value().popup:
+                return (usize)cursor
+            cursor = self.entries[(usize)cursor].parent
+        return none
+
+    ## The outermost menu of a submenu chain: `popup` itself when it is no submenu.
+    func menu_root(popup: usize) -> usize:
+        var current = popup
+        while self.entries[current].box.value().submenu:
+            current = self.holding_popup(current) else break
+        return current
+
     func menu_owner(popup: usize) -> usize?:
         let parent = self.entries[popup].parent
         if parent < 0 or not self.entries[(usize)parent].box.value().menu_trigger:
@@ -314,7 +347,7 @@ extend Tree:
         let popup = self.popup_index()
         if let active = popup:
             if not inside(self.entries[active].box.value().clipping, self.pointer_x, self.pointer_y):
-                hovered = self.menu_at(active, self.pointer_x, self.pointer_y)
+                hovered = self.menu_at(self.menu_root(active), self.pointer_x, self.pointer_y)
         if hovered == none:
             var index = self.count
             while index > 0:
@@ -370,7 +403,7 @@ extend Tree:
         var target = self.capture
         if target == 0:
             if let popup = self.popup_index():
-                if let menu = self.menu_at(popup, self.pointer_x, self.pointer_y):
+                if let menu = self.menu_at(self.menu_root(popup), self.pointer_x, self.pointer_y):
                     target = self.entries[menu].box.value().identifier
             if target == 0: target = self.hit(self.pointer_x, self.pointer_y)
         let index = self.find(target) else return input.Cursor.arrow

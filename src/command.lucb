@@ -66,12 +66,15 @@ pub struct Shortcut:
         let length = write_storable(self, buffer)
         return try interop.copy_text((str)buffer[..<length])
 
-## A named action: its caption, shortcut, optional registry id, enabled state
-## and the callbacks that triggering it runs.
+## A named action: its caption, shortcut, optional registry id, icon, enabled
+## state and the callbacks that triggering it runs. A command with `items` is a
+## submenu's title: a menu opens those commands beside it instead of running it.
 pub struct Command:
     let name: interop.Owned[str]
     var caption: interop.Owned[str]
+    var glyph: interop.Owned[str]
     let triggered: interop.Signal[unit]
+    var children: Commands
     var binding: Shortcut
     var enabled: bool
     var divider: bool
@@ -79,16 +82,21 @@ pub struct Command:
 
     ## `divider` makes a non-selectable separator that groups the items around it in a
     ## menu: it carries no caption or action, draws as a line, and is skipped for
-    ## selection and search. Build one with `Command("", divider = true)`.
-    pub func init(text: str, shortcut: Shortcut = Shortcut(), id: str = "", divider: bool = false) -> !:
+    ## selection and search. Build one with `Command("", divider = true)`. `icon`
+    ## names a luciaos-assets icon a menu draws before the caption.
+    pub func init(text: str, shortcut: Shortcut = Shortcut(), id: str = "", divider: bool = false, icon: str = "") -> !:
         let name = try interop.copy_text(id)
         errdefer name.release()
         let caption = try interop.copy_text(text)
         errdefer caption.release()
+        let glyph = try interop.copy_text(icon)
+        errdefer glyph.release()
         let triggered = try interop.Signal[unit]()
         self.name = name
         self.caption = caption
+        self.glyph = glyph
         self.triggered = triggered
+        self.children = Commands()
         self.binding = shortcut
         self.enabled = not divider
         self.divider = divider
@@ -110,6 +118,37 @@ pub struct Command:
         let previous_caption = self.caption
         self.caption = replacement
         previous_caption.release()
+
+    ## The icon's name, empty for none.
+    pub func icon() -> str:
+        return self.glyph.value
+
+    pub func set_icon(icon: str) -> !:
+        let replacement = try interop.copy_text(icon)
+        let previous = self.glyph
+        self.glyph = replacement
+        previous.release()
+
+    ## The submenu's commands; empty for an ordinary command.
+    pub func items() -> const interop.Reference[Command][]:
+        return self.children.values()
+
+    pub func has_items() -> bool:
+        return self.children.values().length > 0
+
+    ## How many commands the submenu has, and the one at `index` (for Luce,
+    ## which reads them one by one).
+    pub func item_count() -> i64:
+        return (i64)self.children.values().length
+
+    pub func item(index: i64) -> interop.Reference[Command]!:
+        if index < 0 or (usize)index >= self.children.values().length:
+            error(result.invalid, "item index is outside this submenu")
+        return self.children.values()[(usize)index].clone()
+
+    ## Make this command a submenu of `items` (none: an ordinary command again).
+    pub func set_items(items: const interop.Reference[Command][]) -> !:
+        try self.children.set(items)
 
     pub func shortcut() -> Shortcut:
         return self.binding
@@ -147,15 +186,19 @@ pub struct Command:
         return self.triggered.emit(()) if self.enabled else result.success[unit](())
 
     pub func close():
+        self.children.close()
         self.triggered.close()
         self.triggered.release()
+        self.glyph.release()
         self.caption.release()
         self.name.release()
 
     func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
         self.name.trace(visit, context)
         self.caption.trace(visit, context)
+        self.glyph.trace(visit, context)
         self.triggered.trace(visit, context)
+        self.children.trace(visit, context)
 
 pub let command_type: interop.Type[Command] = interop.Type[Command]("Command", Command.close, Command.trace, closeable = true, main_thread = true)
 

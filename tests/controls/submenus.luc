@@ -1,0 +1,153 @@
+## Submenus: a command with items opens them beside its row, by pointing, by
+## Right or Enter; choosing there closes the whole chain; Left and Escape go
+## back a level; a press outside closes every level; the menu bar still
+## switches menus from inside a submenu. Commands draw their icons.
+from luce_ui.ui import Application, Font, Command, Menu, Toolbar, VStack, Spacer, Event
+from luce_gpu.gpu import Frame
+from luce_window import window
+from luce_window.input import EventKind, Key
+from luce_std import math
+
+class Tally:
+    var cube: int = 0
+    var plain: int = 0
+    var undo: int = 0
+
+pub func submenus() -> unit!:
+    let font = Font()
+    let tally = Tally()
+    let cube = Command("Cube", icon = "cube")
+    let sphere = Command("Sphere", icon = "sphere")
+    sphere.set_enabled(false)
+    let shapes = Command("Shapes")
+    shapes.set_items([cube, sphere])
+    let plain = Command("Plain")
+    let create = Menu("Create", [shapes, Command("", divider = true), plain], font = font)
+    let undo = Command("Undo")
+    let edit = Menu("Edit", [undo], font = font)
+    let connections = [cube.on_trigger(func (): tally.cube += 1), plain.on_trigger(func (): tally.plain += 1), undo.on_trigger(func (): tally.undo += 1)]
+    let bar = Toolbar([create, edit, Spacer()], font = font)
+    let app = Application(VStack([bar, Spacer()], spacing = 0.0))
+    assert(shapes.has_items() and not cube.has_items() and cube.icon() == "cube")
+    let parent = create.layout().child(0).layout()
+    let pad = math.ceil(font.advance() * 0.6)
+    let row = font.line_height()
+
+    # Keyboard: the first row is selected; Right opens its submenu beside it,
+    # Enter chooses there and closes both.
+    create.open()
+    app.layout(600.0, 400.0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.right))
+    app.layout(600.0, 400.0)
+    let child = parent.child(0).layout()
+    assert(create.is_open() and child.is_visible() and child.is_focused())
+    let outer = parent.bounds()
+    let inner = child.bounds()
+    assert(inner.x >= outer.x + outer.width - 0.5 and math.abs(inner.y - outer.y) < 1.0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    assert(tally.cube == 1 and not create.is_open() and not child.is_visible())
+
+    # Left goes back to the menu, Escape then closes it.
+    create.open()
+    app.layout(600.0, 400.0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    app.layout(600.0, 400.0)
+    assert(child.is_visible())
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.left))
+    app.layout(600.0, 400.0)
+    assert(create.is_open() and not child.is_visible() and parent.is_focused())
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
+    assert(not create.is_open())
+
+    # Pointing at the row opens it; a click on an item chooses it; a disabled
+    # item does nothing.
+    create.open()
+    app.layout(600.0, 400.0)
+    let shapes_y = outer.y + pad + row * 0.5
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = outer.x + 8.0, y = shapes_y))
+    app.layout(600.0, 400.0)
+    assert(child.is_visible())
+    let item = child.bounds()
+    let sphere_y = item.y + pad + row * 1.5
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = item.x + 8.0, y = sphere_y))
+    app.dispatch(Event(kind = EventKind.pointer_down, x = item.x + 8.0, y = sphere_y))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = item.x + 8.0, y = sphere_y))
+    assert(child.is_visible() and create.is_open())
+    let cube_y = item.y + pad + row * 0.5
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = item.x + 8.0, y = cube_y))
+    app.dispatch(Event(kind = EventKind.pointer_down, x = item.x + 8.0, y = cube_y))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = item.x + 8.0, y = cube_y))
+    assert(tally.cube == 2 and not create.is_open() and not child.is_visible())
+
+    # Pointing at an ordinary row closes the submenu.
+    create.open()
+    app.layout(600.0, 400.0)
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = outer.x + 8.0, y = shapes_y))
+    app.layout(600.0, 400.0)
+    assert(child.is_visible())
+    let plain_y = outer.y + pad + row + math.ceil(row * 0.5) + row * 0.5
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = outer.x + 8.0, y = plain_y))
+    app.layout(600.0, 400.0)
+    assert(create.is_open() and not child.is_visible())
+
+    # A press outside the submenu and its menu closes both.
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = outer.x + 8.0, y = shapes_y))
+    app.layout(600.0, 400.0)
+    app.dispatch(Event(kind = EventKind.pointer_down, x = 590.0, y = 390.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = 590.0, y = 390.0))
+    assert(not create.is_open() and not child.is_visible())
+
+    # From inside a submenu, the bar's next title takes over, by pointer and
+    # by Right on a row without items.
+    create.open()
+    app.layout(600.0, 400.0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.right))
+    app.layout(600.0, 400.0)
+    assert(child.is_visible())
+    let title = edit.layout().bounds()
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = title.x + 4.0, y = title.y + 4.0))
+    app.layout(600.0, 400.0)
+    assert(edit.is_open() and not create.is_open() and not child.is_visible())
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
+    create.open()
+    app.layout(600.0, 400.0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.right))
+    app.layout(600.0, 400.0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.right))
+    app.layout(600.0, 400.0)
+    assert(edit.is_open() and not create.is_open())
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
+
+    # The menu's commands replaced: an open submenu closes with them.
+    create.open()
+    app.layout(600.0, 400.0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.right))
+    app.layout(600.0, 400.0)
+    create.set_actions([plain, shapes])
+    app.layout(600.0, 400.0)
+    assert(not child.is_visible())
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
+
+    # Icons widen the list and draw.
+    let iconless = Menu("Shapes", [Command("Cube"), Command("Sphere")], font = font)
+    let iconic = Menu("Shapes", [Command("Cube", icon = "cube"), Command("Sphere", icon = "sphere")], font = font)
+    let measured = Application(VStack([iconless, iconic, Spacer()], spacing = 0.0))
+    iconless.open()
+    measured.layout(400.0, 300.0)
+    let narrow = iconless.layout().child(0).layout().bounds().width
+    measured.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
+    iconic.open()
+    measured.layout(400.0, 300.0)
+    assert(iconic.layout().child(0).layout().bounds().width > narrow)
+    let frame = Frame(window.Size(400.0, 300.0, 400.0, 300.0, 1.0))
+    measured.render(frame.target())
+    create.open()
+    app.layout(600.0, 400.0)
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.right))
+    app.layout(600.0, 400.0)
+    let wide = Frame(window.Size(600.0, 400.0, 600.0, 400.0, 1.0))
+    app.render(wide.target())
+    wide.close()
+    frame.close()
+    for connection in connections:
+        connection.disconnect()
