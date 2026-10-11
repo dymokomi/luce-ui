@@ -302,6 +302,14 @@ pub struct Application:
         try self.check()
         try self.commands.set(commands)
 
+    ## Get the desktop's open dialog ready, so the first `open_file`, `open_files`
+    ## or `choose_folder` shows at once: macOS takes about a quarter of a second
+    ## to make its first open panel. Call it once the window shows and the app is
+    ## idle (a short `after` timer), not in a hurry. Elsewhere it does nothing.
+    pub func prepare_dialogs() -> !:
+        try self.check()
+        try dialogs.prepare()
+
     ## Show the desktop's open-file dialog with `message` and return the chosen
     ## path, or an empty string when it was canceled.
     pub func open_file(message: str) -> interop.Owned[str]!:
