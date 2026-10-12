@@ -1,12 +1,16 @@
 ## Submenus: a command with items opens them beside its row, by pointing, by
 ## Right or Enter; choosing there closes the whole chain; Left and Escape go
 ## back a level; a press outside closes every level; the menu bar still
-## switches menus from inside a submenu. Commands draw their icons.
+## switches menus from inside a submenu. Commands draw their icons. A menu
+## keeps all its rows while one of them has its submenu open.
 from luce_ui.ui import Application, Font, Command, Menu, Toolbar, VStack, Spacer, Event
 from luce_gpu.gpu import Frame
 from luce_window import window
 from luce_window.input import EventKind, Key
 from luce_std import math
+
+class Count:
+    var count: int = 0
 
 class Tally:
     var cube: int = 0
@@ -128,6 +132,8 @@ pub func submenus() -> unit!:
     assert(not child.is_visible())
     app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
 
+    rows_stay(font)
+
     # Icons widen the list and draw.
     let iconless = Menu("Shapes", [Command("Cube"), Command("Sphere")], font = font)
     let iconic = Menu("Shapes", [Command("Cube", icon = "cube"), Command("Sphere", icon = "sphere")], font = font)
@@ -151,3 +157,35 @@ pub func submenus() -> unit!:
     frame.close()
     for connection in connections:
         connection.disconnect()
+
+## The menu keeps all its rows while a submenu is open: Down past a divider
+## to the submenu's row does not scroll the rows above it out of a menu that
+## fits, so its first row is still there to click.
+func rows_stay(font: Font) -> unit!:
+    let pad = math.ceil(font.advance() * 0.6)
+    let row = font.line_height()
+    let paste = Command("Paste")
+    let more = Command("Create")
+    more.set_items([Command("Cube"), Command("Sphere")])
+    let canvas = Menu("Canvas", [paste, Command("", divider = true), more], font = font)
+    let pasted = Count()
+    let pasting = paste.on_trigger(func (): pasted.count += 1)
+    let host = Application(VStack([canvas, Spacer()], spacing = 0.0))
+    let rows = canvas.layout().child(0).layout()
+    canvas.open()
+    host.layout(600.0, 400.0)
+    host.dispatch(Event(kind = EventKind.key_down, key = Key.down))
+    host.dispatch(Event(kind = EventKind.key_down, key = Key.right))
+    host.layout(600.0, 400.0)
+    let nested = rows.child(0).layout()
+    assert(canvas.is_open() and nested.is_visible())
+    let shown = Frame(window.Size(600.0, 400.0, 600.0, 400.0, 1.0))
+    host.render(shown.target())
+    shown.close()
+    let menu_box = rows.bounds()
+    let paste_y = menu_box.y + pad + row * 0.5
+    host.dispatch(Event(kind = EventKind.pointer_moved, x = menu_box.x + 8.0, y = paste_y))
+    host.dispatch(Event(kind = EventKind.pointer_down, x = menu_box.x + 8.0, y = paste_y))
+    host.dispatch(Event(kind = EventKind.pointer_up, x = menu_box.x + 8.0, y = paste_y))
+    assert(pasted.count == 1 and not canvas.is_open() and not nested.is_visible())
+    pasting.disconnect()

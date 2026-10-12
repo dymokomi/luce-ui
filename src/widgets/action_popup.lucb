@@ -413,13 +413,28 @@ pub struct ActionPopup: Widget:
             index = (index + direction + count) % count
             if self.commands.values()[self.matches[(usize)index]].value().is_enabled():
                 self.selected = index
-                let rows = (i64)math.max(1.0, (self.box.value().bounds().height - self.top() - self.pad_y()) / self.row_height())
-                if index < self.first:
-                    self.first = index
-                elif index >= self.first + rows:
-                    self.first = index - rows + 1
+                self.scroll_to(index)
                 self.box.value().invalidate()
                 return
+
+    ## Scroll so display row `index` shows: up to it when it is above the
+    ## first row shown, else just far enough that it ends inside the popup.
+    ## Rows are measured by their extents, since a divider is a slim row: a
+    ## row stride would scroll a menu that fits (dividers and all) off its
+    ## first rows.
+    func scroll_to(index: i64):
+        if index < self.first:
+            self.first = index
+            return
+        let room = self.box.value().bounds().height - self.top() - self.pad_y()
+        var used: f64 = 0.0
+        var row = self.first
+        while row <= index:
+            used += self.extent(row)
+            row += 1
+        while self.first < index and used > room + 0.01:
+            used -= self.extent(self.first)
+            self.first += 1
 
     ## The wheel scrolls the rows, three to a notch (a trackpad's points by the
     ## row), and the row now under the pointer is the one selected.
