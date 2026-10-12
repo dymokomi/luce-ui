@@ -559,6 +559,9 @@ pub struct Application:
         var count: i64 = 0
         var blocking = false
         while self.running:
+            # nothing is midway through replacing a traced field here: collect the cycles
+            # that releases through native handles left waiting (`ownership.safe_point`)
+            ownership.safe_point()
             # Block until an event, a timer deadline, a blinking caret, or a wake() from
             # a worker thread — so an idle window costs no CPU. The first pass renders at
             # once, and a frame_limit run never blocks so tests stay deterministic.
