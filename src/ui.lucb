@@ -23,6 +23,7 @@ pub type CursorSource = cursor.CursorSource
 import painter
 import result
 import widgets.text
+import widgets.paragraph
 import widgets.button
 import widgets.slider
 import widgets.shelf
@@ -75,6 +76,7 @@ import image
 pub type Image = image.Image
 pub let image_type = image.image_type
 pub type Text = text.Text
+pub type Paragraph = paragraph.Paragraph
 pub type Button = button.Button
 pub type Slider = slider.Slider
 pub type Shelf = shelf.Shelf
@@ -134,6 +136,7 @@ pub let text_field_type = text_field.text_field_type
 pub let number_field_type = number_field.number_field_type
 pub let curve_editor_type = curve_editor.curve_editor_type
 pub let text_type = text.text_type
+pub let paragraph_type = paragraph.paragraph_type
 pub let spacer_type = spacer.spacer_type
 pub let viewport_type = viewport.viewport_type
 import widgets.scene_view

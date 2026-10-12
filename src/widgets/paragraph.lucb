@@ -1,0 +1,120 @@
+## The Paragraph widget: text wrapped at spaces to the width it is given, as
+## many lines as it takes, in the theme's foreground or muted. A newline ends a
+## line and a blank line leaves an empty one (markup.lucb's `wrap`, without its
+## backtick spans: they show as typed here).
+##
+## Layout measures a widget before it knows the width it will get, so a
+## paragraph wraps to the width it was last drawn at (about forty columns before
+## its first draw), and lays itself out again when that width changes.
+from luce_gpu import gpu
+import interop
+from luce_std import math
+import ownership
+import layout
+import result
+from layout import Widget, Layout, Size, Constraints, Event
+from painter import Painter
+from font import Font, selected_font
+from text.markup import wrap
+
+## Columns a paragraph wraps to before it is first drawn.
+let first_columns: usize = 40
+
+pub struct Paragraph: Widget:
+    let box: interop.Reference[Layout]
+    var body: interop.Owned[str]
+    let font: interop.Reference[Font]
+    var muted: bool
+    ## The width it was last drawn at, 0 before its first draw.
+    var drawn_width: f64
+
+    pub func init(text: str, font: interop.Reference[Font]? = none, muted: bool = false) -> !:
+        var selected = try selected_font(font)
+        errdefer selected.release()
+        let box = try layout.make_layout()
+        errdefer box.release()
+        try box.value().set_shrink(vertical = 0.0)
+        self.body = try interop.copy_text(text)
+        self.box = box
+        self.font = selected
+        self.muted = muted
+        self.drawn_width = 0.0
+
+    pub func layout() -> interop.Reference[Layout]:
+        return self.box.clone()
+
+    pub func text() -> interop.Owned[str]:
+        return self.body.clone()
+
+    pub func set_text(text: str) -> !:
+        let replacement = try interop.copy_text(text)
+        let previous = self.body
+        self.body = replacement
+        previous.release()
+        self.box.value().invalidate()
+
+    ## The columns of the width it wraps to.
+    func columns() -> usize:
+        let advance = math.max(self.font.value().advance(), 1.0)
+        if self.drawn_width <= 0.0:
+            return first_columns
+        return (usize)math.max(1.0, math.floor(self.drawn_width / advance))
+
+    ## How many lines the text takes in `columns`.
+    func line_count(columns: usize) -> usize:
+        let text = self.body.value
+        var count: usize = 0
+        var at: usize = 0
+        while at < text.length:
+            let (_, next) = wrap(text, at, columns)
+            at = next
+            count += 1
+        return count
+
+    pub func measure(available: Constraints) -> interop.Outcome[Size]:
+        let columns = self.columns()
+        let lines = self.line_count(columns)
+        # Narrow, so it never widens what holds it; its parent stretches it.
+        let width = math.min(available.width, (f64)first_columns * self.font.value().advance())
+        return result.success[Size](Size(width, (f64)lines * self.font.value().line_height()))
+
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.paint(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        return result.success[unit](())
+
+    func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        let size = try target.get().size()
+        if math.abs(size.width - self.drawn_width) > 0.5:
+            # Laid out at another width: wrap to this one from the next layout.
+            self.drawn_width = size.width
+            self.box.value().invalidate()
+        var painter = try Painter(target)
+        defer painter.close()
+        let color = self.box.value().theme().muted if self.muted else self.box.value().theme().foreground
+        let text = self.body.value
+        let line = self.font.value().line_height()
+        let columns = self.columns()
+        var at: usize = 0
+        var y = 0.0
+        while at < text.length:
+            let (end, next) = wrap(text, at, columns)
+            if end > at:
+                try painter.text((str)text.bytes[at..<end], 0.0, y, color = color, font = self.font)
+            at = next
+            y += line
+
+    pub func event(event: Event) -> interop.Outcome[unit]:
+        return result.success[unit](())
+
+    pub func close():
+        self.font.release()
+        self.body.release()
+        self.box.release()
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        self.font.trace(visit, context)
+        self.box.trace(visit, context)
+        self.body.trace(visit, context)
+
+pub let paragraph_type: interop.Type[Paragraph] = interop.Type[Paragraph]("Paragraph", Paragraph.close, Paragraph.trace, closeable = true, main_thread = true)
