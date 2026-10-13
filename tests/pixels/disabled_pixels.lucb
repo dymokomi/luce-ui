@@ -1,0 +1,57 @@
+## A disabled button's icon is its ink at Theme.disabled's opacity: black on white
+## goes from full ink to a pale grey, read back from an offscreen Metal texture.
+from luce_gpu import gpu
+import interop
+import memory
+from luce_ui import ui
+from luce_ui.ui import Application, Button, ButtonStyle, Widget
+
+## The darkest red value in an rgba8 picture.
+func darkest(pixels: const u8[]) -> u8:
+    var least: u8 = 255
+    var at: usize = 0
+    while at < pixels.length:
+        if pixels[at] < least:
+            least = pixels[at]
+        at += 4
+    return least
+
+func rendered(app: interop.Reference[Application], texture: gpu.Texture, pixels: u8[]) -> !:
+    let frame = try texture.frame()
+    defer frame.release()
+    let target = try frame.value().target()
+    defer target.release()
+    let drawn = app.value().render(target)
+    defer drawn.release()
+    try drawn.get()
+    _ = try frame.value().present(gpu.Color(1.0, 1.0, 1.0, 1.0))
+    try texture.read(pixels)
+
+pub func pale_icons(device: gpu.Device) -> !:
+    let button = try interop.Reference[Button].adopt(new Button(icon = "brush-tool") in memory.heap, ui.button_type, memory.heap)
+    defer button.release()
+    button.value().set_style(ButtonStyle.plain)
+    let root = button.as_interface[Widget](button.value())
+    defer root.release()
+    let white = gpu.Color(1.0, 1.0, 1.0)
+    let theme = ui.Theme(background = white, panel = white, button = white, foreground = gpu.Color())
+    let app = try interop.Reference[Application].adopt(new Application(root, theme = theme) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    let laid = app.value().layout(48.0, 48.0)
+    defer laid.release()
+    try laid.get()
+    var texture = try gpu.Texture.create(device, 48, 48, gpu.Format.rgba8)
+    defer texture.destroy()
+    var pixels: u8[48 * 48 * 4]
+    try rendered(app, texture, pixels)
+    let enabled = darkest(pixels)
+    button.value().set_enabled(false)
+    assert(not button.value().is_enabled())
+    try rendered(app, texture, pixels)
+    let disabled = darkest(pixels)
+    assert(enabled < 40)
+    assert(disabled > 140 and disabled < 235)
+    button.value().set_enabled(true)
+    try rendered(app, texture, pixels)
+    assert(darkest(pixels) == enabled)
+    print(f"ok disabled icons are pale: darkest {enabled} enabled, {disabled} disabled")

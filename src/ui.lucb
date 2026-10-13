@@ -205,6 +205,8 @@ pub type TextChange = document.TextChange
 
 import theme
 pub type Theme = theme.Theme
+## How much of its ink a disabled control keeps (`Theme.disabled`).
+pub let disabled_opacity = theme.disabled_opacity
 pub let default_spacing = theme.default_spacing
 pub let default_padding = theme.default_padding
 

@@ -53,3 +53,31 @@ pub func buttons() -> unit!:
     assert(pad.ups.length == 1 and pad.ups[0] == 2)
     assert(pad.moves >= 1)
     assert(other.layout().is_focused() and not pad.layout().is_focused())
+
+## A disabled button takes no click, Space or Enter, yet still hears the pointer, so a
+## tooltip over it can show; enabled again it clicks.
+pub func disabled_buttons() -> unit!:
+    let font = Font()
+    let button = Button(icon = "brush-tool", font = font)
+    var clicks = 0
+    let connection = button.on_click(func () -> unit!:
+        clicks += 1)
+    let app = Application(VStack([button]))
+    app.layout(200.0, 100.0)
+    let area = button.layout().bounds()
+    let x = area.x + area.width * 0.5
+    let y = area.y + area.height * 0.5
+    button.set_enabled(false)
+    assert(not button.is_enabled())
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x, y = y))
+    assert(button.layout().contains_pointer())
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x, y = y))
+    button.click()
+    assert(clicks == 0)
+    button.set_enabled(true)
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x, y = y))
+    assert(clicks == 1 and button.is_enabled())
+    connection.disconnect()
+    app.close()

@@ -67,6 +67,9 @@ pub struct Button: Widget:
     var hold_fired: bool
     ## A small corner mark: more choices behind this button (a tool group).
     var grouped: bool
+    ## Off: the button takes no clicks and shows no hover, its icon and label pale
+    ## (`set_enabled`), while its box still hears the pointer for a tooltip.
+    var switched_on: bool
 
     ## `text` and `action` are exclusive; `icon` names a luciaos-assets icon.
     pub func init(text: str = "", font: interop.Reference[Font]? = none, action: interop.Reference[Command]? = none, icon: str = "") -> !:
@@ -102,6 +105,7 @@ pub struct Button: Widget:
         self.pressed_at = 0
         self.hold_fired = false
         self.grouped = false
+        self.switched_on = true
         self.pressed = false
         self.pressed_key = input.Key.unknown
         self.box = box
@@ -186,9 +190,27 @@ pub struct Button: Widget:
             return action.value().trigger()
         return self.clicked.emit(())
 
-    func is_enabled() -> bool:
-        let action = self.action else return self.box.value().is_enabled()
-        return self.box.value().is_enabled() and action.value().is_enabled()
+    ## Enable or disable the button, as an application's command state says. A
+    ## disabled button ignores clicks, Space and Enter, shows no hover or press, and
+    ## draws its icon and label pale (`Theme.disabled`); unlike `Layout.set_enabled`
+    ## it still hears the pointer, so a tooltip over it still shows. An action
+    ## button is also disabled while its action is.
+    pub func set_enabled(enabled: bool):
+        if enabled == self.switched_on:
+            return
+        self.switched_on = enabled
+        self.pressed = false
+        if self.action == none:
+            self.box.value().set_cursor(input.Cursor.pointer if enabled else input.Cursor.arrow)
+        self.box.value().invalidate()
+
+    ## Whether a click would do something: the button, its box and its action are
+    ## all enabled.
+    pub func is_enabled() -> bool:
+        if not self.switched_on or not self.box.value().is_enabled():
+            return false
+        let action = self.action else return true
+        return action.value().is_enabled()
 
     ## The icon's side: the row height less a little air.
     func glyph_size() -> f64:
@@ -235,7 +257,8 @@ pub struct Button: Widget:
             try painter.rounded_rectangle(gpu.Rect(1.5, 1.5, size.width - 3.0, size.height - 3.0), color, math.max(0.0, theme.control_radius - 1.5))
         let caption = self.text()
         defer caption.release()
-        let ink = theme.accent_text if self.style == ButtonStyle.selected else (theme.foreground if self.is_enabled() else theme.muted)
+        let normal = theme.accent_text if self.style == ButtonStyle.selected else theme.foreground
+        let ink = normal if self.is_enabled() else theme.disabled(normal)
         var x = theme.inset(self.font)
         if self.glyph.value.length > 0:
             let side = self.glyph_size()
@@ -254,6 +277,10 @@ pub struct Button: Widget:
         if event.kind == input.EventKind.pointer_moved and not event.cancelled:
             return result.success[unit](())
         if event.cancelled:
+            self.pressed = false
+            self.pressed_key = input.Key.unknown
+        elif not self.is_enabled():
+            # Disabled: no press to show, nothing to click.
             self.pressed = false
             self.pressed_key = input.Key.unknown
         elif event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:

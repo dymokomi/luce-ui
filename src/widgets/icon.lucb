@@ -11,11 +11,12 @@ from painter import Painter
 from font import Font, selected_font
 
 ## One built-in icon (an IconKind), drawn in the theme's foreground as a square
-## of the font's height, centered in a box one line tall.
+## of the font's height, centered in a box one line tall; pale while disabled.
 pub struct Icon: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]
     var kind: IconKind
+    var switched_on: bool
 
     pub func init(kind: IconKind, font: interop.Reference[Font]? = none) -> !:
         let selected = try selected_font(font)
@@ -23,6 +24,7 @@ pub struct Icon: Widget:
         self.box = try layout.make_layout()
         self.font = selected
         self.kind = kind
+        self.switched_on = true
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -30,6 +32,14 @@ pub struct Icon: Widget:
     pub func set_kind(kind: IconKind):
         self.kind = kind
         self.box.value().invalidate()
+
+    ## Draw the icon pale (`Theme.disabled`) while disabled.
+    pub func set_enabled(enabled: bool):
+        self.switched_on = enabled
+        self.box.value().invalidate()
+
+    pub func is_enabled() -> bool:
+        return self.switched_on and self.box.value().is_enabled()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(self.font.value().height(), self.font.value().line_height()))
@@ -44,7 +54,9 @@ pub struct Icon: Widget:
         defer painter.close()
         let size = try target.get().size()
         let extent = self.font.value().height()
-        try icons.draw(&painter, self.kind, gpu.Rect((size.width - extent) * 0.5, (size.height - extent) * 0.5, extent, extent), self.box.value().theme().foreground)
+        let theme = self.box.value().theme()
+        let ink = theme.foreground if self.is_enabled() else theme.disabled(theme.foreground)
+        try icons.draw(&painter, self.kind, gpu.Rect((size.width - extent) * 0.5, (size.height - extent) * 0.5, extent, extent), ink)
 
     pub func event(event: Event) -> interop.Outcome[unit]:
         return result.success[unit](())

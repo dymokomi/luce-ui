@@ -12,6 +12,9 @@ import result
 pub let default_spacing: f64 = 8.0
 pub let default_padding: f64 = 12.0
 
+## How much of its ink a disabled control keeps (`Theme.disabled`).
+pub let disabled_opacity: f64 = 0.35
+
 pub struct Theme:
     pub var background: gpu.Color = gpu.Color(0.012, 0.017, 0.027)
     pub var panel: gpu.Color = gpu.Color(0.021, 0.028, 0.041)
@@ -81,6 +84,11 @@ pub struct Theme:
     pub func inset(font: interop.Reference[Font]) -> f64:
         return math.ceil(font.value().advance() * self.inset_cells)
 
+    ## `ink` as a disabled control draws it: the same color at `disabled_opacity` of its
+    ## alpha, so a disabled icon or label reads pale in either theme and over any face.
+    pub func disabled(ink: gpu.Color) -> gpu.Color:
+        return gpu.Color(ink.red, ink.green, ink.blue, ink.alpha * disabled_opacity)
+
     ## Interaction states are derived, not stored, so a palette cannot fall out of
     ## step with itself. Each lifts a surface toward the foreground in perceptual
     ## lightness, keeping its hue: a grayscale theme stays gray, a tinted one tints.
@@ -109,10 +117,10 @@ pub struct Theme:
 
     pub func editor() -> EditorTheme:
         return EditorTheme(background = self.background, foreground = self.foreground,
-            gutter = self.gutter, line_number = self.muted, current_line = self.panel,
-            gutter_active = self.gutter_active(), gutter_hover = self.gutter_hover(), active_line_number = self.foreground,
-            selection = lift(self.selection, self.foreground, 0.28), caret = lift(self.accent, self.foreground, 0.6), caret_width = self.caret_width, scrollbar = self.border,
-            diagnostic_error = self.diagnostic_error, diagnostic_warning = self.diagnostic_warning, diagnostic_info = self.diagnostic_info)
+                           gutter = self.gutter, line_number = self.muted, current_line = self.panel,
+                           gutter_active = self.gutter_active(), gutter_hover = self.gutter_hover(), active_line_number = self.foreground,
+                           selection = lift(self.selection, self.foreground, 0.28), caret = lift(self.accent, self.foreground, 0.6), caret_width = self.caret_width, scrollbar = self.border,
+                           diagnostic_error = self.diagnostic_error, diagnostic_warning = self.diagnostic_warning, diagnostic_info = self.diagnostic_info)
 
 ## Perceptual lift of a surface toward a reference lightness, keeping its hue.
 func lift(base: gpu.Color, reference: gpu.Color, amount: f64) -> gpu.Color:

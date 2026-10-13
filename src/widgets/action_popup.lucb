@@ -373,8 +373,8 @@ pub struct ActionPopup: Widget:
             let caption = action.value().text()
             defer caption.release()
             let text_y = y + (height - self.font.value().height()) * 0.5
-            let plain = theme.foreground if action.value().is_enabled() else theme.muted
-            let ink = theme.on_menu_selection(plain) if lit else plain
+            let shown = theme.on_menu_selection(theme.foreground) if lit else theme.foreground
+            let ink = shown if action.value().is_enabled() else theme.disabled(shown)
             if action.value().icon() != "":
                 let side = self.font.value().height() * 1.15
                 try icons.draw_named(&painter, action.value().icon(), gpu.Rect(self.pad_x(), y + (height - side) * 0.5, side, side), ink)

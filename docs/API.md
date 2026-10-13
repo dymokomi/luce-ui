@@ -8,7 +8,7 @@ All objects and callbacks belong to the main thread.
 
 | Object | Construction and operations |
 | --- | --- |
-| `Button` | `Button(text)` or `Button(action = action)`, `text`, `set_text`, `on_click`, `click`, `layout` |
+| `Button` | `Button(text)`, `Button(icon = name)` or `Button(action = action)`, `text`, `set_text`, `set_icon`, `set_style`, `set_enabled`/`is_enabled`, `on_click`, `click`, `layout` |
 | `Text` | `Text(text)`, `text`, `set_text`, `layout` |
 | `Spacer` | `Spacer(weight=1)`, `layout` |
 | `VStack`, `HStack` | Heterogeneous children, spacing, padding, alignment; `set_children`, `layout` |
@@ -16,7 +16,7 @@ All objects and callbacks belong to the main thread.
 | `PaneHeader` | Title, optional `icon`, `detail`, shared font; `set_text`, `set_detail`, `set_icon` |
 | `Panel` | `Panel(text, content, icon=..., minimum=..., closable=true)`; persistent tab content, `set_text`, `set_detail`, `set_icon`, `set_content` |
 | `DStack` | Panels and shared font; `add`, `move`, `remove`, `select`, `focus_next`, `set_fraction`, add/select/close callbacks |
-| `Icon` | `Icon(kind, font=...)`; vector symbol sized to its font, `set_kind`, `layout` |
+| `Icon` | `Icon(kind, font=...)`; vector symbol sized to its font, `set_kind`, `set_enabled`, `layout` |
 | `SplitView` | Two widgets, `axis`, preferred `fraction`, `handle_width`; `fraction`, `set_fraction`, `layout` |
 | `Viewport` | Preferred minimum width/height; `on_render`, `layout` |
 | `SceneView` | `SceneView(scene, camera, renderer=none, width=320, height=240)`: a Viewport drawing a luce-3d scene; `scene`, `camera`, `renderer`, `layout` |
@@ -50,6 +50,15 @@ during delivery skips disconnected callbacks, new subscriptions start with the
 next emission, and the first failure stops that emission. Both the error code and
 dynamic message survive native cleanup. Native and managed cycles use the shared
 collector; no pending-event counters or polling are involved.
+
+A disabled control draws its icon and label pale: its normal ink at
+`ui.disabled_opacity` (35%) of its alpha, `Theme.disabled(ink)`, in either theme;
+a widget an application draws itself (a marking menu, a tool rail) uses the same
+call. `Button.set_enabled(false)` ignores clicks, Space and Enter and shows no hover
+or press, but still hears the pointer, so a tooltip over it shows;
+`Layout.set_enabled(false)` instead takes the whole subtree out of input, hover
+included. An action button follows its action's enabled state too, and a menu row
+its command's. `Icon.set_enabled` draws an icon pale.
 
 `Layout` stores constraints and child ownership independently of control state.
 Use `set_size`, `set_limits`, `set_flex`, `set_shrink`, `set_enabled`, `set_focusable`,

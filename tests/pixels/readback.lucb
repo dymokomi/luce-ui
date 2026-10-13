@@ -15,6 +15,7 @@ import ramp_pixels
 import run_loop_pixels
 import present_retry_pixels
 import crash_window_pixels
+import disabled_pixels
 from luce_ui.ui import Application, Button, Viewport, HStack, Widget, Painter, Rect, Size, Alignment
 
 struct Paint:
@@ -145,6 +146,7 @@ pub func main(arguments: str[]) -> i32!:
     try text_pixels.diagnostic_marks(host, surface)
     try text_pixels.completion_popup(host, surface)
     try ramp_pixels.check(host, surface)
+    try disabled_pixels.pale_icons(device)
     print("ok UI Metal pixels, ancestor clipping, resize and expired viewport")
     try run_loop_pixels.wakes()
     try run_loop_pixels.frame_failures()
