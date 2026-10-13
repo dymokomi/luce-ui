@@ -58,6 +58,7 @@ pub func primary_key_name() -> str:
 ## The key that clears a selection: macOS's delete (Backspace), Delete elsewhere.
 pub func clear_key() -> input.Key:
     return input.Key.backspace if platform.macos else input.Key.delete
+
 pub type Widget = layout.Widget
 pub type Layout = layout.Layout
 pub type Size = layout.Size
@@ -104,6 +105,16 @@ pub type HStack = hstack.HStack
 
 import application
 pub type Application = application.Application
+import notifiers
+pub type Notifier = notifiers.Notifier
+pub let notifier_type = notifiers.notifier_type
+pub type NotifyHandle = notifiers.NotifyHandle
+
+## A hold on `notifier` for a worker thread (`Application.notifier`): made on the main
+## thread, then `notify` from anywhere and `release` when done.
+pub func notify_handle(notifier: interop.Reference[Notifier]) -> NotifyHandle!:
+    return try notifiers.notify_handle(notifier)
+
 pub type CrashWindow = application.CrashWindow
 pub type CrashChoice = application.CrashChoice
 
@@ -184,6 +195,7 @@ pub let histogram_type = histogram.histogram_type
 import widgets.thumbnail_grid
 pub type ThumbnailGrid = thumbnail_grid.ThumbnailGrid
 pub let thumbnail_grid_type = thumbnail_grid.thumbnail_grid_type
+
 ## A color label's swatch (1–7: red, orange, yellow, green, blue, purple, grey).
 pub func label_color(label: i64) -> gpu.Color:
     return thumbnail_grid.label_color((u8)label) if label >= 0 and label <= 7 else gpu.Color(0.0, 0.0, 0.0, 0.0)

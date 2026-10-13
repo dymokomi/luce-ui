@@ -115,13 +115,20 @@ most; input, or the next submitted frame, ends the backoff.
 
 An idle `run` blocks in the window's wait and uses no CPU. It runs a turn (frame
 callbacks, timers, watches, a frame when something changed) when input arrives,
-a timer is due, `window.wake()` is called from another thread, or:
+a timer is due, a notifier is notified, `window.wake()` is called from another
+thread, or:
 
 - `wake_at(instant)` comes: an instant in `time.now()`'s monotonic nanoseconds,
   or `wake_after(seconds)`. One request at a time, each call replacing the last
   and 0 dropping it; an earlier timer or event still runs first. For an engine
   that knows when its next work is due (a page's timers and animations), set it
   each turn instead of keeping an `after` timer to cancel and reschedule.
+- A notifier is notified: `notifier(callback)` makes one, and `notify()` on it,
+  or on a worker thread's `ui.notify_handle(notifier)` (plain data any thread may
+  keep; `release` it when done), runs `callback` once on the loop's next turn,
+  however many notifies came before it. Background work keeps its results itself,
+  in its own locked queue, and only says there are some: no timer polls for them.
+  `close()` stops it; a handle outliving the notifier is harmless. Up to 256.
 - A descriptor given to `watch(descriptor, callback, readable=true,
   writable=false)` turns ready: a socket, or outside Windows a pipe. The callback
   runs on the main loop; readiness is level-triggered, so read or write until the

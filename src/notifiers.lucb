@@ -1,0 +1,249 @@
+## Notifiers: a callback on the main loop that any thread may ask to run. A worker keeps
+## its results where it likes (its own locked queue) and only says "there is something":
+## `NotifyHandle.notify` marks the notifier and wakes the loop if it sleeps
+## (luce-window's `window.wake`, safe from any thread), and the loop's next turn runs the
+## callback once, however many notifies came before it. The loop never polls on a timer
+## for background work.
+##
+## What threads share is a small core: whether it was notified, whether its notifier
+## was closed, and how many hold it (the notifier, the loop's registry and every
+## handle); the last to let go frees it, so a handle may outlive the notifier and a
+## notify racing a close is harmless.
+import interop
+import memory
+import ownership
+import result
+import thread
+from luce_window import window
+
+struct NotifyCore:
+    var pending: @u8
+    var closed: @u8
+    var holders: @u64
+
+func core_hold(core: NotifyCore*):
+    _ = core.holders.add(1, .relaxed)
+
+func core_release(core: NotifyCore*):
+    if core.holders.sub(1, .acq_rel) == 1:
+        free(u8[]((u8*)core, memory.size_of(NotifyCore))) in memory.heap
+
+## A thread's hold on a notifier (`notify_handle`): plain data any thread may keep and
+## use. Release it once the thread is done; it then no longer keeps the shared core.
+pub struct NotifyHandle:
+    let core: NotifyCore*
+
+    ## Ask for the notifier's callback to run once on the main loop at its next turn,
+    ## waking the loop if it sleeps. Any thread, any number of times: the notifies
+    ## before that turn run it once. A notifier closed already ignores it.
+    pub func notify():
+        if self.core.closed.load(.acquire) != 0:
+            return
+        if self.core.pending.swap(1, .acq_rel) == 0:
+            window.wake() catch failure:
+                _ = failure
+
+    ## Another hold on the same notifier, for another thread.
+    pub func clone() -> NotifyHandle:
+        core_hold(self.core)
+        return NotifyHandle(core = self.core)
+
+    ## Let go of the notifier; the handle is not used after.
+    pub func release():
+        core_release(self.core)
+
+## A main-loop callback any thread can ask to run (`Application.notifier`). The program
+## hands `notify_handle(notifier)` to its worker threads; `notify` here asks the same
+## from the main thread. Closing it stops the callback.
+pub struct Notifier:
+    var core: NotifyCore*?
+
+    ## Ask for the callback to run on the loop's next turn. Main thread; a worker uses
+    ## its `NotifyHandle`.
+    pub func notify() -> !:
+        let core = self.core else error(result.invalid, "the notifier is closed")
+        NotifyHandle(core = core).notify()
+
+    ## Stop the callback: notifies after this run nothing, and the loop lets it go.
+    pub func close():
+        let core = self.core else return
+        self.core = none
+        core.closed.store(1, .release)
+        core_release(core)
+
+pub let notifier_type: interop.Type[Notifier] = interop.Type[Notifier]("Notifier", Notifier.close, closeable = true, main_thread = true)
+
+## A hold on `notifier` for a worker thread: made on the main thread, then used anywhere.
+pub func notify_handle(notifier: interop.Reference[Notifier]) -> NotifyHandle!:
+    let core = (try notifier.get()).core else error(result.invalid, "the notifier is closed")
+    core_hold(core)
+    return NotifyHandle(core = core)
+
+struct Slot:
+    var core: NotifyCore*?
+    var callback: interop.Callback[unit, unit]?
+
+## The run loop's notifiers: up to 256, each a core and its callback. `service`, once a
+## turn, runs the callback of each one notified since and lets the closed ones go.
+pub struct Notifiers:
+    var slots: Slot[]
+
+    pub func init():
+        var empty: Slot[]
+        self.slots = empty
+
+    ## A notifier whose notifies run `callback` on the loop.
+    pub func add(callback: interop.Callback[unit, unit]) -> interop.Reference[Notifier]!:
+        var free_slot = self.slots.length
+        for index in 0..<self.slots.length:
+            if self.slots[index].core == none:
+                free_slot = index
+                break
+        if free_slot == self.slots.length:
+            if self.slots.length >= 256:
+                error(result.limit, "an application holds at most 256 notifiers")
+            var grown = try new Slot[self.slots.length + 8] --- in memory.heap
+            for index in 0..<grown.length:
+                grown[index] = self.slots[index] if index < self.slots.length else Slot(core = none, callback = none)
+            if self.slots.length > 0:
+                free(self.slots) in memory.heap
+            self.slots = grown
+        let block = try new u8[memory.size_of(NotifyCore)] --- in memory.heap
+        memory.set(block, 0)
+        let core = (NotifyCore*)block.data
+        # held by the registry and by the notifier
+        core.holders.store(2, .relaxed)
+        errdefer core_release(core)
+        errdefer core_release(core)
+        let notifier = try interop.Reference[Notifier].adopt(new Notifier(core = core) in memory.heap, notifier_type, memory.heap)
+        self.slots[free_slot] = Slot(core = core, callback = callback.clone())
+        return notifier
+
+    ## Run the callback of every notifier notified since the last turn, each once, and
+    ## let the closed ones go. Returns the first callback failure, as the timers do.
+    pub func service() -> interop.Outcome[unit]:
+        for index in 0..<self.slots.length:
+            let core = self.slots[index].core else continue
+            if core.closed.load(.acquire) != 0:
+                self.drop(index)
+                continue
+            if core.pending.swap(0, .acq_rel) == 0:
+                continue
+            let callback = self.slots[index].callback else continue
+            let outcome = callback.invoke(())
+            if not outcome.is_success():
+                return outcome
+            outcome.release()
+        return result.success[unit](())
+
+    ## Whether a notifier was notified and its turn has not run yet: the loop does not
+    ## sleep then.
+    pub func waiting() -> bool:
+        for slot in self.slots:
+            if let core = slot.core:
+                if core.pending.load(.acquire) != 0 and core.closed.load(.acquire) == 0:
+                    return true
+        return false
+
+    func drop(index: usize):
+        # Empty the slot before the release: dropping a closure's last edge can run a
+        # collection that traces these notifiers.
+        let core = self.slots[index].core
+        let held = self.slots[index].callback
+        self.slots[index] = Slot(core = none, callback = none)
+        if let callback = held:
+            callback.release()
+        if let shared = core:
+            core_release(shared)
+
+    pub func close():
+        for index in 0..<self.slots.length:
+            if self.slots[index].core != none:
+                self.drop(index)
+        if self.slots.length > 0:
+            free(self.slots) in memory.heap
+        var empty: Slot[]
+        self.slots = empty
+
+    pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        for slot in self.slots:
+            if let callback = slot.callback:
+                callback.trace(visit, context)
+
+struct Counter:
+    var calls: i64
+
+    func hit(argument: unit) -> interop.Outcome[unit]:
+        _ = argument
+        self.calls += 1
+        return result.success[unit](())
+
+    func close():
+        self.calls = 0
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        _ = visit
+        _ = context
+
+let counter_type: interop.Type[Counter] = interop.Type[Counter]("notifier test counter", Counter.close, Counter.trace)
+
+func serviced(notifiers: Notifiers*) -> !:
+    let outcome = notifiers.service()
+    defer outcome.release()
+    try outcome.get()
+
+## A worker's half of the test: many notifies, then letting its handle go.
+func notify_many(context: void*?):
+    let handle = (NotifyHandle*)(context else trap("no handle"))
+    for _ in 0..<1000:
+        handle.notify()
+    handle.release()
+
+test "notifies before a turn run the callback once, from the main thread or a worker":
+    let counter = try interop.Reference[Counter].adopt(new Counter() in memory.heap, counter_type, memory.heap)
+    defer counter.release()
+    let callback = try interop.Callback[unit, unit].bind_mutating(counter, Counter.hit)
+    defer callback.release()
+    var notifiers = Notifiers()
+    defer notifiers.close()
+    let notifier = try notifiers.add(callback)
+    defer notifier.release()
+    try serviced(&notifiers)
+    assert(counter.value().calls == 0 and not notifiers.waiting())
+    try notifier.value().notify()
+    try notifier.value().notify()
+    assert(notifiers.waiting())
+    try serviced(&notifiers)
+    try serviced(&notifiers)
+    assert(counter.value().calls == 1)
+    var handle = try notify_handle(notifier)
+    let worker = try thread.spawn(notify_many, (void*)&handle)
+    try worker.join()
+    try serviced(&notifiers)
+    try serviced(&notifiers)
+    assert(counter.value().calls == 2)
+
+test "a closed notifier runs nothing, and a handle outliving it is harmless":
+    let counter = try interop.Reference[Counter].adopt(new Counter() in memory.heap, counter_type, memory.heap)
+    defer counter.release()
+    let callback = try interop.Callback[unit, unit].bind_mutating(counter, Counter.hit)
+    defer callback.release()
+    var notifiers = Notifiers()
+    defer notifiers.close()
+    let notifier = try notifiers.add(callback)
+    let handle = try notify_handle(notifier)
+    let other = handle.clone()
+    handle.notify()
+    notifier.value().close()
+    notifier.release()
+    other.notify()
+    try serviced(&notifiers)
+    assert(counter.value().calls == 0 and not notifiers.waiting())
+    assert(notifiers.slots[0].core == none)
+    other.notify()
+    handle.release()
+    other.release()
+    # the slot is taken again by the next notifier
+    let next = try notifiers.add(callback)
+    defer next.release()
+    assert(notifiers.slots[0].core != none)

@@ -17,6 +17,7 @@ import result
 import layout
 import scheduler
 import watches
+import notifiers
 import present_retry
 from layout import Widget, Tree, Event
 from theme import Theme
@@ -49,6 +50,7 @@ pub struct Application:
     var shown_failure: bool
     var timers: scheduler.Scheduler
     var watches: watches.Watches
+    var notifiers: notifiers.Notifiers
     ## The monotonic instant `wake_at` asked the loop to run a turn by, 0 for none.
     var wake_deadline: u64
     ## When a frame the GPU skipped may be drawn again (present_retry.lucb).
@@ -109,6 +111,7 @@ pub struct Application:
         self.last_render = 0
         self.timers = scheduler.Scheduler()
         self.watches = watches.Watches()
+        self.notifiers = notifiers.Notifiers()
         self.wake_deadline = 0
         self.retry = present_retry.PresentRetry()
         self.game = game
@@ -227,6 +230,15 @@ pub struct Application:
     pub func watch(descriptor: i64, callback: interop.Callback[unit, unit], readable: bool = true, writable: bool = false) -> i64!:
         try self.check()
         return try self.watches.add(descriptor, callback, readable, writable)
+
+    ## A callback any thread can ask to run on this loop: the notifier's `notify`, or a
+    ## worker's `ui.notify_handle(notifier).notify()`, wakes the loop if it sleeps, and
+    ## its next turn runs `callback` once however many notifies came first. A worker
+    ## keeps its results itself (its own locked queue) and only says there are some,
+    ## so the loop never polls for background work. `close` stops it. Up to 256.
+    pub func notifier(callback: interop.Callback[unit, unit]) -> interop.Reference[notifiers.Notifier]!:
+        try self.check()
+        return try self.notifiers.add(callback)
 
     ## Stop a watch by the handle `watch` returned.
     pub func unwatch(id: i64):
@@ -616,6 +628,12 @@ pub struct Application:
             watched.release()
             if not self.running:
                 break
+            let notified = self.reported(self.notifiers.service(), none)
+            if not notified.is_success():
+                return notified
+            notified.release()
+            if not self.running:
+                break
             # This turn answers a wake_at that is due.
             if self.wake_deadline != 0 and self.wake_deadline <= time.now():
                 self.wake_deadline = 0
@@ -795,6 +813,9 @@ pub struct Application:
         # section open) wants the next frame at once, not after the next event.
         if not retrying and (self.dirty or self.tree.is_animating() or layout.epoch() != self.last_epoch):
             return 0
+        # A notify that came during the turn: its wake may have been taken already.
+        if self.notifiers.waiting():
+            return 0
         let now = time.now()
         var budget: u64 = 1000000000
         if let deadline = self.next_deadline():
@@ -855,6 +876,7 @@ pub struct Application:
         self.commands.close()
         self.timers.close()
         self.watches.close()
+        self.notifiers.close()
         self.frames.close()
         self.frames.release()
         self.appearances.close()
@@ -873,6 +895,7 @@ pub struct Application:
         self.commands.trace(visit, context)
         self.timers.trace(visit, context)
         self.watches.trace(visit, context)
+        self.notifiers.trace(visit, context)
         self.frames.trace(visit, context)
         self.appearances.trace(visit, context)
         self.tree.trace(visit, context)

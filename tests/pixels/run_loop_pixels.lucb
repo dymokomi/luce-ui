@@ -1,5 +1,5 @@
-## The run loop sleeps until it has work: a watched socket turning readable, or a
-## wake_at instant, ends its wait. Each case is timed against the loop's one-second
+## The run loop sleeps until it has work: a watched socket turning readable, a wake_at
+## instant, or a worker's notify ends its wait. Each case is timed against the loop's one-second
 ## safety ceiling, which is what would end the wait if neither did.
 import interop
 import memory
@@ -23,6 +23,12 @@ struct Stopper:
         var buffer: u8[8]
         _ = self.socket.receive_from(buffer[..<8]) catch failure:
             return interop.Outcome[unit].failure(failure.code, interop.copy_text(failure.message) catch exhausted: trap(exhausted.message))
+        self.reads += 1
+        self.app.stop()
+        return interop.Outcome[unit].success(interop.Owned[unit](()))
+
+    func notified(argument: unit) -> interop.Outcome[unit]:
+        _ = argument
         self.reads += 1
         self.app.stop()
         return interop.Outcome[unit].success(interop.Owned[unit](()))
@@ -53,6 +59,14 @@ func deliver(context: void*?):
     var payload: u8[1] = [1]
     delivery.socket.send_to(payload[..<1], delivery.address) catch failure:
         trap(failure.message)
+
+## Notify after 100 ms, many times, from another thread.
+func notify_later(context: void*?):
+    let handle = (ui.NotifyHandle*)(context else trap("missing handle"))
+    thread.sleep(100)
+    for _ in 0..<100:
+        handle.notify()
+    handle.release()
 
 func run_once(app: interop.Reference[Application]) -> u64!:
     let started = time.now()
@@ -95,7 +109,20 @@ pub func wakes() -> !:
     app.value().wake_after(0.1)
     let woken = try run_once(app)
     assert(woken >= 90000000 and woken < 900000000)
-    print("ok run loop wakes for watched sockets and wake_at")
+    # A worker's notifies wake it, and its callback runs once.
+    stopper.value().due = 0
+    stopper.value().reads = 0
+    let on_notify = try interop.Callback[unit, unit].bind_mutating(stopper, Stopper.notified)
+    defer on_notify.release()
+    let notifier = try app.value().notifier(on_notify)
+    defer notifier.release()
+    var handle = try ui.notify_handle(notifier)
+    var notifying = try thread.spawn(notify_later, (void*)&handle)
+    let notified = try run_once(app)
+    try notifying.join()
+    assert(stopper.value().reads == 1 and notified >= 90000000 and notified < 900000000)
+    notifier.value().close()
+    print("ok run loop wakes for watched sockets, wake_at and notifiers")
 
 ## A frame callback that fails every frame, and the error handler that hears of it.
 struct Failing:
