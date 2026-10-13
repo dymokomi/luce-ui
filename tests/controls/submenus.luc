@@ -2,7 +2,8 @@
 ## Right or Enter; choosing there closes the whole chain; Left and Escape go
 ## back a level; a press outside closes every level; the menu bar still
 ## switches menus from inside a submenu. Commands draw their icons. A menu
-## keeps all its rows while one of them has its submenu open.
+## keeps all its rows while one of them has its submenu open, and never draws
+## a divider that separates nothing.
 from luce_ui.ui import Application, Font, Command, Menu, Toolbar, VStack, Spacer, Event
 from luce_gpu.gpu import Frame
 from luce_window import window
@@ -133,6 +134,7 @@ pub func submenus() -> unit!:
     app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
 
     rows_stay(font)
+    dividers_tidy(font)
 
     # Icons widen the list and draw.
     let iconless = Menu("Shapes", [Command("Cube"), Command("Sphere")], font = font)
@@ -189,3 +191,27 @@ func rows_stay(font: Font) -> unit!:
     host.dispatch(Event(kind = EventKind.pointer_up, x = menu_box.x + 8.0, y = paste_y))
     assert(pasted.count == 1 and not canvas.is_open() and not nested.is_visible())
     pasting.disconnect()
+
+## A divider that separates nothing (leading, trailing, or right after
+## another, as when an optional group of a context menu is empty) takes no
+## room: the menu is as tall as the same rows with only the dividers between
+## groups, and Down steps from the first row straight to the second.
+func dividers_tidy(font: Font) -> unit!:
+    let clean = Menu("Clean", [Command("One"), Command("", divider = true), Command("Two")], font = font)
+    let one = Command("One")
+    let two = Command("Two")
+    let messy = Menu("Messy", [Command("", divider = true), one, Command("", divider = true), Command("", divider = true), two, Command("", divider = true)], font = font)
+    let chose = Count()
+    let choosing = two.on_trigger(func (): chose.count += 1)
+    let host = Application(VStack([clean, messy, Spacer()], spacing = 0.0))
+    clean.open()
+    host.layout(600.0, 400.0)
+    let clean_height = clean.layout().child(0).layout().bounds().height
+    host.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
+    messy.open()
+    host.layout(600.0, 400.0)
+    assert(messy.layout().child(0).layout().bounds().height == clean_height)
+    host.dispatch(Event(kind = EventKind.key_down, key = Key.down))
+    host.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
+    assert(chose.count == 1 and not messy.is_open())
+    choosing.disconnect()

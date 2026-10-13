@@ -101,6 +101,7 @@ pub struct ActionPopup: Widget:
         self.child = none
         self.holder = none
         self.opened = -1
+        self.tidy_dividers()
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -115,6 +116,7 @@ pub struct ActionPopup: Widget:
         self.count = commands.length
         for index in 0..<commands.length:
             self.matches[index] = index
+        self.tidy_dividers()
         self.selected = -1
         self.first = 0
         self.pressed = -1
@@ -247,11 +249,28 @@ pub struct ActionPopup: Widget:
                 if matches_query(text.value, query.value):
                     self.matches[self.count] = index
                     self.count += 1
+        self.tidy_dividers()
         self.selected = -1
         self.first = 0
         self.pressed = -1
         self.move(1)
         self.first = 0
+
+    ## Drop the listed dividers that separate nothing: a leading or trailing
+    ## one, and any right after another. Menus built from optional groups
+    ## (a context menu whose entries depend on the selection) may leave a
+    ## group empty; every menu presents the result without a blank row.
+    func tidy_dividers():
+        var kept: usize = 0
+        for row in 0..<self.count:
+            let index = self.matches[row]
+            if self.commands.values()[index].value().is_divider() and (kept == 0 or self.commands.values()[self.matches[kept - 1]].value().is_divider()):
+                continue
+            self.matches[kept] = index
+            kept += 1
+        if kept > 0 and self.commands.values()[self.matches[kept - 1]].value().is_divider():
+            kept -= 1
+        self.count = kept
 
     func header_height() -> f64:
         return (self.pad_y() + self.row_height()) if self.searchable else 0.0
