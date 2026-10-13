@@ -115,6 +115,7 @@ extend ParameterPanel:
             try self.remember_folder(self.rows[index].name.value, open)
             self.stale = true
             self.box.value().invalidate()
+            try ParameterPanel.emit(self.folded, row)
             return
         if not self.enabled(index):
             return

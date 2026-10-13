@@ -37,8 +37,8 @@ All objects and callbacks belong to the main thread.
 | `CompletionList` | What a TextEditor's completion provider fills during its call: `caret`, `start`, `set_start`, `trigger`, `text`, `text_range`, `add(label, kind, detail, doc)`, `count`; see [completion](TEXT-EDITOR.md#completion) |
 | `ListView` | `ListItem(text, icon=IconKind.blank)` entries and optional row height/font; `select`, `set_items`, `on_activate`, `on_select`, `set_drag_kind` |
 | `TableView` | Columns and row-major cells, optional `multiple` selection; `select`, `mark`, `select_all`, `is_selected`, `selected_index`, `selected_count`, `set_rows`, `on_activate`, `on_select`, `set_drag_kind` |
-| `ThumbnailGrid` | A photo grid in justified rows; pictures, aspects and badges by index, `on_select`, `on_activate`, `on_resize`, `on_drop`, `set_drag_kind`; see [drag and drop](#drag-and-drop) |
-| `ParameterPanel` | `ParameterPanel(specs, font=..., label_width=0)` from `ParameterSpec`s: one compact row a parameter; values by index (`value`, `component`, `text`, `ramp`, `set_*`), `find(name)`, `on_change`/`on_begin`/`on_commit`/`on_action`; see [parameter panels](#parameter-panels) |
+| `ThumbnailGrid` | A photo grid in justified rows; pictures, aspects and badges by index, `on_select`, `on_activate`, `on_resize`, `on_drop`, `on_visible` (the range on screen changed: read `first_visible`/`last_visible`), `set_drag_kind`; see [drag and drop](#drag-and-drop) |
+| `ParameterPanel` | `ParameterPanel(specs, font=..., label_width=0)` from `ParameterSpec`s: one compact row a parameter; values by index (`value`, `component`, `text`, `ramp`, `set_*`), `find(name)`, `on_change`/`on_begin`/`on_commit`/`on_action`, `on_folder` (a folder heading clicked: `folder_open_at(index)`); see [parameter panels](#parameter-panels) |
 
 Constructors that allocate are fallible. Luce propagates automatically inside a
 function declared `-> T!`: `let button = Button("Pause")`. Base uses one explicit

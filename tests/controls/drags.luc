@@ -161,3 +161,24 @@ pub func grid_drags() -> unit!:
     app.dispatch(Event(kind = EventKind.pointer_up, x = target.x + 10.0, y = target.y + 60.0))
     assert(folders.dropped == [0, 2] and grid.selected_count() == 2)
     app.close()
+
+## The grid tells the range on screen when it changes: on its first frame, and after a
+## scroll; not on a frame that changes nothing.
+pub func grid_visible() -> unit!:
+    let grid = ThumbnailGrid(200, cell = 60.0)
+    var told: list[int] = []
+    let connection = grid.on_visible(func (first: int) -> unit!:
+        told.append(first))
+    let app = Application(grid)
+    let frame = Frame(window.Size(300.0, 200.0, 300.0, 200.0, 1.0))
+    app.layout(300.0, 200.0)
+    app.render(frame.target())
+    assert(told == [0] and grid.last_visible() > 0)
+    app.render(frame.target())
+    assert(told.length == 1)
+    let area = grid.layout().bounds()
+    app.dispatch(Event(kind = EventKind.scroll, x = area.x + 10.0, y = area.y + 10.0, scroll_y = -400.0))
+    app.render(frame.target())
+    assert(told.length == 2 and told[1] == grid.first_visible() and told[1] > 0)
+    connection.disconnect()
+    app.close()

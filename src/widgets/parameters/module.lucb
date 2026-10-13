@@ -241,6 +241,8 @@ pub struct ParameterPanel: Widget:
     let began: interop.Signal[i64]
     let committed: interop.Signal[i64]
     let activated: interop.Signal[i64]
+    ## Told a folder's index when the user opens or closes it (`on_folder`).
+    let folded: interop.Signal[i64]
     let items_popup: interop.Reference[ActionPopup]
     let color_popup: interop.Reference[ColorEditor]
     let tip: interop.Reference[Tooltip]
@@ -321,6 +323,8 @@ pub struct ParameterPanel: Widget:
         errdefer committed.release()
         let activated = try interop.Signal[i64]()
         errdefer activated.release()
+        let folded = try interop.Signal[i64]()
+        errdefer folded.release()
         let placeholder = try interop.Reference[Command].adopt(new Command("-") in memory.heap, command_type, memory.heap)
         defer placeholder.release()
         let items_popup = try interop.Reference[ActionPopup].adopt(new ActionPopup([placeholder], selected) in memory.heap, action_popup_type, memory.heap)
@@ -351,6 +355,7 @@ pub struct ParameterPanel: Widget:
         self.began = began
         self.committed = committed
         self.activated = activated
+        self.folded = folded
         self.items_popup = items_popup
         self.color_popup = color_popup
         self.tip = tip
@@ -432,6 +437,8 @@ pub struct ParameterPanel: Widget:
         self.committed.release()
         self.activated.close()
         self.activated.release()
+        self.folded.close()
+        self.folded.release()
         self.items_popup.release()
         self.color_popup.release()
         self.tip.release()
@@ -446,6 +453,7 @@ pub struct ParameterPanel: Widget:
         self.began.trace(visit, context)
         self.committed.trace(visit, context)
         self.activated.trace(visit, context)
+        self.folded.trace(visit, context)
         self.items_popup.trace(visit, context)
         self.color_popup.trace(visit, context)
         self.tip.trace(visit, context)

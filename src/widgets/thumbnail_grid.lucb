@@ -72,6 +72,11 @@ pub struct ThumbnailGrid: Widget:
     let activated: interop.Signal[i64]
     let resized: interop.Signal[i64]
     let dropped: interop.Signal[unit]
+    ## Told the first visible item when the range on screen changes (`on_visible`).
+    let visible: interop.Signal[i64]
+    ## The range last told: `first_visible`, `last_visible`; -1 before the first draw.
+    var shown_first: i64
+    var shown_last: i64
     let font: interop.Reference[Font]
     ## The cell last pressed and when, for double-clicks.
     var pressed_index: i64
@@ -99,6 +104,8 @@ pub struct ThumbnailGrid: Widget:
         errdefer resized.release()
         let dropped = try interop.Signal[unit]()
         errdefer dropped.release()
+        let visible = try interop.Signal[i64]()
+        errdefer visible.release()
         let items = try checked_count(count)
         let pictures = try new (interop.Reference[Image]?)[items] in memory.heap
         errdefer free(pictures) in memory.heap
@@ -127,6 +134,9 @@ pub struct ThumbnailGrid: Widget:
         self.activated = activated
         self.resized = resized
         self.dropped = dropped
+        self.visible = visible
+        self.shown_first = -1
+        self.shown_last = -1
         self.font = selected_text
         self.pressed_index = -1
         self.pressed_at = 0
@@ -352,6 +362,14 @@ pub struct ThumbnailGrid: Widget:
     pub func set_drag_kind(kind: str) -> !:
         try self.gesture.set_kind(kind)
 
+    ## Called with the first item on screen whenever the range on screen changes: a
+    ## scroll, a resize, a new cell size or count, `reveal`. Read the range with
+    ## `first_visible` and `last_visible` to hand the grid the pictures it needs
+    ## (`set_image`) and let the others go (`keep_images`). It is called once the grid
+    ## has drawn, so it may set images, which show on the next frame.
+    pub func on_visible(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.visible.connect(callback)
+
     # mark: drawing =============================================================================
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
@@ -360,6 +378,12 @@ pub struct ThumbnailGrid: Widget:
     pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.paint(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
+        let first = self.first_visible()
+        let last = self.last_visible()
+        if first != self.shown_first or last != self.shown_last:
+            self.shown_first = first
+            self.shown_last = last
+            return self.visible.emit(first)
         return result.success[unit](())
 
     func paint(target: interop.View[gpu.RenderTarget]) -> !:
@@ -603,6 +627,8 @@ pub struct ThumbnailGrid: Widget:
         self.resized.release()
         self.dropped.close()
         self.dropped.release()
+        self.visible.close()
+        self.visible.release()
         self.font.release()
         self.box.release()
 
@@ -613,6 +639,7 @@ pub struct ThumbnailGrid: Widget:
         self.activated.trace(visit, context)
         self.resized.trace(visit, context)
         self.dropped.trace(visit, context)
+        self.visible.trace(visit, context)
         for at in 0..<self.count:
             if let held = self.pictures[at]:
                 held.trace(visit, context)

@@ -191,13 +191,19 @@ pub func parameters() -> unit!:
     press(app, origin.x + panel.label_width() + 20.0, origin.y + toggle.y + toggle.height * 0.5)
     assert(panel.value(keep) == 0.0 and not panel.is_enabled(note))
 
-    # A folder closes and stays closed when the specs come back.
+    # A folder closes and stays closed when the specs come back; the click is told.
+    var folded: list[int] = []
+    let folding = panel.on_folder(func (index: int) -> unit!:
+        folded.append(index)
+        assert(not panel.folder_open_at(index)))
     let group = panel.find("group")
     assert(panel.is_shown(group))
     let folder = panel.row_bounds(panel.find("extra"))
     press(app, origin.x + 30.0, origin.y + folder.y + folder.height * 0.5)
     render(app)
     assert(not panel.is_shown(group) and not panel.folder_open("extra"))
+    assert(folded == [panel.find("extra")])
+    folding.disconnect()
     panel.set_specs(specs())
     render(app)
     assert(not panel.is_shown(panel.find("group")) and panel.value(panel.find("keep")) == 1.0)

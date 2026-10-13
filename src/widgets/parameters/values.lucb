@@ -182,6 +182,13 @@ extend ParameterPanel:
             return not self.remembered_closed(name)
         return self.rows[(usize)index].open
 
+    ## Whether the folder at `index` is open.
+    pub func folder_open_at(index: i64) -> bool!:
+        let at = try self.row(index)
+        if at.kind != ParameterKind.folder:
+            error(result.invalid, "the parameter is not a folder")
+        return at.open
+
     ## Open or close the folder called `name`, as a click on its heading does;
     ## remembered for a folder of that name that comes later.
     pub func set_folder_open(name: str, open: bool) -> !:
@@ -254,6 +261,11 @@ extend ParameterPanel:
     ## live while dragging, once per frame. Values set from code do not call it.
     pub func on_change(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
+
+    ## Called with a folder's index when the user opens or closes it with a click on
+    ## its heading (`folder_open_at` says which); `set_folder_open` does not call it.
+    pub func on_folder(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.folded.connect(callback)
 
     ## Called before the first change of an edit: a drag, a typed value, a click.
     pub func on_begin(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
