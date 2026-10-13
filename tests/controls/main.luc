@@ -14,6 +14,7 @@ from hover import hover
 from buttons import buttons, disabled_buttons
 from drops import drops
 from drags import drags, grid_drags, grid_visible
+from grids import grid_flows
 from luce_ui.ui import ListItem, ScrollView
 from headers import headers
 from docking import docking, docking_layout
@@ -122,6 +123,7 @@ pub func main(arguments: list[str]) -> int!:
     drags()
     grid_drags()
     grid_visible()
+    grid_flows()
     headers()
     docking()
     docking_layout()

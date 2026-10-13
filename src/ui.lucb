@@ -194,6 +194,7 @@ pub type Histogram = histogram.Histogram
 pub let histogram_type = histogram.histogram_type
 import widgets.thumbnail_grid
 pub type ThumbnailGrid = thumbnail_grid.ThumbnailGrid
+pub type GridFlow = thumbnail_grid.GridFlow
 pub let thumbnail_grid_type = thumbnail_grid.thumbnail_grid_type
 
 ## A color label's swatch (1–7: red, orange, yellow, green, blue, purple, grey).

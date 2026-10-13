@@ -1,0 +1,79 @@
+from luce_ui.ui import Application, ThumbnailGrid, GridFlow, Event
+from luce_gpu.gpu import Frame
+from luce_window.input import EventKind, Key
+from luce_window import window
+
+func sized(app: Application, width: float, height: float) -> unit!:
+    app.layout(width, height)
+    let frame = Frame(window.Size(width, height, width, height, 1.0))
+    app.render(frame.target())
+
+func press(app: Application, pressed: Key) -> unit!:
+    app.dispatch(Event(kind = EventKind.key_down, key = pressed))
+
+## A grid in the automatic flow is a filmstrip while it is twice as wide as tall:
+## tiles run sideways in as many lanes as fit, hit tests, the visible range, reveal,
+## the wheel and the arrows follow; narrower, it is a vertical grid again with the
+## lead still in view.
+pub func grid_flows() -> unit!:
+    let grid = ThumbnailGrid(200, cell = 60.0)
+    var told: list[int] = []
+    let connection = grid.on_visible(func (first: int) -> unit!:
+        told.append(first))
+    grid.set_flow(GridFlow.automatic)
+    assert(grid.flow() == GridFlow.automatic)
+    let app = Application(grid)
+    sized(app, 600.0, 100.0)
+    assert(grid.is_horizontal() and grid.columns() == 1)
+    let area = grid.layout().bounds()
+    # One lane of 60-point squares 4 points apart, from the left.
+    let second = grid.item_rect(1)
+    assert(second.x == 68.0 and second.width == 60.0 and second.height == 60.0)
+    assert(grid.item_at(second.x + 5.0, second.y + 5.0) == 1 and grid.item_at(second.x - 2.0, second.y + 5.0) == -1)
+    assert(grid.first_visible() == 0 and grid.last_visible() == (int(area.width) - 4) // 64 + 1)
+    assert(told == [0])
+    # A vertical wheel scrolls the strip sideways.
+    app.dispatch(Event(kind = EventKind.scroll, x = area.x + 10.0, y = area.y + 10.0, scroll_y = -400.0))
+    app.render(Frame(window.Size(600.0, 100.0, 600.0, 100.0, 1.0)).target())
+    assert(grid.first_visible() > 0 and told.length == 2 and told[1] == grid.first_visible())
+    grid.reveal(150)
+    let revealed = grid.item_rect(150)
+    assert(revealed.x >= 0.0 and revealed.x + revealed.width <= area.width)
+    assert(grid.first_visible() <= 150 and grid.last_visible() > 150)
+    # A click picks the tile under it (and focuses the grid); in a single lane down
+    # moves by one, like right.
+    app.dispatch(Event(kind = EventKind.pointer_down, x = area.x + revealed.x + 5.0, y = area.y + revealed.y + 5.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = area.x + revealed.x + 5.0, y = area.y + revealed.y + 5.0))
+    assert(grid.selected_index() == 150)
+    press(app, Key.down)
+    assert(grid.selected_index() == 151)
+    press(app, Key.right)
+    press(app, Key.left)
+    press(app, Key.up)
+    assert(grid.selected_index() == 150)
+    # Taller, three lanes: down goes to the lane below, near the same place.
+    sized(app, 600.0, 200.0)
+    assert(grid.is_horizontal() and grid.columns() == 3)
+    let lead = grid.item_rect(150)
+    assert(lead.x >= 0.0 and lead.x + lead.width <= grid.layout().bounds().width)
+    let above = grid.item_rect(grid.selected_index())
+    press(app, Key.down)
+    let below = grid.item_rect(grid.selected_index())
+    assert(grid.selected_index() != 150 and below.y > above.y and below.x < above.x + above.width and below.x + below.width > above.x)
+    # Square, the same grid is vertical, the lead still on screen.
+    let kept = grid.selected_index()
+    sized(app, 300.0, 300.0)
+    assert(not grid.is_horizontal())
+    let shown = grid.item_rect(kept)
+    assert(shown.y >= 0.0 and shown.y + shown.height <= grid.layout().bounds().height)
+    assert(grid.first_visible() <= kept and grid.last_visible() > kept)
+    press(app, Key.down)
+    assert(grid.selected_index() > kept + 1)
+    # An explicit flow holds whatever the shape.
+    grid.set_flow(GridFlow.horizontal)
+    assert(grid.is_horizontal())
+    sized(app, 600.0, 100.0)
+    grid.set_flow(GridFlow.vertical)
+    assert(not grid.is_horizontal())
+    connection.disconnect()
+    app.close()

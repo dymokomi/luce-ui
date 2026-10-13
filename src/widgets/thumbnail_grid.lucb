@@ -9,7 +9,9 @@
 ## `set_cell_size`); selection follows Finder: click, command-click, shift-click,
 ## arrows (with shift), command-A; a double-click or Enter activates. With
 ## `set_drag_kind` the selection drags out to the window's drop areas taking that kind,
-## as the items' indices, the lead's picture following the pointer.
+## as the items' indices, the lead's picture following the pointer. `set_flow` turns
+## it into a filmstrip: lanes of tiles that scroll sideways (strip_lanes.lucb), always
+## or while it is twice as wide as tall.
 from luce_gpu import gpu
 from luce_window import input
 import interop
@@ -27,6 +29,7 @@ from font import Font, selected_font
 from theme import Theme
 from widgets.table_selection import RowSelection
 from widgets.justified_rows import JustifiedRows
+from widgets.strip_lanes import StripLanes
 from widgets.drag_gesture import DragGesture
 import icons
 
@@ -45,6 +48,15 @@ let widest: f64 = 5.0
 ## Two presses on one tile within this many nanoseconds are a double-click.
 let double_click: u64 = 400000000
 
+## Which way a grid lays out and scrolls (`ThumbnailGrid.set_flow`): `vertical` in
+## rows across its width, scrolling down; `horizontal` in lanes along its height,
+## scrolling sideways like a filmstrip; `automatic` horizontal while the grid is at
+## least twice as wide as tall, else vertical.
+pub enum GridFlow as u8:
+    vertical = 0
+    horizontal = 1
+    automatic = 2
+
 ## What the grid shows over one item's picture.
 struct Badges:
     var rating: u8
@@ -59,14 +71,19 @@ pub struct ThumbnailGrid: Widget:
     var badges: Badges[]
     var aspects: f32[]
     var count: usize
-    ## The rows, and what they were laid out for: a width, a row height, and
-    ## whether an aspect changed since.
+    ## The rows (vertical) and lanes (horizontal), and what they were laid out
+    ## for: a size, a row height, a flow, and whether an aspect changed since.
     var rows: JustifiedRows
+    var lanes: StripLanes
+    var flow_asked: GridFlow
+    var across: bool
     var laid_width: f64
+    var laid_height: f64
     var laid_cell: f64
     var stale: bool
     var picked: RowSelection
     var cell: f64
+    ## How far the content is scrolled along the flow: down, or sideways.
     var scroll: f64
     let selected: interop.Signal[i64]
     let activated: interop.Signal[i64]
@@ -117,6 +134,8 @@ pub struct ThumbnailGrid: Widget:
             aspects[at] = 1.0
         var rows = try JustifiedRows.make(items)
         errdefer rows.destroy()
+        var lanes = try StripLanes.make(items)
+        errdefer lanes.destroy()
         let picked = try RowSelection(items, multiple)
         self.box = box
         self.pictures = pictures
@@ -124,7 +143,11 @@ pub struct ThumbnailGrid: Widget:
         self.aspects = aspects
         self.count = items
         self.rows = rows
+        self.lanes = lanes
+        self.flow_asked = GridFlow.vertical
+        self.across = false
         self.laid_width = -1.0
+        self.laid_height = -1.0
         self.laid_cell = -1.0
         self.stale = true
         self.picked = picked
@@ -163,6 +186,8 @@ pub struct ThumbnailGrid: Widget:
         errdefer free(aspects) in memory.heap
         var rows = try JustifiedRows.make(items)
         errdefer rows.destroy()
+        var lanes = try StripLanes.make(items)
+        errdefer lanes.destroy()
         try self.picked.resize(items)
         for at in 0..<items:
             aspects[at] = self.aspects[at] if at < self.count else 1.0
@@ -176,13 +201,15 @@ pub struct ThumbnailGrid: Widget:
         free(self.badges) in memory.heap
         free(self.aspects) in memory.heap
         self.rows.destroy()
+        self.lanes.destroy()
         self.pictures = pictures
         self.badges = badges
         self.aspects = aspects
         self.rows = rows
+        self.lanes = lanes
         self.stale = true
         self.count = items
-        self.scroll = math.clamp(self.scroll, 0.0, self.scroll_limit())
+        self.clamp_scroll()
         self.box.value().invalidate()
 
     ## Show `picture` in item `index`'s cell; the grid keeps a reference to it.
@@ -241,7 +268,8 @@ pub struct ThumbnailGrid: Widget:
 
     # mark: geometry ============================================================================
 
-    ## The row height the grid aims for, in points.
+    ## The row height the grid aims for, in points (in the horizontal flow, its
+    ## lanes' height, capped to fit the grid's height).
     pub func cell_size() -> f64:
         return self.cell
 
@@ -252,66 +280,171 @@ pub struct ThumbnailGrid: Widget:
         self.cell = math.clamp(cell, thumbnail_grid_minimum, thumbnail_grid_maximum)
         self.arranged()
         if first >= 0 and first < (i64)self.count:
-            self.scroll = math.clamp(self.rows.top_of(self.rows.row_of(first)) - gap, 0.0, self.scroll_limit())
+            self.scroll = math.clamp(self.start_of(first) - gap, 0.0, self.scroll_limit())
         self.box.value().invalidate()
 
-    ## About how many items a row holds: for prefetching a few rows around the screen.
+    ## The flow asked for (`set_flow`).
+    pub func flow() -> GridFlow:
+        return self.flow_asked
+
+    ## Lay out and scroll as `flow` says (vertical until told). The selection's lead,
+    ## or else the first item on screen, stays in view when the flow changes, now or
+    ## when an automatic grid is resized past 2:1.
+    pub func set_flow(flow: GridFlow):
+        self.flow_asked = flow
+        self.arranged()
+        self.box.value().invalidate()
+
+    ## Whether the grid is laid out sideways now: its flow is horizontal, or
+    ## automatic and the grid twice as wide as tall.
+    pub func is_horizontal() -> bool:
+        self.arranged()
+        return self.across
+
+    ## About how many items a row holds (in the horizontal flow, how many lanes the
+    ## strip has): for prefetching a few rows around the screen.
     pub func columns() -> i64:
         self.arranged()
+        if self.across:
+            return (i64)self.lanes.lanes
         if self.rows.rows == 0:
             return larger(1, (i64)(self.box.value().bounds().width / self.cell))
         return larger(1, ((i64)self.count + (i64)self.rows.rows - 1) // (i64)self.rows.rows)
 
-    ## Lay the rows out again when the width, the row height or an aspect changed.
+    ## Lay the items out again when the row height, the flow, an aspect or the side
+    ## the flow lays out across (the width, or the height when horizontal) changed.
+    ## A new size or flow moves the tiles, so the view follows an anchor: the lead,
+    ## when the flow turns or the lead was on screen, else the first item that was.
     func arranged():
-        let width = self.box.value().bounds().width
-        if not self.stale and width == self.laid_width and self.cell == self.laid_cell:
+        let bounds = self.box.value().bounds()
+        let across = self.flow_asked == GridFlow.horizontal or (self.flow_asked == GridFlow.automatic and bounds.height > 0.0 and bounds.width >= bounds.height * 2.0)
+        let turned = across != self.across
+        let resized = bounds.height != self.laid_height if across else bounds.width != self.laid_width
+        if not self.stale and not turned and not resized and self.cell == self.laid_cell:
             return
-        self.rows.arrange(self.aspects, width, self.cell, gap)
-        self.laid_width = width
+        let moved = self.laid_cell > 0.0 and (turned or resized)
+        var anchor: i64 = -1
+        var leading = false
+        if moved:
+            let lead = self.picked.lead
+            leading = lead >= 0 and lead < (i64)self.count and (turned or (lead >= self.first_laid() and lead < self.last_laid()))
+            anchor = lead if leading else self.first_laid()
+        if across:
+            self.lanes.arrange(self.aspects, bounds.height, self.cell, gap)
+        else:
+            self.rows.arrange(self.aspects, bounds.width, self.cell, gap)
+        self.across = across
+        self.laid_width = bounds.width
+        self.laid_height = bounds.height
         self.laid_cell = self.cell
         self.stale = false
+        if turned:
+            self.scroll = 0.0
+        if anchor < 0 or anchor >= (i64)self.count:
+            return
+        if leading:
+            self.scroll = self.revealing(anchor)
+        else:
+            self.scroll = math.max(0.0, self.start_of(anchor) - gap)
+
+    ## The length of the scrolled side: the height, or the width when horizontal.
+    func extent() -> f64:
+        let bounds = self.box.value().bounds()
+        return bounds.width if self.across else bounds.height
+
+    func content() -> f64:
+        return self.lanes.content if self.across else self.rows.content
+
+    ## Keep the scroll within the content, laid out first: laying out may move it.
+    func clamp_scroll():
+        let limit = self.scroll_limit()
+        self.scroll = math.clamp(self.scroll, 0.0, limit)
 
     func scroll_limit() -> f64:
         self.arranged()
-        return math.max(0.0, self.rows.content - self.box.value().bounds().height)
+        return math.max(0.0, self.content() - self.extent())
+
+    ## Where item `index`'s tile is in the content, unscrolled.
+    func placed(index: i64) -> gpu.Rect:
+        if self.across:
+            return gpu.Rect(self.lanes.x_of(index), self.lanes.top_of(self.lanes.lane_of(index)), self.lanes.width_of(index), self.lanes.lane_height)
+        let row = self.rows.row_of(index)
+        return gpu.Rect(self.rows.x_of(index), self.rows.top_of(row), self.rows.width_of(index), self.rows.height_of(row))
+
+    ## Where item `index`'s tile starts and ends along the flow.
+    func start_of(index: i64) -> f64:
+        let place = self.placed(index)
+        return place.x if self.across else place.y
+
+    func end_of(index: i64) -> f64:
+        let place = self.placed(index)
+        return place.x + place.width if self.across else place.y + place.height
 
     ## The first item whose tile shows, and one past the last (empty when the
     ## grid is not laid out yet).
     pub func first_visible() -> i64:
         self.arranged()
-        let row = self.rows.row_at(self.scroll)
-        return self.rows.first_of(row) if row >= 0 else 0
+        return self.first_laid()
 
     pub func last_visible() -> i64:
         self.arranged()
-        let row = self.rows.row_at(self.scroll + self.box.value().bounds().height)
+        return self.last_laid()
+
+    ## `last_visible` in the layout as it is.
+    func last_laid() -> i64:
+        if self.across:
+            return self.lanes.end_before(self.scroll + self.extent())
+        let row = self.rows.row_at(self.scroll + self.extent())
         return self.rows.end_of(row) if row >= 0 else 0
+
+    ## `first_visible` in the layout as it is, without laying out again.
+    func first_laid() -> i64:
+        if self.across:
+            # none before the strip is first arranged (a new count drops the lanes)
+            if self.lanes.lanes == 0:
+                return 0
+            return smaller(self.lanes.first_after(self.scroll), (i64)self.count)
+        let row = self.rows.row_at(self.scroll)
+        return self.rows.first_of(row) if row >= 0 else 0
 
     ## The item under the local point (`x`, `y`), or -1.
     pub func item_at(x: f64, y: f64) -> i64:
         self.arranged()
+        if self.across:
+            return self.lanes.item_at(x + self.scroll, y)
         return self.rows.item_at(x, y + self.scroll)
 
-    ## Where item `index`'s tile is, in local points.
+    ## Where item `index`'s tile is, in local points (empty for no such item).
+    pub func item_rect(index: i64) -> gpu.Rect:
+        if index < 0 or index >= (i64)self.count:
+            return gpu.Rect()
+        self.arranged()
+        return self.tile(index)
+
     func tile(index: i64) -> gpu.Rect:
-        let row = self.rows.row_of(index)
-        return gpu.Rect(self.rows.x_of(index), self.rows.top_of(row) - self.scroll, self.rows.width_of(index), self.rows.height_of(row))
+        let place = self.placed(index)
+        if self.across:
+            return gpu.Rect(place.x - self.scroll, place.y, place.width, place.height)
+        return gpu.Rect(place.x, place.y - self.scroll, place.width, place.height)
 
     ## Scroll item `index` into view.
     pub func reveal(index: i64):
         if index < 0 or index >= (i64)self.count:
             return
         self.arranged()
-        let row = self.rows.row_of(index)
-        let top = self.rows.top_of(row) - gap
-        let bottom = self.rows.top_of(row) + self.rows.height_of(row) + gap
-        let height = self.box.value().bounds().height
-        if top < self.scroll:
-            self.scroll = math.max(0.0, top)
-        elif bottom > self.scroll + height:
-            self.scroll = math.max(0.0, bottom - height)
+        self.scroll = self.revealing(index)
         self.box.value().invalidate()
+
+    ## The least scroll from here that shows item `index`.
+    func revealing(index: i64) -> f64:
+        let start = self.start_of(index) - gap
+        let end = self.end_of(index) + gap
+        let extent = self.extent()
+        if start < self.scroll:
+            return math.max(0.0, start)
+        if end > self.scroll + extent:
+            return math.max(0.0, end - extent)
+        return self.scroll
 
     # mark: selection ===========================================================================
 
@@ -392,7 +525,7 @@ pub struct ThumbnailGrid: Widget:
         let size = try target.get().size()
         let theme = self.box.value().theme()
         try painter.rectangle(gpu.Rect(width = size.width, height = size.height), theme.background)
-        self.scroll = math.clamp(self.scroll, 0.0, self.scroll_limit())
+        self.clamp_scroll()
         let hovered = self.item_at(self.box.value().pointer_position().x, self.box.value().pointer_position().y) if self.box.value().contains_pointer() else -1
         var index = self.first_visible()
         let last = self.last_visible()
@@ -401,11 +534,16 @@ pub struct ThumbnailGrid: Widget:
             index += 1
         if self.box.value().is_focused():
             try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), theme.accent)
-        let content = self.rows.content
-        if content > size.height and size.height > 0.0:
-            let thumb = math.max(24.0, size.height * size.height / content)
-            let position = self.scroll / math.max(1.0, content - size.height) * math.max(0.0, size.height - thumb)
-            try painter.rectangle(gpu.Rect(math.max(0.0, size.width - 6.0), position, 4.0, thumb), theme.border)
+        # The scroll bar: along the right edge, or the bottom when horizontal.
+        let content = self.content()
+        let extent = size.width if self.across else size.height
+        if content > extent and extent > 0.0:
+            let thumb = math.max(24.0, extent * extent / content)
+            let position = self.scroll / math.max(1.0, content - extent) * math.max(0.0, extent - thumb)
+            if self.across:
+                try painter.rectangle(gpu.Rect(position, math.max(0.0, size.height - 6.0), thumb, 4.0), theme.border)
+            else:
+                try painter.rectangle(gpu.Rect(math.max(0.0, size.width - 6.0), position, 4.0, thumb), theme.border)
 
     ## One tile: the picture filling it (cropped to the tile should their shapes
     ## differ), the badges over it, and the selection's frame around it.
@@ -502,7 +640,10 @@ pub struct ThumbnailGrid: Widget:
                     self.set_cell_size(self.cell * math.pow(1.1, steps))
                     return 2
                 let scale = 1.0 if event.scroll_unit == input.ScrollUnit.points else self.cell * 0.5
-                self.scroll = math.clamp(self.scroll - event.scroll_y * scale, 0.0, self.scroll_limit())
+                self.arranged()
+                # A filmstrip has nothing to scroll down: a vertical wheel scrolls it sideways.
+                let delta = event.scroll_x + event.scroll_y if self.across else event.scroll_y
+                self.scroll = math.clamp(self.scroll - delta * scale, 0.0, self.scroll_limit())
                 self.box.value().invalidate()
             .pointer_down:
                 if (event.button == 0 or event.button == 1) and event.inside:
@@ -566,6 +707,8 @@ pub struct ThumbnailGrid: Widget:
             self.select_all()
             return 4
         self.arranged()
+        if self.across:
+            return try self.strip_key(event)
         let page = larger(1, (i64)(self.box.value().bounds().height / self.cell))
         let last = (i64)self.count - 1
         var target: i64 = -1
@@ -585,14 +728,52 @@ pub struct ThumbnailGrid: Widget:
             target = 0
         elif event.key == input.Key.end:
             target = last
+        return try self.moved_to(target, event.shift)
+
+    ## Keys in the horizontal flow: left and right by one item, up and down to the
+    ## nearest item in the lane above or below (by one in a single-lane strip), page
+    ## keys by a screen sideways.
+    func strip_key(event: Event) -> i64!:
+        let lead = self.picked.lead
+        let last = (i64)self.count - 1
+        let single = self.lanes.lanes == 1
+        var target: i64 = -1
+        if event.key == input.Key.right or (single and event.key == input.Key.down):
+            target = smaller(last, lead + 1)
+        elif event.key == input.Key.left or (single and event.key == input.Key.up):
+            target = larger(0, lead - 1)
+        elif event.key == input.Key.down:
+            target = self.lane_step(lead, 1, 0.0) if lead >= 0 else 0
+        elif event.key == input.Key.up:
+            target = self.lane_step(lead, -1, 0.0) if lead >= 0 else 0
+        elif event.key == input.Key.page_down:
+            target = self.lane_step(larger(0, lead), 0, self.extent())
+        elif event.key == input.Key.page_up:
+            target = self.lane_step(larger(0, lead), 0, -self.extent())
+        elif event.key == input.Key.home:
+            target = 0
+        elif event.key == input.Key.end:
+            target = last
+        return try self.moved_to(target, event.shift)
+
+    ## Move the lead to `target` (none when -1), extending the selection with shift.
+    func moved_to(target: i64, shift: bool) -> i64!:
         if target < 0:
             return 0
-        if event.shift:
+        if shift:
             try self.picked.extend(target)
         else:
             try self.picked.only(target)
         self.reveal(target)
         return 0
+
+    ## The item `lanes` lanes from `item` (clamped to the first and last) and `along`
+    ## points sideways, nearest its middle; `item` itself when there is none.
+    func lane_step(item: i64, lanes: i64, along: f64) -> i64:
+        let lane = larger(0, smaller((i64)self.lanes.lanes - 1, self.lanes.lane_of(item) + lanes))
+        let middle = self.lanes.x_of(item) + self.lanes.width_of(item) * 0.5 + along
+        let found = self.lanes.nearest_in(lane, middle)
+        return found if found >= 0 else item
 
     ## The item `rows` rows from `item` (clamped to the first and last rows)
     ## nearest below its middle.
@@ -616,6 +797,7 @@ pub struct ThumbnailGrid: Widget:
         free(self.badges) in memory.heap
         free(self.aspects) in memory.heap
         self.rows.destroy()
+        self.lanes.destroy()
         self.count = 0
         self.picked.close()
         self.gesture.close()
