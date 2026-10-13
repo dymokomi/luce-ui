@@ -8,7 +8,7 @@ import memory
 import ownership
 from layout import Widget, Layout, Size, Constraints, Event
 from widgets.viewport import Viewport, viewport_type
-from luce_3d.graphics import Object3D, PerspectiveCamera, Renderer, renderer_type
+from luce_3d.graphics import Object3D, Camera, Renderer, renderer_type
 
 func failed[T](code: ErrorCode, message: str) -> interop.Outcome[T]:
     let copied = interop.copy_text(message) catch exhausted:
@@ -17,10 +17,10 @@ func failed[T](code: ErrorCode, message: str) -> interop.Outcome[T]:
 
 struct RenderBinding:
     let scene: interop.Interface[Object3D]
-    let camera: interop.Reference[PerspectiveCamera]
+    let camera: interop.Reference[Camera]
     let renderer: interop.Reference[Renderer]
 
-    func init(scene: interop.Interface[Object3D], camera: interop.Reference[PerspectiveCamera], renderer: interop.Reference[Renderer]):
+    func init(scene: interop.Interface[Object3D], camera: interop.Reference[Camera], renderer: interop.Reference[Renderer]):
         self.scene = scene.clone()
         self.camera = camera.clone()
         self.renderer = renderer.clone()
@@ -54,7 +54,7 @@ pub struct SceneView: Widget:
     let binding: interop.Reference[RenderBinding]
     let connection: interop.Reference[interop.Connection]
 
-    pub func init(scene: interop.Interface[Object3D], camera: interop.Reference[PerspectiveCamera],
+    pub func init(scene: interop.Interface[Object3D], camera: interop.Reference[Camera],
                   renderer: interop.Reference[Renderer]? = none, width: f64 = 320.0, height: f64 = 240.0) -> !:
         let viewport = try interop.Reference[Viewport].adopt(new Viewport(width, height) in memory.heap, viewport_type, memory.heap)
         errdefer viewport.release()
@@ -72,7 +72,7 @@ pub struct SceneView: Widget:
     pub func scene() -> interop.Interface[Object3D]:
         return self.binding.value().scene.clone()
 
-    pub func camera() -> interop.Reference[PerspectiveCamera]:
+    pub func camera() -> interop.Reference[Camera]:
         return self.binding.value().camera.clone()
 
     pub func renderer() -> interop.Reference[Renderer]:
