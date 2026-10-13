@@ -1,0 +1,163 @@
+from luce_ui.ui import Application, Font, TableView, TableColumn, TableCell, ThumbnailGrid, Widget, Layout, Size, Constraints, Event, HStack
+from luce_gpu.gpu import RenderTarget, Frame
+from luce_window.input import EventKind, Key
+from luce_window import window
+
+let row_height: float = 24.0
+
+## A folder list drawn by the application: it takes drags of photos, lights its own
+## row, and refuses a drop on its first row, the folder the photos are already in.
+class Folders: Widget:
+    let box: Layout
+    pub var events: list[str]
+    pub var dropped: list[int]
+    pub var copied: bool
+
+    pub func init(self) -> unit!:
+        self.box = Layout()
+        self.box.set_flex()
+        self.box.set_drag_target(["photos"], overlay = false)
+        self.events = []
+        self.dropped = []
+        self.copied = false
+
+    pub func layout(self) -> Layout:
+        return self.box
+
+    pub func measure(self, available: Constraints) -> Size!:
+        return Size(100.0, 100.0)
+
+    pub func draw(self, target: RenderTarget) -> unit!:
+        _ = target
+
+    pub func event(self, event: Event) -> unit!:
+        if event.kind == EventKind.drag_entered or event.kind == EventKind.drag_moved:
+            if event.kind == EventKind.drag_entered:
+                self.events.append(f"entered {self.box.drag_kind()} {self.box.drag_count()}")
+            self.box.set_drop_accepted(event.y >= row_height)
+        elif event.kind == EventKind.drag_left:
+            self.events.append("left")
+        elif event.kind == EventKind.drop:
+            self.copied = self.box.drag_copy()
+            var index = 0
+            while index < self.box.drag_count():
+                self.dropped.append(self.box.drag_item(index))
+                index += 1
+
+func row_y(table: TableView, row: int) -> float:
+    return table.layout().bounds().y + row_height * (float(row) + 1.5)
+
+func picked(table: TableView) -> list[int]:
+    var rows: list[int] = []
+    for row in 0..<6:
+        if table.is_selected(row):
+            rows.append(row)
+    return rows
+
+## Rows dragged from a table to a widget the application draws: the selection goes
+## whole, the target hears the kind and the items, refuses a row of its own, takes
+## Option as a copy, and Escape cancels; a click on a selected row without a drag
+## selects it alone. The table tells every change of selection the user makes.
+pub func drags() -> unit!:
+    let font = Font()
+    var cells: list[TableCell] = []
+    for row in 0..<6:
+        cells.append(TableCell(text = f"photo {row}"))
+    let table = TableView([TableColumn(title = "Name", weight = 1.0)], cells, row_height = row_height, font = font, multiple = true)
+    table.set_drag_kind("photos")
+    var told: list[int] = []
+    let connection = table.on_select(func (lead: int) -> unit!:
+        told.append(lead))
+    let folders = Folders()
+    let app = Application(HStack([table, folders], spacing = 0.0))
+    let frame = Frame(window.Size(400.0, 300.0, 400.0, 300.0, 1.0))
+    app.layout(400.0, 300.0)
+    app.render(frame.target())
+    let x = table.layout().bounds().x + 20.0
+    let target = folders.layout().bounds()
+
+    # Selections the user makes are told; one the program makes is not.
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = row_y(table, 1)))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x, y = row_y(table, 1)))
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = row_y(table, 3), shift = true))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x, y = row_y(table, 3)))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.down))
+    assert(told == [1, 3, 4])
+    table.select(1)
+    table.mark(2, true)
+    table.mark(3, true)
+    assert(picked(table) == [1, 2, 3] and told.length == 3)
+
+    # A press on a selected row keeps all three; a move past the threshold drags them.
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = row_y(table, 2)))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x + 2.0, y = row_y(table, 2)))
+    assert(not table.layout().is_drag_source())
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x + 10.0, y = row_y(table, 2)))
+    assert(table.layout().is_drag_source() and picked(table) == [1, 2, 3])
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = target.x + 10.0, y = target.y + 5.0))
+    assert(folders.events == ["entered photos 3"] and folders.layout().is_drop_hovered())
+    assert(not folders.layout().is_drop_accepted())
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = target.x + 10.0, y = target.y + 60.0, alt = true))
+    assert(folders.layout().is_drop_accepted() and folders.layout().drag_copy())
+    app.dispatch(Event(kind = EventKind.pointer_up, x = target.x + 10.0, y = target.y + 60.0, alt = true))
+    assert(folders.dropped == [1, 2, 3] and folders.copied)
+    assert(not table.layout().is_drag_source() and not folders.layout().is_drop_hovered())
+    assert(picked(table) == [1, 2, 3])
+
+    # A drop refused where it lands drops nothing.
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = row_y(table, 1)))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = target.x + 10.0, y = target.y + 5.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, x = target.x + 10.0, y = target.y + 5.0))
+    assert(folders.dropped == [1, 2, 3])
+
+    # Escape cancels: the target is left, nothing drops, and the next press is a press.
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = row_y(table, 1)))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = target.x + 10.0, y = target.y + 60.0))
+    app.dispatch(Event(kind = EventKind.key_down, key = Key.escape))
+    assert(folders.events[folders.events.length - 1] == "left" and not table.layout().is_drag_source())
+    app.dispatch(Event(kind = EventKind.pointer_up, x = target.x + 10.0, y = target.y + 60.0))
+    assert(folders.dropped == [1, 2, 3] and picked(table) == [1, 2, 3])
+
+    # A click on a selected row without a drag selects it alone when the button comes
+    # up, and says so (the press already told of the lead moving to it).
+    let before = told.length
+    app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = row_y(table, 2)))
+    assert(picked(table) == [1, 2, 3])
+    app.dispatch(Event(kind = EventKind.pointer_up, x = x, y = row_y(table, 2)))
+    assert(picked(table) == [2] and told.length > before and told[told.length - 1] == 2)
+    app.render(frame.target())
+    connection.disconnect()
+    app.close()
+
+## A grid drags its selection the same way, its lead's picture following the pointer.
+pub func grid_drags() -> unit!:
+    let grid = ThumbnailGrid(4, cell = 60.0)
+    grid.set_drag_kind("photos")
+    let folders = Folders()
+    let app = Application(HStack([grid, folders], spacing = 0.0))
+    let frame = Frame(window.Size(500.0, 300.0, 500.0, 300.0, 1.0))
+    app.layout(500.0, 300.0)
+    app.render(frame.target())
+    let area = grid.layout().bounds()
+    var px = -1.0
+    var py = -1.0
+    var y = 0.0
+    while y < area.height and px < 0.0:
+        var x = 0.0
+        while x < area.width and px < 0.0:
+            if grid.item_at(x, y) == 2:
+                px = area.x + x + 2.0
+                py = area.y + y + 2.0
+            x += 2.0
+        y += 2.0
+    assert(px >= 0.0)
+    grid.select(0)
+    grid.mark(2, true)
+    let target = folders.layout().bounds()
+    app.dispatch(Event(kind = EventKind.pointer_down, x = px, y = py))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = px + 8.0, y = py))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = target.x + 10.0, y = target.y + 60.0))
+    app.render(frame.target())
+    app.dispatch(Event(kind = EventKind.pointer_up, x = target.x + 10.0, y = target.y + 60.0))
+    assert(folders.dropped == [0, 2] and grid.selected_count() == 2)
+    app.close()

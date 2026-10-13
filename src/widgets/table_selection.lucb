@@ -77,6 +77,16 @@ pub struct RowSelection:
             self.marked[at] = (i64)at >= low and (i64)at <= high
         self.lead = index
 
+    ## The selected rows, in order, in heap storage the caller frees.
+    pub func rows() -> i64[]!:
+        let chosen = try new i64[self.count()] --- in memory.heap
+        var at: usize = 0
+        for index in 0..<self.marked.length:
+            if self.marked[index]:
+                chosen[at] = (i64)index
+                at += 1
+        return chosen
+
     ## Select every row; the lead stays where it is, or goes to the first row.
     pub func all():
         if not self.multiple or self.marked.length == 0:

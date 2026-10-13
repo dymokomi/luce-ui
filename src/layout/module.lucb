@@ -35,6 +35,9 @@ import result
 import geometry
 from arrangement import Arrangement
 from cursor import CursorSource
+from image import Image
+from font import Font, selected_font
+import strings
 
 pub type Rect = gpu.Rect
 

@@ -1,5 +1,6 @@
 ## A virtualized, single-selection text list. Applications own entry meaning;
-## this control owns scrolling, selection, keyboard navigation and activation.
+## this control owns scrolling, selection, keyboard navigation and activation. With
+## `set_drag_kind` the selected item drags out to the window's drop areas taking that kind.
 from luce_gpu import gpu
 from luce_window import input
 import interop
@@ -13,6 +14,7 @@ from painter import Painter
 from font import Font, selected_font
 from icons import IconKind
 import icons
+from widgets.drag_gesture import DragGesture
 
 ## Incoming labels are borrowed for the call; ListView retains its own copy.
 ## Icons are presentation data, independent of filenames or filesystem policy.
@@ -28,7 +30,11 @@ pub struct ListView: Widget:
     let box: interop.Reference[Layout]
     var items: StoredItem[]
     let activated: interop.Signal[i64]
+    ## Told the selection whenever the user changes it (`on_select`).
+    let selection_changed: interop.Signal[i64]
     var selection: i64
+    ## A press that may drag the selected item out (`set_drag_kind`).
+    var gesture: DragGesture
     var scroll: f64
     let custom_row_height: f64?
     let font: interop.Reference[Font]
@@ -49,9 +55,13 @@ pub struct ListView: Widget:
         try box.value().set_limits(Size(120.0, 60.0), Size(16384.0, 16384.0))
         let signal = try interop.Signal[i64]()
         errdefer signal.release()
+        let changed = try interop.Signal[i64]()
+        errdefer changed.release()
         let copies = try copy_items(items, selected)
         self.box = box
         self.activated = signal
+        self.selection_changed = changed
+        self.gesture = DragGesture()
         self.items = copies
         self.selection = -1
         self.scroll = 0.0
@@ -96,6 +106,16 @@ pub struct ListView: Widget:
     pub func on_activate(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
         return try self.activated.connect(callback)
 
+    ## Called with the selected index whenever the user changes the selection, by a
+    ## click or a key; `select` called by the program does not call it.
+    pub func on_select(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.selection_changed.connect(callback)
+
+    ## Let the selected item be dragged out (`Layout.start_drag`) as an item of
+    ## `kind`: its index. "" stops it.
+    pub func set_drag_kind(kind: str) -> !:
+        try self.gesture.set_kind(kind)
+
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(220.0, 240.0))
 
@@ -134,14 +154,29 @@ pub struct ListView: Widget:
             try painter.rectangle(gpu.Rect(width = size.width, height = 1.0), self.box.value().theme().accent)
 
     pub func event(event: Event) -> interop.Outcome[unit]:
+        let before = self.selection
         let activate = self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
+        if self.selection != before:
+            let told = self.selection_changed.emit(self.selection)
+            if not activate or not told.is_success():
+                return told
+            told.release()
         if activate:
             return self.activated.emit(self.selection)
         return result.success[unit](())
 
     func handle(event: Event) -> bool!:
         if event.cancelled:
+            self.gesture.cancel()
+            return false
+        if event.kind == input.EventKind.pointer_moved and self.gesture.moved(event.x, event.y):
+            if self.selection >= 0:
+                var chosen: i64[1] = [self.selection]
+                try self.box.value().start_drag(self.gesture.dragged_kind(), chosen)
+            return false
+        if event.kind == input.EventKind.pointer_up:
+            _ = self.gesture.release()
             return false
         if event.kind == input.EventKind.scroll:
             let scale = 1.0 if event.scroll_unit == input.ScrollUnit.points else self.row_height() * 3.0
@@ -152,6 +187,8 @@ pub struct ListView: Widget:
             let index = (i64)((event.y + self.scroll) / self.row_height())
             if index >= 0 and index < (i64)self.items.length:
                 try self.select(index)
+                if event.button == 0:
+                    self.gesture.press(event.x, event.y, -1)
                 return event.button == 0
             if event.button == 1:
                 try self.select(-1)
@@ -174,6 +211,9 @@ pub struct ListView: Widget:
         self.font.release()
         self.activated.close()
         self.activated.release()
+        self.selection_changed.close()
+        self.selection_changed.release()
+        self.gesture.close()
         release_items(self.items)
         self.box.release()
 
@@ -181,6 +221,7 @@ pub struct ListView: Widget:
         self.font.trace(visit, context)
         self.box.trace(visit, context)
         self.activated.trace(visit, context)
+        self.selection_changed.trace(visit, context)
         for item in self.items:
             item.text.trace(visit, context)
 

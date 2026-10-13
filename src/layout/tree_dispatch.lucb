@@ -18,6 +18,10 @@ extend Tree:
         # A move while a widget holds the pointer (a stroke, a drag) goes to it on
         # the arrangement already made: a fast pointer sends hundreds a frame, and
         # arranging the whole tree for each is what would slow the frame down.
+        # A drag inside the window carries the pointer and keys until it ends; the
+        # arrangement made when it began places its drop areas.
+        if drag_active and event.kind != input.EventKind.scroll and event.kind != input.EventKind.magnify:
+            return self.carry_drag(event)
         if not self.captured_move(event):
             let arranged = self.arrange(self.width, self.height)
             if not arranged.is_success():
@@ -28,7 +32,7 @@ extend Tree:
             self.update_hover()
             return self.tell_left()
         if event.kind == input.EventKind.drag_entered or event.kind == input.EventKind.drag_moved or event.kind == input.EventKind.drag_left or event.kind == input.EventKind.drop:
-            return self.dispatch_drag(event)
+            return self.dispatch_drag(event.kind, event.x, event.y)
         if event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_down or event.kind == input.EventKind.pointer_up or event.kind == input.EventKind.scroll or event.kind == input.EventKind.magnify:
             self.pointer_x = event.x
             self.pointer_y = event.y
@@ -216,6 +220,8 @@ extend Tree:
             if not delivered.is_success():
                 return delivered
             delivered.release()
+            if drag_pending:
+                return self.begin_drag(event)
         # A captured move changes no arrangement: the run loop arranges once
         # before it draws, so a fast pointer does not arrange hundreds of times.
         if self.captured_move(event):

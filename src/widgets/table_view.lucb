@@ -19,6 +19,7 @@ from font import Font, selected_font
 from theme import Theme
 from icons import IconKind
 from widgets.table_selection import RowSelection
+from widgets.drag_gesture import DragGesture
 import icons
 
 let maximum_columns: usize = 16
@@ -70,6 +71,8 @@ pub struct TableView: Widget:
     var cells: StoredCell[]
     var rows: usize
     let activated: interop.Signal[i64]
+    ## Told the lead whenever the user changes the selection (`on_select`).
+    let selection_changed: interop.Signal[i64]
     ## The selected rows; its lead is `selected_index`.
     var picked: RowSelection
     var scroll: f64
@@ -83,6 +86,11 @@ pub struct TableView: Widget:
     var drag_start_x: f64
     var drag_start_width: f64
     var drag_sign: f64
+    ## A press that may drag the selected rows out (`set_drag_kind`).
+    var gesture: DragGesture
+    ## Whether the event being handled changed the selection though its lead and
+    ## count stayed (a shift-click over a new range of the same size).
+    var reselected: bool
 
     ## `cells` is row-major: `columns.length` cells per row, laid out one row after
     ## another. A flat slice keeps the public signature expressible from either tier.
@@ -108,6 +116,8 @@ pub struct TableView: Widget:
         try box.value().set_limits(Size(160.0, 60.0), Size(16384.0, 16384.0))
         let signal = try interop.Signal[i64]()
         errdefer signal.release()
+        let changed = try interop.Signal[i64]()
+        errdefer changed.release()
         let stored_columns = try copy_columns(columns)
         errdefer release_columns(stored_columns)
         let stored_cells = try copy_cells(cells, columns.length, selected)
@@ -118,6 +128,9 @@ pub struct TableView: Widget:
         self.cells = stored_cells
         self.rows = cells.length // columns.length
         self.activated = signal
+        self.selection_changed = changed
+        self.gesture = DragGesture()
+        self.reselected = false
         self.picked = picked
         self.scroll = 0.0
         self.show_header = header
@@ -226,6 +239,17 @@ pub struct TableView: Widget:
 
     pub func on_activate(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
         return try self.activated.connect(callback)
+
+    ## Called with the lead row whenever the user changes the selection: a click, a
+    ## command- or shift-click, the arrows, command-A. `select`, `mark` and
+    ## `select_all` called by the program do not call it.
+    pub func on_select(callback: interop.Callback[i64, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.selection_changed.connect(callback)
+
+    ## Let the selected rows be dragged out (`Layout.start_drag`) as items of `kind`:
+    ## their indices, in order. "" stops it.
+    pub func set_drag_kind(kind: str) -> !:
+        try self.gesture.set_kind(kind)
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(260.0, 260.0))
@@ -336,14 +360,23 @@ pub struct TableView: Widget:
         try painter.text(label, draw_x, ty, color = color, font = self.font)
 
     pub func event(event: Event) -> interop.Outcome[unit]:
+        let lead_before = self.picked.lead
+        let count_before = self.picked.count()
+        self.reselected = false
         let activate = self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
+        if self.reselected or self.picked.lead != lead_before or self.picked.count() != count_before:
+            let told = self.selection_changed.emit(self.picked.lead)
+            if not activate or not told.is_success():
+                return told
+            told.release()
         if activate:
             return self.activated.emit(self.picked.lead)
         return result.success[unit](())
 
     func handle(event: Event) -> bool!:
         if event.cancelled:
+            self.gesture.cancel()
             return false
         var widths: f64[16]
         self.resolve_widths(widths)
@@ -351,12 +384,24 @@ pub struct TableView: Widget:
         let hh = self.header_height()
         if event.kind == input.EventKind.pointer_up:
             self.drag_column = -1
+            if event.button == 0:
+                let alone = self.gesture.release()
+                if alone >= 0:
+                    try self.picked.only(alone)
+                    self.reselected = true
+                    self.box.value().invalidate()
             return false
         if self.drag_column >= 0 and event.kind == input.EventKind.pointer_moved:
             let width = math.max(self.columns[self.drag_column].minimum,
                                  self.drag_start_width + self.drag_sign * (event.x - self.drag_start_x))
             self.columns[self.drag_column].width = width
             self.box.value().invalidate()
+            return false
+        if event.kind == input.EventKind.pointer_moved and self.gesture.moved(event.x, event.y):
+            let chosen = try self.picked.rows()
+            defer free(chosen) in memory.heap
+            if chosen.length > 0:
+                try self.box.value().start_drag(self.gesture.dragged_kind(), chosen)
             return false
         if event.kind == input.EventKind.pointer_moved:
             if self.show_header and event.y < hh and self.divider_at(event.x, widths) >= 0:
@@ -391,12 +436,21 @@ pub struct TableView: Widget:
                     if not self.picked.contains(index):
                         try self.select(index)
                     return false
+                var alone: i64 = -1
                 if event.shift:
                     try self.picked.extend(index)
+                    self.reselected = true
                 elif event.meta or event.control:
                     try self.picked.toggle(index)
+                    self.reselected = true
+                elif self.picked.contains(index) and self.picked.count() > 1 and self.gesture.enabled():
+                    # Kept for a drag of them all; the row alone if none follows.
+                    self.picked.lead = index
+                    alone = index
                 else:
                     try self.picked.only(index)
+                if self.picked.contains(index):
+                    self.gesture.press(event.x, event.y, alone)
                 self.reveal(index)
                 return true
             if event.button == 1:
@@ -417,8 +471,10 @@ pub struct TableView: Widget:
                     target = (i64)self.rows - 1
                 elif event.key == input.Key.a and (event.meta or event.control):
                     self.select_all()
+                    self.reselected = true
                     return false
                 if target >= 0:
+                    self.reselected = event.shift
                     if event.shift:
                         try self.picked.extend(target)
                     else:
@@ -430,6 +486,9 @@ pub struct TableView: Widget:
         self.font.release()
         self.activated.close()
         self.activated.release()
+        self.selection_changed.close()
+        self.selection_changed.release()
+        self.gesture.close()
         release_cells(self.cells)
         release_columns(self.columns)
         self.picked.close()
@@ -439,6 +498,7 @@ pub struct TableView: Widget:
         self.font.trace(visit, context)
         self.box.trace(visit, context)
         self.activated.trace(visit, context)
+        self.selection_changed.trace(visit, context)
         for cell in self.cells:
             cell.text.trace(visit, context)
         for column in self.columns:

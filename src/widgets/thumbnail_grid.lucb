@@ -7,7 +7,9 @@
 ## hands it, typically those near the visible range, which it reports. The row
 ## height scales between 48 and 640 points (command-scroll or a pinch, or
 ## `set_cell_size`); selection follows Finder: click, command-click, shift-click,
-## arrows (with shift), command-A; a double-click or Enter activates.
+## arrows (with shift), command-A; a double-click or Enter activates. With
+## `set_drag_kind` the selection drags out to the window's drop areas taking that kind,
+## as the items' indices, the lead's picture following the pointer.
 from luce_gpu import gpu
 from luce_window import input
 import interop
@@ -25,6 +27,7 @@ from font import Font, selected_font
 from theme import Theme
 from widgets.table_selection import RowSelection
 from widgets.justified_rows import JustifiedRows
+from widgets.drag_gesture import DragGesture
 import icons
 
 ## The smallest and largest row height, in points.
@@ -73,6 +76,7 @@ pub struct ThumbnailGrid: Widget:
     ## The cell last pressed and when, for double-clicks.
     var pressed_index: i64
     var pressed_at: u64
+    var gesture: DragGesture
 
     ## A grid of `count` items in rows `cell` points tall. `multiple` lets
     ## command-click, shift-click, shift-arrows and command-A select several;
@@ -126,6 +130,7 @@ pub struct ThumbnailGrid: Widget:
         self.font = selected_text
         self.pressed_index = -1
         self.pressed_at = 0
+        self.gesture = DragGesture()
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
@@ -342,6 +347,11 @@ pub struct ThumbnailGrid: Widget:
         self.box.value().set_drop_target(true)
         return try self.dropped.connect(callback)
 
+    ## Let the selection be dragged out (`Layout.start_drag`) as items of `kind`: the
+    ## selected items' indices, in order. "" stops it.
+    pub func set_drag_kind(kind: str) -> !:
+        try self.gesture.set_kind(kind)
+
     # mark: drawing =============================================================================
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
@@ -443,10 +453,20 @@ pub struct ThumbnailGrid: Widget:
     ## without changing its lead or count.
     func handle(event: Event) -> i64!:
         if event.cancelled:
+            self.gesture.cancel()
             return 0
         match event.kind:
             .pointer_moved:
                 self.box.value().invalidate()
+                if self.gesture.moved(event.x, event.y):
+                    try self.start_drag()
+            .pointer_up:
+                if event.button == 0:
+                    let alone = self.gesture.release()
+                    if alone >= 0:
+                        try self.picked.only(alone)
+                        self.box.value().invalidate()
+                        return 4
             .drop:
                 return 3
             .magnify:
@@ -489,11 +509,28 @@ pub struct ThumbnailGrid: Widget:
             try self.picked.extend(index)
         elif event.meta or event.control:
             try self.picked.toggle(index)
+            self.gesture.press(event.x, event.y, -1)
             return 4
+        elif self.picked.contains(index) and self.picked.count() > 1 and self.gesture.enabled():
+            # Kept for a drag of them all; the item alone if none follows.
+            self.picked.lead = index
         else:
             try self.picked.only(index)
+        let alone = index if self.picked.count() > 1 and not event.shift and self.picked.contains(index) and self.gesture.enabled() else -1
+        self.gesture.press(event.x, event.y, alone)
         self.reveal(index)
         return 1 if repeated else 0
+
+    ## The selection, dragged out: the items' indices and the lead's picture.
+    func start_drag() -> !:
+        if self.picked.count() == 0:
+            return
+        let chosen = try self.picked.rows()
+        defer free(chosen) in memory.heap
+        var image: interop.Reference[Image]? = none
+        if self.picked.lead >= 0 and (usize)self.picked.lead < self.count:
+            image = self.pictures[(usize)self.picked.lead]
+        try self.box.value().start_drag(self.gesture.dragged_kind(), chosen, image)
 
     func key(event: Event) -> i64!:
         let lead = self.picked.lead
@@ -557,6 +594,7 @@ pub struct ThumbnailGrid: Widget:
         self.rows.destroy()
         self.count = 0
         self.picked.close()
+        self.gesture.close()
         self.selected.close()
         self.selected.release()
         self.activated.close()

@@ -1,6 +1,7 @@
 #==============================================================================================
 #
-#   layout/drops - Drags from other applications: the payload and its drop areas
+#   layout/drops - Drags: files from other applications, and items one widget drags to
+#                  another in the same window; their payloads and drop areas
 #
 #==============================================================================================
 
@@ -28,6 +29,156 @@ pub func set_drop_payload(paths: const str[]) -> !:
         drop_payload[drop_payload_count] = (str)copy[..<path.length]
         drop_payload_count += 1
 
+# mark: Drags inside the window ===============================================================
+
+## The drag one widget started (`Layout.start_drag`): asked for while the widget handled
+## an event (`pending`), carried by the tree from then on (`active`) until it drops, is
+## cancelled, or the window loses focus. UI thread only.
+var drag_pending: bool = false
+var drag_active: bool = false
+var drag_source: u64 = 0
+var drag_kind_text: str = ""
+var drag_items: i64[]
+var drag_label_text: str = ""
+var drag_image: interop.Reference[Image]? = none
+var drag_font: interop.Reference[Font]? = none
+var drag_copy_now: bool = false
+
+## A heap copy of `text`, NUL-terminated; "" stays "".
+func owned_text(text: str) -> str!:
+    if text.length == 0:
+        return ""
+    let copy = try new u8[text.length + 1] --- in memory.heap
+    for index in 0..<text.length:
+        copy[index] = text.bytes[index]
+    copy[text.length] = 0
+    return (str)copy[..<text.length]
+
+func free_text(text: str):
+    if text.length > 0:
+        free(u8[]((u8*)text.bytes.data, text.length + 1)) in memory.heap
+
+## The drag inside the window ends, whichever way: its payload goes.
+func end_drag():
+    drag_pending = false
+    drag_active = false
+    drag_source = 0
+    drag_copy_now = false
+    free_text(drag_kind_text)
+    drag_kind_text = ""
+    free_text(drag_label_text)
+    drag_label_text = ""
+    if drag_items.length > 0:
+        free(drag_items) in memory.heap
+    var none_left: i64[]
+    drag_items = none_left
+    if let picture = drag_image:
+        picture.release()
+    drag_image = none
+    if let font = drag_font:
+        font.release()
+    drag_font = none
+
+## Whether `kinds`, kinds joined by newlines (`set_drag_target`), names `kind`.
+func names_kind(kinds: str, kind: str) -> bool:
+    var start: usize = 0
+    while start <= kinds.length:
+        var end = start
+        while end < kinds.length and kinds.bytes[end] != '\n':
+            end += 1
+        if (str)kinds.bytes[start..<end] == kind:
+            return true
+        start = end + 1
+    return false
+
+extend Layout:
+    ## Start dragging `items`, of `kind`, from this box: called from the widget's
+    ## `pointer_moved` while the pointer is held, typically once it has moved a few
+    ## points from the press. When the event returns the tree takes the pointer: the
+    ## widget gets a cancellation, the drop areas taking `kind` (`set_drag_target`) get
+    ## the drag's events, and `image` (the lead item's picture) and the count, with
+    ## `label` when given, follow the pointer. What `items` mean (indices, ids) is the
+    ## application's; the areas read them with `drag_item`.
+    pub func start_drag(kind: str, items: const i64[], image: interop.Reference[Image]? = none, label: str = "") -> !:
+        if kind.length == 0:
+            error(result.invalid, "a drag needs a kind")
+        if items.length == 0:
+            error(result.invalid, "a drag needs at least one item")
+        end_drag()
+        errdefer end_drag()
+        drag_kind_text = try owned_text(kind)
+        drag_label_text = try owned_text(label)
+        let copies = try new i64[items.length] --- in memory.heap
+        for index in 0..<items.length:
+            copies[index] = items[index]
+        drag_items = copies
+        if let picture = image:
+            drag_image = picture.clone()
+        drag_font = try selected_font(none)
+        drag_source = self.identifier
+        drag_pending = true
+
+    ## Make this box an area that items dragged inside the window (`start_drag`) of any
+    ## of `kinds` can be dropped on; no kinds makes it none. Its widget gets
+    ## `drag_entered`, `drag_moved`, `drag_left` and `drop` in local coordinates, as a
+    ## file drop area does, reads the drag with `drag_kind`, `drag_count`,
+    ## `drag_item` and `drag_copy`, and refuses a drop at a point with
+    ## `set_drop_accepted(false)` from its `drag_entered` or `drag_moved`. With
+    ## `overlay` the area is lit in the accent while a drop would be taken; a widget
+    ## lighting the row under the pointer itself passes false.
+    pub func set_drag_target(kinds: const str[], overlay: bool = true) -> !:
+        var length: usize = 0
+        for kind in kinds:
+            if kind.length == 0:
+                error(result.invalid, "a drag kind is empty")
+            for byte in kind.bytes:
+                if byte == '\n':
+                    error(result.invalid, "a drag kind holds a line break")
+            length += kind.length + 1
+        var joined = ""
+        if length > 0:
+            let room = try new u8[length] --- in memory.heap
+            var at: usize = 0
+            for kind in kinds:
+                if at > 0:
+                    room[at - 1] = '\n'
+                for byte in kind.bytes:
+                    room[at] = byte
+                    at += 1
+                at += 1
+            room[length - 1] = 0
+            joined = (str)room[..<length - 1]
+        free_text(self.drag_kinds)
+        self.drag_kinds = joined
+        self.drag_overlay = overlay
+        self.invalidate()
+
+    pub func is_drag_target() -> bool:
+        return self.drag_kinds.length > 0
+
+    ## The kind of the drag inside the window under way; empty for files dragged
+    ## from another application, or no drag.
+    pub func drag_kind() -> interop.Owned[str]!:
+        return try interop.copy_text(drag_kind_text if drag_active else "")
+
+    ## How many items the drag inside the window carries (0 with none).
+    pub func drag_count() -> i64:
+        return (i64)drag_items.length if drag_active else 0
+
+    ## Item `index` of the drag inside the window, as its source gave it.
+    pub func drag_item(index: i64) -> i64!:
+        if not drag_active or index < 0 or index >= (i64)drag_items.length:
+            error(result.invalid, "no dragged item has that index")
+        return drag_items[(usize)index]
+
+    ## Whether the drag would copy rather than move: Option (Alt) is held.
+    pub func drag_copy() -> bool:
+        return drag_active and drag_copy_now
+
+    ## Whether this box started the drag under way.
+    pub func is_drag_source() -> bool:
+        return (drag_active or drag_pending) and drag_source == self.identifier
+
 extend Tree:
     ## Whether a drop would be taken where the drag is now: the application tells
     ## the window so after every drag event.
@@ -42,14 +193,15 @@ extend Tree:
         while index > 0:
             index -= 1
             let box = self.entries[index].box.value()
-            if box.drop_target and (not modal or in_popup(self.entries, index)) and path_enabled(self.entries, index) and inside(box.clipping, x, y):
+            let taking = names_kind(box.drag_kinds, drag_kind_text) if drag_active else box.drop_target
+            if taking and (not modal or in_popup(self.entries, index)) and path_enabled(self.entries, index) and inside(box.clipping, x, y):
                 return box.identifier
         return 0
 
     ## Route a drag: the area under the pointer gets entered/moved, the one it
     ## left gets left, and a drop goes to the area that takes it.
-    func dispatch_drag(event: input.Event) -> interop.Outcome[unit]:
-        let target = 0 if event.kind == input.EventKind.drag_left else self.drop_at(event.x, event.y)
+    func dispatch_drag(kind: input.EventKind, x: f64, y: f64) -> interop.Outcome[unit]:
+        let target = 0 if kind == input.EventKind.drag_left else self.drop_at(x, y)
         if target != self.drop_hover:
             let left = self.leave_drop()
             if not left.is_success():
@@ -61,24 +213,24 @@ extend Tree:
                 box.drop_hovered = true
                 box.invalidate()
                 self.drop_hover = target
-                let entered = self.send_drag(index, input.EventKind.drag_entered, event.x, event.y)
+                let entered = self.send_drag(index, input.EventKind.drag_entered, x, y)
                 if not entered.is_success():
                     return entered
                 entered.release()
-        elif event.kind == input.EventKind.drag_moved:
+        elif kind == input.EventKind.drag_moved:
             if let index = self.find(target):
-                let moved = self.send_drag(index, input.EventKind.drag_moved, event.x, event.y)
+                let moved = self.send_drag(index, input.EventKind.drag_moved, x, y)
                 if not moved.is_success():
                     return moved
                 moved.release()
-        if event.kind == input.EventKind.drop:
+        if kind == input.EventKind.drop:
             if let index = self.find(self.drop_hover):
                 let box = self.entries[index].box.value()
                 box.drop_hovered = false
                 box.invalidate()
                 self.drop_hover = 0
                 if box.drop_accepted:
-                    return self.send_drag(index, input.EventKind.drop, event.x, event.y)
+                    return self.send_drag(index, input.EventKind.drop, x, y)
         return result.success[unit](())
 
     func leave_drop() -> interop.Outcome[unit]:
@@ -102,7 +254,8 @@ extend Tree:
     func draw_drop_overlay(target: interop.View[gpu.RenderTarget]) -> !:
         let index = self.find(self.drop_hover) else return
         let box = self.entries[index].box.value()
-        if not box.drop_overlay or not box.drop_accepted or box.clipping.width <= 0.0 or box.clipping.height <= 0.0:
+        let overlay = box.drag_overlay if drag_active else box.drop_overlay
+        if not overlay or not box.drop_accepted or box.clipping.width <= 0.0 or box.clipping.height <= 0.0:
             return
         let native_target = try target.get()
         let clipped = try native_target.clipped(box.clipping)
@@ -119,3 +272,90 @@ extend Tree:
         try painter.rectangle(gpu.Rect(0.0, area.height - edge, area.width, edge), theme.accent)
         try painter.rectangle(gpu.Rect(0.0, 0.0, edge, area.height), theme.accent)
         try painter.rectangle(gpu.Rect(area.width - edge, 0.0, edge, area.height), theme.accent)
+
+    ## Begin the drag a widget asked for while handling `event` (`Layout.start_drag`):
+    ## the box holding the pointer lets go of it (a cancellation) and the drag is
+    ## carried from where the pointer is.
+    func begin_drag(event: input.Event) -> interop.Outcome[unit]:
+        drag_pending = false
+        drag_active = true
+        drag_copy_now = event.modifiers.alt
+        let cancelled = self.cancel(self.capture)
+        if not cancelled.is_success():
+            end_drag()
+            return cancelled
+        cancelled.release()
+        self.capture = 0
+        return self.dispatch_drag(input.EventKind.drag_moved, event.x, event.y)
+
+    ## While a drag inside the window is under way the pointer carries it: moves go to
+    ## the drop areas, the primary release drops, and Escape or losing focus cancels
+    ## it; Option (Alt) makes it a copy. Scrolling is routed as ever (`dispatch`).
+    func carry_drag(event: input.Event) -> interop.Outcome[unit]:
+        match event.kind:
+            .pointer_moved, .pointer_entered:
+                self.pointer_x = event.x
+                self.pointer_y = event.y
+                self.pointer_present = math.is_finite(event.x) and math.is_finite(event.y)
+                drag_copy_now = event.modifiers.alt
+                return self.dispatch_drag(input.EventKind.drag_moved, event.x, event.y)
+            .pointer_left:
+                self.pointer_present = false
+                return self.leave_drop()
+            .modifiers_changed:
+                drag_copy_now = event.modifiers.alt
+                if not self.pointer_present:
+                    return result.success[unit](())
+                return self.dispatch_drag(input.EventKind.drag_moved, self.pointer_x, self.pointer_y)
+            .pointer_up:
+                if event.button != 0:
+                    return result.success[unit](())
+                self.pointer_x = event.x
+                self.pointer_y = event.y
+                let dropped = self.dispatch_drag(input.EventKind.drop, event.x, event.y)
+                end_drag()
+                return dropped
+            .key_down, .focus_lost, .overflow:
+                if event.kind == input.EventKind.key_down and event.key != input.Key.escape:
+                    return result.success[unit](())
+                let left = self.leave_drop()
+                end_drag()
+                return left
+            _:
+                return result.success[unit](())
+
+    ## The drag inside the window at the pointer: its image (the lead item's picture,
+    ## at most 72 points), and its label, or else its count when it carries more than
+    ## one item or has no image; a plus while it would copy.
+    func draw_drag_badge(target: interop.View[gpu.RenderTarget]) -> !:
+        if not drag_active or not self.pointer_present:
+            return
+        let font = drag_font else return
+        var painter = try Painter(target)
+        defer painter.close()
+        let theme = self.appearance
+        var x = self.pointer_x + 14.0
+        let y = self.pointer_y + 14.0
+        if let picture = drag_image:
+            let width = (f64)picture.value().width()
+            let height = (f64)picture.value().height()
+            let scale = 72.0 / math.max(width, height) if width > 0.0 and height > 0.0 else 0.0
+            if scale > 0.0:
+                let frame = Rect(x, y, width * math.min(scale, 1.0), height * math.min(scale, 1.0))
+                try painter.rounded_rectangle(Rect(frame.x - 2.0, frame.y - 2.0, frame.width + 4.0, frame.height + 4.0), theme.background, 3.0, opacity = 0.85)
+                try painter.image(picture, frame, opacity = 0.8)
+                x = frame.x + frame.width - 8.0
+        var text = drag_label_text
+        var digits: u8[24]
+        if text.length == 0 and (drag_items.length > 1 or drag_image == none):
+            text = try strings.format(digits, f"{drag_items.length}")
+        if drag_copy_now:
+            let plus = font.value().line_height()
+            try painter.rounded_rectangle(Rect(x - plus - 4.0, y - 6.0, plus, plus), theme.accent, plus * 0.5)
+            try painter.text("+", x - plus - 4.0 + (plus - try font.value().measure("+")) * 0.5, y - 6.0 + (plus - font.value().height()) * 0.5, theme.on_selection(theme.foreground), font)
+        if text.length == 0:
+            return
+        let height = font.value().line_height()
+        let width = try font.value().measure(text) + 12.0
+        try painter.rounded_rectangle(Rect(x, y - 6.0, width, height), theme.accent, height * 0.5)
+        try painter.text(text, x + 6.0, y - 6.0 + (height - font.value().height()) * 0.5, theme.on_selection(theme.foreground), font)

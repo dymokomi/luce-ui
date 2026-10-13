@@ -70,6 +70,10 @@ pub struct Layout:
     var drop_overlay: bool
     var drop_accepted: bool
     var drop_hovered: bool
+    ## The kinds of drag inside the window this box takes, joined by newlines
+    ## (`set_drag_target`), a heap copy; "" takes none.
+    var drag_kinds: str
+    var drag_overlay: bool
 
     ## A box laying its children out along `axis`, `spacing` points apart inside
     ## `padding`, aligned across the axis by `alignment`. Main thread only.
@@ -137,6 +141,8 @@ pub struct Layout:
         self.drop_overlay = true
         self.drop_accepted = true
         self.drop_hovered = false
+        self.drag_kinds = ""
+        self.drag_overlay = true
 
     pub func is_visible() -> bool:
         return self.visible
@@ -622,6 +628,8 @@ pub struct Layout:
 
     func dispose():
         self.detach()
+        free_text(self.drag_kinds)
+        self.drag_kinds = ""
         if let source = self.cursor_source: source.release()
         if let arrangement = self.arrangement:
             arrangement.release()

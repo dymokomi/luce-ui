@@ -35,7 +35,9 @@ All objects and callbacks belong to the main thread.
 | `Theme` | Semantic colors, `control_lines`, `inset_cells`, `header_inset_cells`, `row_height`, `inset` |
 | `TextEditor` | Unicode text, selection, history, decorations, diagnostics, completion and hover; see [text controls](TEXT-EDITOR.md) |
 | `CompletionList` | What a TextEditor's completion provider fills during its call: `caret`, `start`, `set_start`, `trigger`, `text`, `text_range`, `add(label, kind, detail, doc)`, `count`; see [completion](TEXT-EDITOR.md#completion) |
-| `ListView` | `ListItem(text, icon=IconKind.blank)` entries and optional row height/font; `select`, `set_items`, `on_activate` |
+| `ListView` | `ListItem(text, icon=IconKind.blank)` entries and optional row height/font; `select`, `set_items`, `on_activate`, `on_select`, `set_drag_kind` |
+| `TableView` | Columns and row-major cells, optional `multiple` selection; `select`, `mark`, `select_all`, `is_selected`, `selected_index`, `selected_count`, `set_rows`, `on_activate`, `on_select`, `set_drag_kind` |
+| `ThumbnailGrid` | A photo grid in justified rows; pictures, aspects and badges by index, `on_select`, `on_activate`, `on_resize`, `on_drop`, `set_drag_kind`; see [drag and drop](#drag-and-drop) |
 | `ParameterPanel` | `ParameterPanel(specs, font=..., label_width=0)` from `ParameterSpec`s: one compact row a parameter; values by index (`value`, `component`, `text`, `ramp`, `set_*`), `find(name)`, `on_change`/`on_begin`/`on_commit`/`on_action`; see [parameter panels](#parameter-panels) |
 
 Constructors that allocate are fallible. Luce propagates automatically inside a
@@ -641,6 +643,49 @@ shadow. The renderer draws one translated rectangle with straight alpha blending
 without blur or extra layout/hit-test space. It is clipped to the window rather
 than the popup's own bounds. `Painter.rectangle` exposes the same optional opacity
 for custom widgets; invalid opacity is an error.
+
+## Drag and drop
+
+Two kinds of drag reach the same drop areas, through the same events: files
+dragged in from another application, and items one widget drags to another in the
+window. While a drag is over an area its widget gets `drag_entered`, `drag_moved`,
+`drag_left` and `drop`, with the point in the area's own coordinates; it may refuse
+a drop at a point with `set_drop_accepted(false)` from `drag_entered` or
+`drag_moved`, and it is lit in the accent while a drop would be taken unless it
+asked for no overlay (a list lighting the row under the pointer itself). The
+innermost area under the pointer that takes the drag gets it.
+
+- Files: `Layout.set_drop_target(enabled, overlay=true)`; the area reads the files
+  with `drop_count` and `drop_path(index)`.
+- Items inside the window: `Layout.set_drag_target(kinds, overlay=true)` takes drags
+  of any of `kinds` (a kind is the application's word for what is dragged,
+  `"photos"`); the area reads `drag_kind()`, `drag_count()`, `drag_item(index)` and
+  `drag_copy()`, which is true while Option (Alt) is held.
+
+A widget starts a drag with `Layout.start_drag(kind, items, image=none, label="")`
+from its `pointer_moved` while the pointer is held. When that event returns the
+tree takes the pointer: the widget gets a cancellation, the areas taking `kind` get
+the drag, `image` (the lead item's picture) with the count or `label` follows the
+pointer, the primary button's release drops, and Escape or losing focus cancels.
+`is_drag_source()` says whether a box started the drag under way. The items are
+numbers whose meaning is the application's: indices, or ids it looks up.
+
+`ThumbnailGrid`, `TableView` and `ListView` start drags themselves after
+`set_drag_kind(kind)`: a press on a selected item followed by a move of four points
+drags the whole selection, as the items' indices, the grid's lead picture following
+the pointer. A press on an item already selected among several keeps them all
+selected, and selects that item alone only when the button comes up without a drag,
+as Finder does.
+
+```
+photos.set_drag_kind("photos")
+folders.layout().set_drag_target(["photos"], overlay = false)
+# in the folder widget's event:
+if event.kind == EventKind.drag_moved:
+    self.box.set_drop_accepted(self.folder_at(event.y) != current)
+elif event.kind == EventKind.drop:
+    move(self.box.drag_item(0), self.folder_at(event.y), copy = self.box.drag_copy())
+```
 
 ## Pointer cursors
 

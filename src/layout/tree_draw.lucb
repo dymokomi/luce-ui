@@ -59,6 +59,9 @@ extend Tree:
                 if popup_depth(self.entries, hovered) == pass:
                     self.draw_drop_overlay(target) catch failure:
                         return result.failure[unit](failure.code, failure.message)
+        # Over everything, the drag inside the window at the pointer.
+        self.draw_drag_badge(target) catch failure:
+            return result.failure[unit](failure.code, failure.message)
         if let first = failed:
             return first
         return result.success[unit](())
