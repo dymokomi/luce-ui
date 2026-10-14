@@ -71,7 +71,7 @@ pub struct ShadedField: Widget:
             error(result.invalid, "marker coordinates must be finite")
         self.marker_u = math.clamp(u, 0.0, 1.0)
         self.marker_v = math.clamp(v, 0.0, 1.0)
-        self.box.value().invalidate()
+        self.box.value().repaint()
 
     ## The colors at the grid's corners, row-major, `columns` per row: the
     ## field is shaded between them. The widget keeps its own copy. A strip is
@@ -147,7 +147,7 @@ pub struct ShadedField: Widget:
             return result.success[unit](())
         self.marker_u = math.clamp(x / bounds.width, 0.0, 1.0)
         self.marker_v = math.clamp(y / bounds.height, 0.0, 1.0)
-        self.box.value().invalidate()
+        self.box.value().repaint()
         return self.changed.emit(())
 
     pub func event(event: Event) -> interop.Outcome[unit]:

@@ -384,7 +384,7 @@ extend Tree:
             return result.success[unit](())
         let index = self.find(before) else return result.success[unit](())
         let box = self.entries[index].box.value()
-        box.invalidate()
+        box.repaint()
         return self.send(index, Event(kind = input.EventKind.pointer_left, x = self.pointer_x - box.rectangle.x,
                                       y = self.pointer_y - box.rectangle.y, inside = false))
 
@@ -418,9 +418,9 @@ extend Tree:
         if let source = box.cursor_source:
             try source.enter()
             defer source.leave()
-            let started = epoch()
+            let started = layout_epoch()
             let cursor = source.value().cursor(Point(self.pointer_x - box.rectangle.x, self.pointer_y - box.rectangle.y), self.capture == target)
-            if epoch() != started: error(result.busy, "a cursor query changed the widget tree")
+            if layout_epoch() != started: error(result.busy, "a cursor query changed the widget tree")
             return cursor
         return box.pointer_cursor
 

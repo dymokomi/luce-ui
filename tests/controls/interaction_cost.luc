@@ -1,0 +1,83 @@
+## What a pointer gesture costs: a scrub, a hover or a scroll repaints, and must
+## never regather or remeasure the tree, however long it goes on.
+from luce_ui.ui import Application, Font, Slider, NumberField, TableView, TableColumn, TableCell, VStack, Widget, Layout, Size, Constraints, Event
+from luce_gpu.gpu import Frame, RenderTarget
+from luce_window import window
+from luce_window.input import EventKind
+
+## A widget that counts how often the tree measures it: once per arrangement.
+class Probe: Widget:
+    let box: Layout
+    pub var measures: int = 0
+
+    pub func init(self) -> unit!:
+        self.box = Layout()
+
+    pub func layout(self) -> Layout:
+        return self.box
+
+    pub func measure(self, available: Constraints) -> Size!:
+        self.measures += 1
+        return Size(40.0, 20.0)
+
+    pub func draw(self, target: RenderTarget) -> unit!:
+        _ = target
+
+    pub func event(self, event: Event) -> unit!:
+        _ = event
+
+func frame_once(app: Application) -> unit!:
+    let frame = Frame(window.Size(400.0, 400.0, 400.0, 400.0, 1.0))
+    app.render(frame.target())
+    frame.close()
+
+pub func interaction_cost() -> unit!:
+    let font = Font()
+    let probe = Probe()
+    let slider = Slider("Size", 0.0, 1.0, 0.5, decimals = 4, font = font)
+    let number = NumberField(0.0, font = font)
+    var cells: list[TableCell] = []
+    for row in 0..<200:
+        cells.append(TableCell(text = f"row {row}"))
+    let table = TableView([TableColumn(title = "Name", weight = 1.0)], cells, font = font)
+    let app = Application(VStack([probe, slider, number, table]))
+    app.layout(400.0, 400.0)
+    frame_once(app)
+    let moves = 10000
+    # A long scrub of the slider: every move changes the value and draws.
+    let track = slider.layout().bounds()
+    let y = track.y + track.height * 0.5
+    app.dispatch(Event(kind = EventKind.pointer_down, x = track.x + track.width * 0.5, y = y))
+    frame_once(app)
+    # The press may move focus, which arranges once; the moves never do.
+    var settled = probe.measures
+    for index in 0..<moves:
+        app.dispatch(Event(kind = EventKind.pointer_moved, x = track.x + float(index % 200), y = y))
+        frame_once(app)
+    app.dispatch(Event(kind = EventKind.pointer_up, x = track.x, y = y))
+    assert(slider.value() != 0.5 and probe.measures == settled)
+    # A scrub of the number field past its threshold.
+    let field = number.layout().bounds()
+    let fy = field.y + field.height * 0.5
+    app.dispatch(Event(kind = EventKind.pointer_down, x = field.x + 4.0, y = fy))
+    frame_once(app)
+    settled = probe.measures
+    for index in 0..<moves:
+        app.dispatch(Event(kind = EventKind.pointer_moved, x = field.x + 4.0 + float(index % 300), y = fy))
+        frame_once(app)
+    app.dispatch(Event(kind = EventKind.pointer_up, x = field.x + 4.0, y = fy))
+    assert(number.value() != 0.0 and probe.measures == settled)
+    settled = probe.measures
+    # Hovering rows and scrolling the table.
+    let rows = table.layout().bounds()
+    for index in 0..<moves:
+        app.dispatch(Event(kind = EventKind.pointer_moved, x = rows.x + 10.0, y = rows.y + 30.0 + float(index % 60)))
+        if index % 10 == 0:
+            app.dispatch(Event(kind = EventKind.scroll, x = rows.x + 10.0, y = rows.y + 30.0, scroll_y = -1.0 if index % 20 == 0 else 1.0))
+        frame_once(app)
+    assert(probe.measures == settled)
+    # A change that can resize a box still arranges again.
+    probe.layout().invalidate()
+    frame_once(app)
+    assert(probe.measures == settled + 1)
+    app.close()

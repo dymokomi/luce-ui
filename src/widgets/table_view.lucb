@@ -389,13 +389,13 @@ pub struct TableView: Widget:
                 if alone >= 0:
                     try self.picked.only(alone)
                     self.reselected = true
-                    self.box.value().invalidate()
+                    self.box.value().repaint()
             return false
         if self.drag_column >= 0 and event.kind == input.EventKind.pointer_moved:
             let width = math.max(self.columns[self.drag_column].minimum,
                                  self.drag_start_width + self.drag_sign * (event.x - self.drag_start_x))
             self.columns[self.drag_column].width = width
-            self.box.value().invalidate()
+            self.box.value().repaint()
             return false
         if event.kind == input.EventKind.pointer_moved and self.gesture.moved(event.x, event.y):
             let chosen = try self.picked.rows()
@@ -410,14 +410,14 @@ pub struct TableView: Widget:
                 self.box.value().set_cursor(input.Cursor.pointer)
             # Repaint on every move so the hovered row keeps up with the pointer;
             # set_cursor alone does not invalidate.
-            self.box.value().invalidate()
+            self.box.value().repaint()
             return false
         if event.kind == input.EventKind.scroll:
             let scale = 1.0 if event.scroll_unit == input.ScrollUnit.points else rh * 3.0
             let viewport = math.max(0.0, self.box.value().bounds().height - hh)
             let limit = math.max(0.0, (f64)self.rows * rh - viewport)
             self.scroll = math.clamp(self.scroll - event.scroll_y * scale, 0.0, limit)
-            self.box.value().invalidate()
+            self.box.value().repaint()
         elif event.kind == input.EventKind.pointer_down and (event.button == 0 or event.button == 1) and event.inside:
             if self.show_header and event.y < hh:
                 if event.button == 0:

@@ -174,7 +174,7 @@ func place_custom(entries: Entry[], index: usize, bounds: Rect, clip: Rect, arra
     var rectangles: Rect[1024]
     var count: usize = 0
     var child = index + 1
-    let started = epoch()
+    let started = layout_epoch()
     try arrangement.enter()
     defer arrangement.leave()
     while child < entries[index].end:
@@ -190,7 +190,7 @@ func place_custom(entries: Entry[], index: usize, bounds: Rect, clip: Rect, arra
             rectangles[count] = rectangle
             count += 1
         child = entries[child].end
-    if epoch() != started:
+    if layout_epoch() != started:
         error(result.busy, "a custom arrangement changed the widget tree")
     count = 0
     child = index + 1

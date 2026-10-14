@@ -20,7 +20,7 @@ extend Tree:
             return result.failure[unit](failure.code, failure.message)
         extent(height) catch failure:
             return result.failure[unit](failure.code, failure.message)
-        if self.count > 0 and self.width == width and self.height == height and self.version == epoch():
+        if self.count > 0 and self.width == width and self.height == height and self.version == layout_epoch():
             return result.success[unit](())
         self.animating = false
         let replacement = new Entry[1024] --- in memory.heap catch failure:
@@ -28,8 +28,9 @@ extend Tree:
         var count: usize = 0
         var committed = false
         defer discard_replacement(replacement, &count, &committed)
-        let started = epoch()
-        gather(self.root, replacement, &count, -1, 0, self.identifier) catch failure:
+        let started = layout_epoch()
+        gathering = gathering +? 1 else trap("UI arrangements exhausted")
+        gather(self.root, replacement, &count, -1, 0, self.identifier, gathering) catch failure:
             return result.failure[unit](failure.code, failure.message)
         # Resolve parent context before measuring descendants. Values avoid
         # shared mutable theme state and require no work in widget draw paths.
@@ -63,7 +64,7 @@ extend Tree:
             let box = entry.box.value()
             box.measured = Size(math.clamp(size.width, box.minimum.width, box.maximum.width),
                                 math.clamp(size.height, box.minimum.height, box.maximum.height))
-        if epoch() != started:
+        if layout_epoch() != started:
             return result.failure[unit](result.busy, "a widget changed the tree during measurement")
         let bounds = Rect(width = width, height = height)
         place(replacement, 0, bounds, bounds) catch failure:
@@ -169,8 +170,10 @@ extend Tree:
         self.update_hover()
         return result.success[unit](())
 
+## Append `widget`'s visible subtree to `entries` in tree order. `stamp` marks each
+## box gathered, so a widget reached twice is refused without searching the list.
 func gather(widget: interop.Interface[Widget], entries: Entry[], count: usize*, parent: i64,
-            depth: usize, application: u64) -> !:
+            depth: usize, application: u64, stamp: u64) -> !:
     if depth >= 64 or *count >= entries.length:
         error(result.limit, "a widget tree supports at most 1024 widgets and 64 levels")
     let box = try widget_layout(widget)
@@ -185,9 +188,9 @@ func gather(widget: interop.Interface[Widget], entries: Entry[], count: usize*, 
         error(result.busy, "a widget already belongs to another application")
     if parent == -1 and state.parent != 0:
         error(result.busy, "an application root already has a parent")
-    for previous in entries[..<*count]:
-        if previous.box.value().identifier == state.identifier:
-            error(result.invalid, "widgets must return distinct stable layouts")
+    if state.gathered == stamp:
+        error(result.invalid, "widgets must return distinct stable layouts")
+    state.gathered = stamp
     let index = *count
     entries[index] = Entry(widget.clone(), box.clone(), parent, 0)
     *count += 1
@@ -201,7 +204,7 @@ func gather(widget: interop.Interface[Widget], entries: Entry[], count: usize*, 
             defer child_box.release()
             if not child_box.value().visible or child_box.value().popup:
                 error(result.invalid, "split panes and dividers must be visible ordinary children")
-        try gather(child, entries, count, (i64)index, depth + 1, application)
+        try gather(child, entries, count, (i64)index, depth + 1, application, stamp)
         child_index += 1
     entries[index].end = *count
     box.release()

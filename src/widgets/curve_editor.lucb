@@ -240,13 +240,13 @@ pub struct CurveEditor: Widget:
             fx = math.clamp(fx, self.xs[index - 1] + gap, self.xs[index + 1] - gap)
         self.xs[index] = fx
         self.ys[index] = fy
-        self.box.value().invalidate()
+        self.box.value().repaint()
         return self.changed.emit(())
 
     pub func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled:
             self.dragging = false
-            self.box.value().invalidate()
+            self.box.value().repaint()
             return result.success[unit](())
         if not self.box.value().is_enabled():
             return result.success[unit](())
@@ -278,7 +278,7 @@ pub struct CurveEditor: Widget:
                     self.dragging = false
                     return self.changed.emit(())
             self.dragging = false
-            self.box.value().invalidate()
+            self.box.value().repaint()
         elif event.kind == input.EventKind.key_down:
             if (event.key == input.Key.backspace or event.key == input.Key.delete) and self.selected > 0 and self.selected < (i64)self.count - 1:
                 self.remove((usize)self.selected)

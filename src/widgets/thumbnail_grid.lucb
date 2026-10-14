@@ -619,7 +619,7 @@ pub struct ThumbnailGrid: Widget:
             return 0
         match event.kind:
             .pointer_moved:
-                self.box.value().invalidate()
+                self.box.value().repaint()
                 if self.gesture.moved(event.x, event.y):
                     try self.start_drag()
             .pointer_up:
@@ -627,7 +627,7 @@ pub struct ThumbnailGrid: Widget:
                     let alone = self.gesture.release()
                     if alone >= 0:
                         try self.picked.only(alone)
-                        self.box.value().invalidate()
+                        self.box.value().repaint()
                         return 4
             .drop:
                 return 3
@@ -644,7 +644,7 @@ pub struct ThumbnailGrid: Widget:
                 # A filmstrip has nothing to scroll down: a vertical wheel scrolls it sideways.
                 let delta = event.scroll_x + event.scroll_y if self.across else event.scroll_y
                 self.scroll = math.clamp(self.scroll - delta * scale, 0.0, self.scroll_limit())
-                self.box.value().invalidate()
+                self.box.value().repaint()
             .pointer_down:
                 if (event.button == 0 or event.button == 1) and event.inside:
                     return try self.press(event)

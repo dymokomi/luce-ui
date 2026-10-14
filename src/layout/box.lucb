@@ -74,6 +74,9 @@ pub struct Layout:
     ## (`set_drag_target`), a heap copy; "" takes none.
     var drag_kinds: str
     var drag_overlay: bool
+    ## The arrangement that last gathered this box (`gather`), which tells a widget
+    ## gathered twice in one pass at once.
+    var gathered: u64
 
     ## A box laying its children out along `axis`, `spacing` points apart inside
     ## `padding`, aligned across the axis by `alignment`. Main thread only.
@@ -143,6 +146,7 @@ pub struct Layout:
         self.drop_hovered = false
         self.drag_kinds = ""
         self.drag_overlay = true
+        self.gathered = 0
 
     pub func is_visible() -> bool:
         return self.visible
@@ -411,11 +415,17 @@ pub struct Layout:
             self.set_focusable(true)
         self.invalidate()
 
-    ## Announce a change the next frame must show. It moves the global layout epoch,
-    ## so the next arrangement regathers, remeasures and places the whole tree and
-    ## the run loop presents a frame; there is no per-box dirty state.
+    ## Announce a change that can alter sizes, placement or the tree: the next
+    ## arrangement regathers, remeasures and places the whole tree, and the run
+    ## loop presents a frame; there is no per-box dirty state.
     pub func invalidate():
         bump_revision()
+
+    ## Announce a change only drawing shows (a value, a highlight, a scroll offset
+    ## inside the widget): the run loop presents a frame on the arrangement it has.
+    ## A pointer drag that repaints each move costs a draw, never a relayout.
+    pub func repaint():
+        bump_paint()
 
     ## Clamp the measured size to `minimum`..`maximum` (each extent in 0..16384); a
     ## stack grows or shrinks the box only within them.

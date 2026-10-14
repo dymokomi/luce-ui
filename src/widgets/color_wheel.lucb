@@ -113,7 +113,7 @@ pub struct ColorWheel: Widget:
         self.hue = wrap_degrees(hue)
         self.saturation = math.clamp(saturation, 0.0, 1.0)
         self.brightness = math.clamp(brightness, 0.0, 1.0)
-        self.box.value().invalidate()
+        self.box.value().repaint()
 
     ## Where to press, in the box's points, for a host or test driving the
     ## wheel: the ring's middle at `hue` degrees, or the field's point for
@@ -252,7 +252,7 @@ pub struct ColorWheel: Widget:
     # mark: Input ==================================================================================
 
     func changed_now() -> interop.Outcome[unit]:
-        self.box.value().invalidate()
+        self.box.value().repaint()
         return self.changed.emit(())
 
     func nudge(degrees: f64) -> interop.Outcome[unit]:

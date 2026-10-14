@@ -125,15 +125,29 @@ pub interface Widget:
 
 var serial: u64 = 0
 var revision: u64 = 0
+var arranged_revision: u64 = 0
+var gathering: u64 = 0
 var wake: u64 = 0
 
-## The layout epoch: it moves whenever any box or the tree changes, so a
+## The drawing epoch: it moves whenever any box or the tree changes, so a
 ## frame loop can tell a redraw is due without asking every widget.
 pub func epoch() -> u64:
     return revision
 
-## Move the epoch on: something changed that the next frame must show.
+## The arrangement epoch: it moves only for changes that can move or resize a
+## box (`Layout.invalidate`), not for ones that only repaint (`Layout.repaint`),
+## so a scrubbed value or a hovered row redraws without regathering the tree.
+func layout_epoch() -> u64:
+    return arranged_revision
+
+## Move both epochs on: the arrangement may have changed, and the next frame must show it.
 func bump_revision():
+    arranged_revision = arranged_revision +? 1 else trap("UI revision exhausted")
+    bump_paint()
+
+## Move the drawing epoch on alone: the next frame must show a change that
+## leaves every box where it is.
+func bump_paint():
     revision = revision +? 1 else trap("UI revision exhausted")
 
 ## Ask for a frame at `deadline` (a `time.now()` moment) even if nothing

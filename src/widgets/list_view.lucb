@@ -196,7 +196,7 @@ pub struct ListView: Widget:
             let scale = 1.0 if event.scroll_unit == input.ScrollUnit.points else self.row_height() * 3.0
             let limit = math.max(0.0, (f64)self.items.length * self.row_height() - self.box.value().bounds().height)
             self.scroll = math.clamp(self.scroll - event.scroll_y * scale, 0.0, limit)
-            self.box.value().invalidate()
+            self.box.value().repaint()
         elif event.kind == input.EventKind.pointer_down and (event.button == 0 or event.button == 1) and event.inside:
             let index = (i64)((event.y + self.scroll) / self.row_height())
             if index >= 0 and index < (i64)self.items.length:

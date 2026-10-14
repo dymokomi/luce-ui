@@ -11,7 +11,9 @@ The framework measures children before parents, places them in logical points,
 and intersects clipping with every ancestor. Stack spacing and padding are fixed;
 flex weights share excess space up to maximum dimensions. Under constraint,
 independent shrink weights reduce children toward their minimum; smaller parents clip the remaining overflow.
-Custom widgets invalidate their Layout after changing measured or visual state.
+Custom widgets invalidate their Layout after a change that can alter sizes or placement,
+and repaint it after one only drawing shows (a value, a highlight, an inner scroll offset):
+a repaint presents a frame on the arrangement already made, so a long drag never regathers the tree.
 
 `Application` acquires its native window/device/surface only in `run`. It owns
 input dispatch, focus, pointer capture, layout, recording and presentation. Input
