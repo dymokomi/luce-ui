@@ -1,5 +1,6 @@
 ## A list row draws the icon its `symbol` names before its text; a name not in the set
-## draws nothing but keeps the icon's room, so its text lines up with the others'.
+## draws nothing but keeps the icon's room, so its text lines up with the others'. A
+## row one deeper starts its icon under the text of the rows above.
 ## Black ink on white, read back from an offscreen Metal texture.
 from luce_gpu import gpu
 import interop
@@ -20,7 +21,7 @@ func leftmost(pixels: const u8[], index: usize) -> usize:
     return least
 
 pub func symbols(device: gpu.Device) -> !:
-    var items: ListItem[3] = [ListItem(text = "Hello", symbol = "color-correction"), ListItem(text = "Hello", symbol = "no-such-icon"), ListItem(text = "Hello")]
+    var items: ListItem[4] = [ListItem(text = "Hello", symbol = "color-correction"), ListItem(text = "Hello", symbol = "no-such-icon"), ListItem(text = "Hello"), ListItem(text = "Hello", symbol = "color-correction", depth = 1)]
     let listing = try interop.Reference[ListView].adopt(new ListView(items, row_height = (f64)row) in memory.heap, ui.list_view_type, memory.heap)
     defer listing.release()
     let root = listing.as_interface[Widget](listing.value())
@@ -30,12 +31,12 @@ pub func symbols(device: gpu.Device) -> !:
     let theme = ui.Theme(background = white, panel = white, foreground = black, muted = black)
     let app = try interop.Reference[Application].adopt(new Application(root, theme = theme) in memory.heap, ui.application_type, memory.heap)
     defer app.release()
-    let laid = app.value().layout((f64)width, (f64)(row * 3))
+    let laid = app.value().layout((f64)width, (f64)(row * 4))
     defer laid.release()
     try laid.get()
-    var texture = try gpu.Texture.create(device, (u32)width, (u32)(row * 3), gpu.Format.rgba8)
+    var texture = try gpu.Texture.create(device, (u32)width, (u32)(row * 4), gpu.Format.rgba8)
     defer texture.destroy()
-    var pixels = try new u8[width * row * 3 * 4] in memory.heap
+    var pixels = try new u8[width * row * 4 * 4] in memory.heap
     defer free(pixels) in memory.heap
     let frame = try texture.frame()
     defer frame.release()
@@ -49,5 +50,7 @@ pub func symbols(device: gpu.Device) -> !:
     let icon = leftmost(pixels, 0)
     let kept = leftmost(pixels, 1)
     let plain = leftmost(pixels, 2)
+    let nested = leftmost(pixels, 3)
     assert(plain < width and kept > plain + 8 and icon + 8 < kept)
-    print(f"ok list symbols: icon from {icon}, text after an unknown symbol from {kept}, plain text from {plain}")
+    assert(nested + 4 >= kept and nested <= kept + 4)
+    print(f"ok list symbols: icon from {icon}, text after an unknown symbol from {kept}, plain text from {plain}, nested icon from {nested}")
