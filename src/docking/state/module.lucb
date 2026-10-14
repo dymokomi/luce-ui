@@ -300,6 +300,12 @@ pub struct State: Arrangement, CursorSource:
             defer box.release()
             box.value().invalidate()
 
+    ## Redraw on the arrangement there is: a change only drawing shows.
+    pub func repaint():
+        if let box = self.box.get():
+            defer box.release()
+            box.value().repaint()
+
     func publish(model: Model):
         self.model = model
         self.show_visible()

@@ -40,18 +40,18 @@ pub struct Histogram: Widget:
     pub func set_bins(bins: const i64[]):
         self.total = 0
         if bins.length != histogram_bins * 4:
-            self.box.value().invalidate()
+            self.box.value().repaint()
             return
         for at in 0..<bins.length:
             self.bins[at] = math_max(bins[at], 0)
         for at in 0..<histogram_bins:
             self.total += self.bins[768 + at]
-        self.box.value().invalidate()
+        self.box.value().repaint()
 
     ## Show nothing.
     pub func clear():
         self.total = 0
-        self.box.value().invalidate()
+        self.box.value().repaint()
 
     pub func measure(available: Constraints) -> interop.Outcome[Size]:
         return result.success[Size](Size(256.0, 96.0))

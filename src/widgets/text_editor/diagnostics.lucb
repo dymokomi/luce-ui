@@ -73,7 +73,7 @@ extend TextEditor:
         self.tip_since = time.now()
         if row >= 0:
             layout.wake_at(self.tip_since + self.tip_delay)
-            self.box.value().invalidate()
+            self.box.value().repaint()
 
     ## Hide the tip and forget what the pointer rested on, as after an edit,
     ## scroll or press, so a stale row never shows.

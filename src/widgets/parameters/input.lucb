@@ -65,7 +65,7 @@ extend ParameterPanel:
         self.hot_part = part
         self.hot_component = component
         self.box.value().set_cursor(self.cursor_for(row, part))
-        self.box.value().invalidate()
+        self.box.value().repaint()
 
     ## Scrubbable parts show the resize cursor, as every scrubber does; typing
     ## fields the text cursor; things to click the pointer.

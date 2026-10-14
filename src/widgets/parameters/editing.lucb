@@ -75,7 +75,7 @@ extend ParameterPanel:
                 self.set_hot(row, part, component)
             try self.input.pointer(Event(kind = event.kind, x = event.x - field.x, y = event.y - field.y, button = event.button, shift = event.shift),
                                    self.font, inset, 0.0, field.width - inset * 2.0, field.height)
-            self.box.value().invalidate()
+            self.box.value().repaint()
             return true
         if kind == input.EventKind.focus_lost:
             try self.end_editing(true)
@@ -104,7 +104,7 @@ extend ParameterPanel:
                 return true
         if kind == input.EventKind.key_down or kind == input.EventKind.text_input:
             if try self.input.event(event):
-                self.box.value().invalidate()
+                self.box.value().repaint()
             return true
         return false
 

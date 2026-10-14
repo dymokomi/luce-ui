@@ -206,7 +206,7 @@ pub struct CompletionPopup: Widget:
             let index = self.index_at(event.y)
             if index >= 0 and index == self.pressed and event.inside:
                 self.picked = index
-                self.box.value().invalidate()
+                self.box.value().repaint()
             self.pressed = -1
         elif event.kind == input.EventKind.scroll:
             self.scroll(event)
@@ -230,7 +230,7 @@ pub struct CompletionPopup: Widget:
         self.wheel -= (f64)rows * height
         let last = math.max(0.0, (f64)((i64)self.list.value().matches() - completion_rows))
         self.first = (i64)math.clamp((f64)(self.first - rows), 0.0, last)
-        self.box.value().invalidate()
+        self.box.value().repaint()
 
     pub func close():
         self.list.release()

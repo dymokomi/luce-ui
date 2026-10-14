@@ -1,6 +1,6 @@
 ## What a pointer gesture costs: a scrub, a hover or a scroll repaints, and must
 ## never regather or remeasure the tree, however long it goes on.
-from luce_ui.ui import Application, Font, Slider, NumberField, TableView, TableColumn, TableCell, VStack, Widget, Layout, Size, Constraints, Event
+from luce_ui.ui import Application, Font, Slider, NumberField, TableView, TableColumn, TableCell, VStack, Widget, Layout, Size, Constraints, Event, ParameterPanel, ParameterSpec, ParameterKind, TextEditor
 from luce_gpu.gpu import Frame, RenderTarget
 from luce_window import window
 from luce_window.input import EventKind
@@ -76,6 +76,37 @@ pub func interaction_cost() -> unit!:
             app.dispatch(Event(kind = EventKind.scroll, x = rows.x + 10.0, y = rows.y + 30.0, scroll_y = -1.0 if index % 20 == 0 else 1.0))
         frame_once(app)
     assert(probe.measures == settled)
+    # A parameter scrub, and typing into an editor.
+    let panel = ParameterPanel([ParameterSpec(name = "divisions", label = "Divisions", kind = ParameterKind.integer, value = 4.0, minimum = 1.0, maximum = 100000.0),
+                                ParameterSpec(name = "note", label = "Note", kind = ParameterKind.text)], font = font)
+    let editor = TextEditor("first line\nsecond line", font = font)
+    let probe_two = Probe()
+    let second = Application(VStack([probe_two, panel, editor]))
+    second.layout(400.0, 400.0)
+    frame_once(second)
+    let origin = panel.layout().bounds()
+    let well = panel.field_bounds(panel.find("divisions"), 0)
+    let wx = origin.x + well.x + well.width * 0.5
+    let wy = origin.y + well.y + well.height * 0.5
+    second.dispatch(Event(kind = EventKind.pointer_down, x = wx, y = wy))
+    frame_once(second)
+    var measured = probe_two.measures
+    for index in 0..<moves:
+        second.dispatch(Event(kind = EventKind.pointer_moved, x = wx + 4.0 + float(index % 300), y = wy))
+        frame_once(second)
+    # The moves never arrange; the release, which commits, may once.
+    assert(panel.value(panel.find("divisions")) != 4.0 and probe_two.measures == measured)
+    second.dispatch(Event(kind = EventKind.pointer_up, x = wx, y = wy))
+    let text = editor.layout().bounds()
+    second.dispatch(Event(kind = EventKind.pointer_down, x = text.x + 40.0, y = text.y + 6.0))
+    second.dispatch(Event(kind = EventKind.pointer_up, x = text.x + 40.0, y = text.y + 6.0))
+    frame_once(second)
+    measured = probe_two.measures
+    for index in 0..<1000:
+        second.dispatch(Event(kind = EventKind.text_input, codepoint = 97 + index % 26))
+        frame_once(second)
+    assert(probe_two.measures == measured)
+    second.close()
     # A change that can resize a box still arranges again.
     probe.layout().invalidate()
     frame_once(app)

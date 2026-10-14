@@ -152,7 +152,10 @@ pub struct Layout:
         return self.visible
 
     ## A hidden box and its subtree leave layout, drawing and input entirely.
+    ## Hiding what is hidden (or showing what shows) changes nothing.
     pub func set_visible(visible: bool):
+        if visible == self.visible:
+            return
         self.visible = visible
         self.invalidate()
 

@@ -159,7 +159,7 @@ extend ParameterPanel:
         self.rows[index].point = (i64)at
         if self.press_row == (i64)index and self.press_part == part_curve:
             self.press_component = (i64)at
-        self.box.value().invalidate()
+        self.box.value().repaint()
 
     ## Add a point at `position` with `values` and interpolation `code`, after
     ## any at the same position; selected. Answers its index, or -1 when full.

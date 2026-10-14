@@ -21,7 +21,7 @@ extend TextEditor:
     ## Replace every highlight with this complete, ordered set.
     pub func set_highlights(highlights: const Highlight[]) -> !:
         try self.highlights.replace(0, (i64)self.document.length(), highlights)
-        self.box.value().invalidate()
+        self.box.value().repaint()
 
     ## Publish a bounded analysis result: replace the highlights within
     ## `start..<end` with `highlights`, which lie inside it, computed against
@@ -34,7 +34,7 @@ extend TextEditor:
         if start < 0 or end < start or end > self.length():
             error(result.invalid, "highlight interval is outside the document")
         try self.highlights.replace(start, end, highlights)
-        self.box.value().invalidate()
+        self.box.value().repaint()
         return true
 
     ## The color of the highlight covering scalar `offset`, or none.
@@ -45,7 +45,7 @@ extend TextEditor:
     ## language service republishes this on each change, alongside the highlights.
     pub func set_swatches(marks: const Swatch[]) -> !:
         try self.swatches.replace(marks)
-        self.box.value().invalidate()
+        self.box.value().repaint()
 
     ## The chips that reserve layout columns. Only when soft-wrap is off, so wrapped
     ## rendering keeps the projection's scalar-based column layout; wrapped mode draws
@@ -123,7 +123,7 @@ extend TextEditor:
             else:
                 index += 1
         try self.swatches.replace(marks[..<written])
-        self.box.value().invalidate()
+        self.box.value().repaint()
 
     ## Consecutive hex digits following a `#` at `at` (0 when that scalar is not `#`),
     ## capped at seven so a run longer than six fails the 3/6-digit test.
