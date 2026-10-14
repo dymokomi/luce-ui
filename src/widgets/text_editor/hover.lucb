@@ -40,7 +40,7 @@ extend TextEditor:
         let cells = (x - self.gutter_width() - self.font.value().advance() + self.scroll_x) / self.font.value().advance()
         if cells < 0.0:
             return (-1, -1, -1)
-        let offset = editing.at_column(&self.document, segment.physical, segment.column + (usize)cells, self.active_swatches())
+        let offset = editing.at_column(&self.document, self.projection.line(segment.physical).start, segment.column + (usize)cells, self.active_swatches())
         if offset < segment.start or offset >= segment.end or not editing.word_character(self.document.scalar(offset)):
             return (-1, -1, -1)
         return ((i64)row, (i64)self.word_start(offset), (i64)offset)

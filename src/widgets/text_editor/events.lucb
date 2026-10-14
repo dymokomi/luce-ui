@@ -176,7 +176,7 @@ extend TextEditor:
             let rows = self.projection.visible_count()
             let raw = row - step if upwards and row >= step else (0 if upwards else row + step)
             let target = self.projection.row(raw if raw < rows else (rows - 1 if rows > 0 else 0))
-            var offset = editing.at_column(&self.document, target.physical, target.column + self.preferred_column, self.active_swatches())
+            var offset = editing.at_column(&self.document, self.projection.line(target.physical).start, target.column + self.preferred_column, self.active_swatches())
             if offset > target.end:
                 offset = target.end
             if offset < target.start:
@@ -204,7 +204,7 @@ extend TextEditor:
         let raw = (usize)(math.max(0.0, y - drawing.vertical_padding(self.font) + self.scroll_y) / self.font.value().line_height())
         let segment = self.projection.row(raw if raw < rows else (rows - 1 if rows > 0 else 0))
         let cells = math.max(0.0, x - self.gutter_width() - self.font.value().advance() + self.scroll_x) / self.font.value().advance()
-        var offset = editing.at_x(&self.document, segment.physical, (f64)segment.column + cells, self.active_swatches())
+        var offset = editing.at_x(&self.document, self.projection.line(segment.physical).start, (f64)segment.column + cells, self.active_swatches())
         if offset > segment.end:
             offset = segment.end
         if offset < segment.start:
