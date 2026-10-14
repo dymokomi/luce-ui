@@ -127,6 +127,13 @@ pub struct State: Arrangement, CursorSource:
     var float_moved: bool
     var last_press: u64
     var last_pressed: usize
+    ## The geometry `place` solved for the arrangement under way: the tree places
+    ## each docked panel in turn, and they share one solve, not one each. Kept by
+    ## the size and the drawing epoch it was solved at, which any change moves.
+    var placing: Geometry
+    var placing_size: Size
+    var placing_epoch: u64
+    var placing_valid: bool
 
     pub func init(box: interop.Reference[Layout], font: interop.Reference[Font]) -> !:
         let selected = try interop.Signal[interop.Reference[Panel]]()
@@ -188,6 +195,10 @@ pub struct State: Arrangement, CursorSource:
         self.float_moved = false
         self.last_press = 0
         self.last_pressed = 0
+        self.placing = Geometry()
+        self.placing_size = Size()
+        self.placing_epoch = 0
+        self.placing_valid = false
 
     pub func theme() -> Theme:
         let box = self.box.get() else return Theme()
@@ -240,9 +251,16 @@ pub struct State: Arrangement, CursorSource:
                 if box.value().id() == child:
                     if self.floating(index):
                         return result.success[gpu.Rect](self.float_content(index))
-                    let geometry = self.geometry(available)
-                    let visible = self.visible_model()
-                    let bounds = geometry.panes[visible.tabs[index].group]
+                    if not self.placing_valid or self.placing_epoch != layout.epoch() or self.placing_size.width != available.width or self.placing_size.height != available.height:
+                        self.placing = self.geometry(available)
+                        self.placing_size = available
+                        self.placing_epoch = layout.epoch()
+                        self.placing_valid = true
+                    # The visible model's group, read in place rather than copied.
+                    var group = self.model.tabs[index].group
+                    if let detached = self.detached:
+                        group = detached.tabs[index].group
+                    let bounds = self.placing.panes[group]
                     return result.success[gpu.Rect](gpu.Rect(bounds.x + 1.0, bounds.y + self.height() + 1.0,
                                                              math.max(0.0, bounds.width - 2.0), math.max(0.0, bounds.height - self.height() - 2.0)))
         return result.success[gpu.Rect](gpu.Rect(width = available.width, height = available.height))
