@@ -1,6 +1,6 @@
 from luce_ui.ui import Application, Widget, Layout, Size, Constraints, Event, Button, VStack, Font
 from luce_gpu.gpu import RenderTarget
-from luce_window.input import EventKind
+from luce_window.input import EventKind, PointerKind
 
 ## Records the pointer buttons it is sent, as a canvas that pans with the middle button would.
 class Pad: Widget:
@@ -8,6 +8,10 @@ class Pad: Widget:
     pub var downs: list[int]
     pub var ups: list[int]
     pub var moves: int = 0
+    pub var pressure: float = 0.0
+    pub var kind: PointerKind = PointerKind.mouse
+    pub var tilt_x: float = 0.0
+    pub var rotation: float = 0.0
 
     pub func init(self) -> unit!:
         self.box = Layout()
@@ -32,6 +36,10 @@ class Pad: Widget:
             self.ups.append(event.button)
         elif event.kind == EventKind.pointer_moved:
             self.moves += 1
+            self.pressure = event.pressure
+            self.kind = event.pointer_kind
+            self.tilt_x = event.tilt_x
+            self.rotation = event.rotation
 
 ## The middle button reaches the widget under the pointer, the drag stays with it
 ## even outside, and keyboard focus stays where it was.
@@ -53,6 +61,21 @@ pub func buttons() -> unit!:
     assert(pad.ups.length == 1 and pad.ups[0] == 2)
     assert(pad.moves >= 1)
     assert(other.layout().is_focused() and not pad.layout().is_focused())
+
+## A pen's pressure, kind, tilt and rotation reach the widget through `dispatch`.
+pub func pen_fields() -> unit!:
+    let pad = Pad()
+    let app = Application(VStack([pad], spacing = 0.0))
+    app.layout(300.0, 300.0)
+    let area = pad.layout().bounds()
+    let x = area.x + area.width * 0.5
+    let y = area.y + area.height * 0.5
+    app.dispatch(Event(kind = EventKind.pointer_down, button = 0, x = x, y = y, pressure = 0.4, pointer_kind = PointerKind.pen))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x + 5.0, y = y, pressure = 0.75, pointer_kind = PointerKind.pen,
+                       tilt_x = 30.0, rotation = 45.0))
+    app.dispatch(Event(kind = EventKind.pointer_up, button = 0, x = x + 5.0, y = y, pointer_kind = PointerKind.pen))
+    assert(pad.pressure == 0.75 and pad.kind == PointerKind.pen)
+    assert(pad.tilt_x == 30.0 and pad.rotation == 45.0)
 
 ## A disabled button takes no click, Space or Enter, yet still hears the pointer, so a
 ## tooltip over it can show; enabled again it clicks.

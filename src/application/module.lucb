@@ -402,7 +402,10 @@ pub struct Application:
                                       x = event.x, y = event.y, button = (u32)event.button,
                                       repeated = event.repeated, modifiers = input.Modifiers(shift = event.shift,
                                                                                              control = event.control, alt = event.alt, super = event.meta), codepoint = (u32)event.codepoint,
-                                      scroll_x = event.scroll_x, scroll_y = event.scroll_y, scroll_unit = event.scroll_unit), false)
+                                      scroll_x = event.scroll_x, scroll_y = event.scroll_y, scroll_unit = event.scroll_unit,
+                                      pressure = event.pressure, pointer_kind = event.pointer_kind, tilt_x = event.tilt_x,
+                                      tilt_y = event.tilt_y, azimuth = event.azimuth, altitude = event.altitude,
+                                      rotation = event.rotation, tangential = event.tangential), false)
 
     func dispatch_native(event: input.Event) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:
