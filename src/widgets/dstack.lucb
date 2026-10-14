@@ -292,10 +292,18 @@ pub struct DStack: Widget:
 
     ## The arrangement as text, for keeping it across runs (docking/state/layout.lucb):
     ## the split tree with its fractions, each group's tabs by panel id and its
-    ## selected one, then the floating windows. An application rebuilds it with
-    ## `add`, `set_fraction`, `select` and `float`.
+    ## selected one, then the floating windows. `restore_layout` rebuilds it.
     pub func layout_text() -> interop.Owned[str]!:
         return try self.state.value().arrangement_text()
+
+    ## Rebuild the arrangement `layout_text` wrote: the split tree and its fractions,
+    ## the tab groups and their selected tabs, and the floating windows, each panel
+    ## found by its id among `panels` (the panels the stack may hold, in it now or
+    ## not). Panels the text does not name are taken out, without `on_close`; ids no
+    ## panel has are skipped, and a split left with one side gives it the room. A
+    ## text that does not read is an error with the stack as it was.
+    pub func restore_layout(text: str, panels: const interop.Reference[Panel][]) -> !:
+        try self.state.value().restore_arrangement(text, panels)
 
     ## The open panel made from catalog entry `id`, or none.
     pub func find(id: str) -> interop.Reference[Panel]?!:

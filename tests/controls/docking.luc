@@ -270,3 +270,29 @@ pub func docking_layout() -> unit!:
     let text = stack.layout_text()
     assert(text.starts_with("luce-dock 1\nsplit h 0.25\ngroup 0 alpha -\ngroup 0 beta\nfloat "))
     assert(text.ends_with(" gamma\n"))
+    # Restoring the text puts the arrangement back; the panel without an id is left out.
+    let fifth = Panel("Epsilon", Text("e"), minimum = Size(100.0, 60.0), id = "epsilon")
+    let panels = [first, second, third, fourth, fifth]
+    stack.restore_layout(text, panels)
+    app.layout(805.0, 505.0)
+    let kept = stack.layout_text()
+    assert(kept == text.replace("alpha -", "alpha") and not stack.contains(fourth) and stack.is_floating(third))
+    stack.restore_layout(kept, panels)
+    app.layout(805.0, 505.0)
+    assert(stack.layout_text() == kept)
+    # Another arrangement: an id no panel has is skipped, a group left empty goes with
+    # its split, and the panels it does not name leave the stack.
+    stack.restore_layout("luce-dock 1\nsplit v 0.3\ngroup 1 alpha epsilon nobody\ngroup 0 missing\n", panels)
+    app.layout(805.0, 505.0)
+    assert(stack.layout_text() == "luce-dock 1\ngroup 1 alpha epsilon\n")
+    assert(stack.contains(fifth) and not stack.contains(second) and not stack.contains(third) and stack.panel_count() == 2)
+    stack.restore_layout(kept, panels)
+    app.layout(805.0, 505.0)
+    assert(stack.layout_text() == kept and not stack.contains(fifth))
+    # A text that does not read leaves the stack as it was.
+    for bad in ["", "luce-dock 2\n", "luce-dock 1\nsplit h 2.0\ngroup 0 alpha\ngroup 0 beta\n",
+                "luce-dock 1\nsplit h 0.5\ngroup 0 alpha\n", "luce-dock 1\ngroup 0 alpha\nweird line\n",
+                "luce-dock 1\ngroup x alpha\n", "luce-dock 1\nfloat 1 2 0 4 gamma\n"]:
+        var refused = false
+        stack.restore_layout(bad, panels) catch failure: refused = true
+        assert(refused and stack.layout_text() == kept)

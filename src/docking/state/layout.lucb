@@ -15,12 +15,15 @@
 #           float 40 60 300 240 color   a floating window in stack coordinates
 #
 #       Panels are named by their ids (`Panel(id =)`); a panel without one is written
-#       as `-`, which an application restoring the text should treat as unknown. The
-#       application rebuilds the arrangement through the DStack's own calls.
+#       as `-`, which no panel matches. `restore_arrangement` reads the text back: the
+#       whole of it into a new model first, so a text that does not read leaves the stack
+#       as it was, then the panels named in it into their places. A panel kept from before
+#       keeps its slot; the others take free ones.
 #
 #==============================================================================================
 
 import strings
+from docking.model import Node, Tab
 
 ## Text appended to a fixed buffer; running out of room is an error rather
 ## than a cut-off arrangement.
@@ -81,3 +84,246 @@ extend State:
             if byte <= ' ':
                 plain = false
         try writer.put(id.value if plain else "-")
+
+## The text being restored: its lines and how far it has been read, the model it
+## builds, whose tabs are numbered by pick (1, 2, ... in the order the text names
+## panels found in `panels`), which of `panels` each pick is, and the floating
+## windows back to front.
+struct Reading:
+    var lines: str[]
+    var line: usize
+    var model: Model
+    var taken: bool[]
+    var sources: usize[129]
+    var picks: usize
+    var float_picks: usize[129]
+    var float_windows: gpu.Rect[129]
+    var float_count: usize
+
+    ## The next line with something on it, or none at the end.
+    func next() -> str?:
+        while self.line < self.lines.length:
+            let text = self.lines[self.line]
+            self.line += 1
+            if text.length > 0:
+                return text
+        return none
+
+    ## The first word of the next line with something on it, without reading it.
+    func peek() -> str:
+        var at = self.line
+        while at < self.lines.length:
+            if self.lines[at].length > 0:
+                let (word, _) = strings.split_once(self.lines[at], " ") else return self.lines[at]
+                return word
+            at += 1
+        return ""
+
+    ## The first panel of `panels` not picked yet whose id is `id`, picked: its pick
+    ## number, or 0 when none is (or `id` is `-`).
+    func pick(panels: const interop.Reference[Panel][], id: str) -> usize!:
+        if id == "-":
+            return 0
+        for index in 0..<panels.length:
+            if self.taken[index]:
+                continue
+            let name = panels[index].value().id()
+            defer name.release()
+            if name.value == id:
+                if self.picks >= 128:
+                    error(result.limit, "a dynamic stack supports at most 128 panels")
+                self.taken[index] = true
+                self.picks += 1
+                self.sources[self.picks] = index
+                return self.picks
+        return 0
+
+    ## A free node of the model.
+    func allocate() -> usize!:
+        for index in 1..<self.model.nodes.length:
+            if not self.model.nodes[index].used:
+                self.model.nodes[index] = Node(used = true)
+                return index
+        error(result.limit, "a dynamic stack supports at most 32 tab groups")
+
+    ## The node on the next line and everything under it; 0 when no panel of it was
+    ## found, and a split with one side left keeps only that side.
+    func read_node(panels: const interop.Reference[Panel][], depth: usize) -> usize!:
+        if depth > 64:
+            error(result.invalid, "the dock arrangement nests too deep")
+        let line = self.next() else error(result.invalid, "the dock arrangement ends inside its split tree")
+        let words = try strings.split(line, ' ')
+        defer free(words)
+        if words[0] == "group" and words.length >= 2:
+            let wanted = strings.parse_i64(words[1]) else error(result.invalid, "a dock group's selected tab is not a number")
+            let group = try self.allocate()
+            var order: usize = 0
+            var selected: usize = 0
+            for at in 2..<words.length:
+                let picked = try self.pick(panels, words[at])
+                if picked == 0:
+                    continue
+                self.model.tabs[picked] = Tab(group, order)
+                order += 1
+                if selected == 0 or (i64)(at - 2) == wanted:
+                    selected = picked
+            if order == 0:
+                self.model.nodes[group] = Node()
+                return 0
+            self.model.nodes[group].selected = selected
+            return group
+        if words[0] == "split" and words.length == 3 and (words[1] == "h" or words[1] == "v"):
+            let fraction = strings.parse_f64(words[2]) catch failure:
+                error(result.invalid, "a dock split's fraction is not a number")
+            if not math.is_finite(fraction) or fraction < 0.0 or fraction > 1.0:
+                error(result.invalid, "a dock split's fraction is outside 0..1")
+            let branch = try self.allocate()
+            let first = try self.read_node(panels, depth + 1)
+            let second = try self.read_node(panels, depth + 1)
+            if first == 0 or second == 0:
+                self.model.nodes[branch] = Node()
+                return second if first == 0 else first
+            self.model.nodes[branch] = Node(used = true, first = first, second = second, horizontal = words[1] == "h", fraction = fraction)
+            self.model.nodes[first].parent = branch
+            self.model.nodes[second].parent = branch
+            return branch
+        error(result.invalid, "a dock arrangement line is not a split, a group or a window")
+
+    ## A floating window's line: `float x y width height id`.
+    func read_float(panels: const interop.Reference[Panel][], line: str) -> !:
+        let words = try strings.split(line, ' ')
+        defer free(words)
+        if words.length != 6 or words[0] != "float":
+            error(result.invalid, "a dock arrangement line is not a split, a group or a window")
+        var numbers: f64[4]
+        for at in 0..<(usize)4:
+            numbers[at] = strings.parse_f64(words[at + 1]) catch failure:
+                error(result.invalid, "a floating window's bounds are not numbers")
+            if not math.is_finite(numbers[at]):
+                error(result.invalid, "a floating window's bounds are not finite")
+        if numbers[2] <= 0.0 or numbers[3] <= 0.0:
+            error(result.invalid, "a floating window has no size")
+        let picked = try self.pick(panels, words[5])
+        if picked == 0:
+            return
+        self.float_picks[self.float_count] = picked
+        self.float_windows[self.float_count] = gpu.Rect(numbers[0], numbers[1], numbers[2], numbers[3])
+        self.float_count += 1
+
+## Whether two panel slots hold the same panel.
+func same_panel(first: interop.Reference[Panel]?, second: interop.Reference[Panel]?) -> bool:
+    let a = first else return second == none
+    let b = second else return false
+    let left = a.value().layout()
+    defer left.release()
+    let right = b.value().layout()
+    defer right.release()
+    return left.value().id() == right.value().id()
+
+extend State:
+    ## Rebuild the arrangement from `text` (`arrangement_text`'s), placing each panel
+    ## it names by id from `panels`. Panels of the stack it leaves out are let go, with
+    ## no `closed`; ids no panel has are skipped. A text that does not read is an error
+    ## with the stack unchanged.
+    pub func restore_arrangement(text: str, panels: const interop.Reference[Panel][]) -> !:
+        self.cancel()
+        let lines = try strings.split(text, '\n')
+        defer free(lines)
+        let taken = try new bool[panels.length] --- in memory.heap
+        defer free(taken) in memory.heap
+        for index in 0..<taken.length:
+            taken[index] = false
+        var reading = Reading(lines = lines, line = 0, model = Model(), taken = taken, picks = 0, float_count = 0)
+        let header = reading.next() else error(result.invalid, "the dock arrangement is empty")
+        if header != "luce-dock 1":
+            error(result.invalid, "the text is not a dock arrangement (luce-dock 1)")
+        let opening = reading.peek()
+        if opening == "split" or opening == "group":
+            reading.model.root = try reading.read_node(panels, 0)
+        while let line = reading.next():
+            try reading.read_float(panels, line)
+        # Each pick's slot: its own when the stack holds it already, else a free one
+        # (or one whose panel is left out).
+        var slots: usize[129]
+        var kept: bool[129]
+        for index in 0..<(usize)129:
+            slots[index] = 0
+            kept[index] = false
+        for picked in 1..<reading.picks + 1:
+            let held = self.index(panels[reading.sources[picked]]) catch failure:
+                recover 0
+            slots[picked] = held
+            kept[held] = held != 0
+        var free_slot: usize = 1
+        for picked in 1..<reading.picks + 1:
+            if slots[picked] != 0:
+                continue
+            while kept[free_slot]:
+                free_slot += 1
+            slots[picked] = free_slot
+            kept[free_slot] = true
+        var next = Model()
+        next.nodes = reading.model.nodes
+        next.root = reading.model.root
+        for picked in 1..<reading.picks + 1:
+            next.tabs[slots[picked]] = reading.model.tabs[picked]
+        for node in 1..<next.nodes.length:
+            if next.nodes[node].used and next.nodes[node].first == 0:
+                next.nodes[node].selected = slots[next.nodes[node].selected]
+        let chosen = try new PanelSlot[129] --- in memory.heap
+        defer free(chosen) in memory.heap
+        for index in 0..<chosen.length:
+            chosen[index] = none
+        for picked in 1..<reading.picks + 1:
+            chosen[slots[picked]] = panels[reading.sources[picked]]
+        # The active panel stays when it is still docked, else the first group's.
+        let active = self.model.active
+        if active != 0 and same_panel(self.panels[active], chosen[active]) and next.tabs[active].group != 0:
+            next.active = active
+        elif next.root != 0:
+            var node = next.root
+            while next.nodes[node].first != 0:
+                node = next.nodes[node].first
+            next.active = next.nodes[node].selected
+        for order in 0..<reading.float_count:
+            try self.ensure_frame(slots[reading.float_picks[order]])
+        # Swap the panels in, borrowed until the children take; put them back if not.
+        let previous = try new PanelSlot[129] --- in memory.heap
+        defer free(previous) in memory.heap
+        for index in 0..<previous.length:
+            previous[index] = self.panels[index]
+            self.panels[index] = chosen[index]
+        let old_stacking = self.stacking
+        let old_floats = self.floats
+        let old_count = self.float_count
+        let size = self.size()
+        for order in 0..<reading.float_count:
+            let slot = slots[reading.float_picks[order]]
+            self.stacking[order] = slot
+            let window = reading.float_windows[order]
+            # A stack not laid out yet has no room to fit the window to.
+            self.floats[slot] = window if size.width <= 0.0 or size.height <= 0.0 else self.fitted(slot, window)
+        self.float_count = reading.float_count
+        self.children() catch failure:
+            for index in 0..<previous.length:
+                self.panels[index] = previous[index]
+            self.stacking = old_stacking
+            self.floats = old_floats
+            self.float_count = old_count
+            error(failure.code, failure.message)
+        # Hold the panels that came in and let go of the ones that left.
+        for index in 0..<previous.length:
+            let before = previous[index]
+            let after = chosen[index]
+            if same_panel(before, after):
+                self.panels[index] = before
+                continue
+            if let panel = after:
+                self.panels[index] = panel.clone()
+            else:
+                self.panels[index] = none
+                if let frame = self.frames[index]:
+                    self.frames[index] = none
+                    frame.release()
+            release_panel(before)
+        self.publish(next)
