@@ -18,13 +18,18 @@ from widgets.drag_gesture import DragGesture
 
 ## Incoming labels are borrowed for the call; ListView retains its own copy.
 ## Icons are presentation data, independent of filenames or filesystem policy.
+## `symbol` names any icon in the luciaos-assets set ("color-swatch", "filter", ...)
+## and is drawn in place of `icon`, muted; a name not in the set draws nothing but
+## keeps the icon's room so the rows stay aligned.
 pub struct ListItem:
     pub let text: str
     pub let icon: IconKind = IconKind.blank
+    pub let symbol: str = ""
 
 struct StoredItem:
     let text: interop.Owned[str]
     let icon: IconKind
+    let symbol: interop.Owned[str]
 
 pub struct ListView: Widget:
     let box: interop.Reference[Layout]
@@ -143,10 +148,15 @@ pub struct ListView: Widget:
             let lit = (i64)index == self.selection
             let item = self.items[index]
             var x = theme.inset(self.font)
-            if item.icon != IconKind.blank:
+            if item.symbol.value != "" or item.icon != IconKind.blank:
                 let extent = self.font.value().height()
-                let color = theme.accent if item.icon == IconKind.folder or item.icon == IconKind.folder_open else theme.muted
-                try icons.draw(&painter, item.icon, gpu.Rect(x, y + (self.row_height() - extent) * 0.5, extent, extent), theme.on_selection(color) if lit else color)
+                let place = gpu.Rect(x, y + (self.row_height() - extent) * 0.5, extent, extent)
+                let color = theme.accent if item.symbol.value == "" and (item.icon == IconKind.folder or item.icon == IconKind.folder_open) else theme.muted
+                let ink = theme.on_selection(color) if lit else color
+                if item.symbol.value != "":
+                    try icons.draw_named(&painter, item.symbol.value, place, ink)
+                else:
+                    try icons.draw(&painter, item.icon, place, ink)
                 x += extent + theme.inset(self.font)
             try painter.text(item.text.value, x, y + (self.row_height() - self.font.value().height()) * 0.5, color = theme.on_selection(theme.foreground) if lit else theme.foreground, font = self.font)
             index += 1
@@ -224,6 +234,7 @@ pub struct ListView: Widget:
         self.selection_changed.trace(visit, context)
         for item in self.items:
             item.text.trace(visit, context)
+            item.symbol.trace(visit, context)
 
 func copy_items(items: const ListItem[], font: interop.Reference[Font]) -> StoredItem[]!:
     if items.length > 65536:
@@ -233,13 +244,18 @@ func copy_items(items: const ListItem[], font: interop.Reference[Font]) -> Store
     errdefer release_partial(copies, count)
     for item in items:
         _ = try font.value().measure(item.text)
-        copies[count] = StoredItem(try interop.copy_text(item.text), item.icon)
+        let text = try interop.copy_text(item.text)
+        let symbol = try interop.copy_text(item.symbol) catch failure:
+            text.release()
+            error(failure.code, failure.message)
+        copies[count] = StoredItem(text, item.icon, symbol)
         count += 1
     return copies
 
 func release_partial(items: StoredItem[], count: usize):
     for item in items[..<count]:
         item.text.release()
+        item.symbol.release()
     free(items) in memory.heap
 
 func release_items(items: StoredItem[]):

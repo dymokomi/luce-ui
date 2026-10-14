@@ -1,0 +1,53 @@
+## A list row draws the icon its `symbol` names before its text; a name not in the set
+## draws nothing but keeps the icon's room, so its text lines up with the others'.
+## Black ink on white, read back from an offscreen Metal texture.
+from luce_gpu import gpu
+import interop
+import memory
+from luce_ui import ui
+from luce_ui.ui import Application, ListView, ListItem, Widget
+
+let width: usize = 160
+let row: usize = 24
+
+## The leftmost dark pixel in list row `index` of an rgba8 picture, or `width`.
+func leftmost(pixels: const u8[], index: usize) -> usize:
+    var least = width
+    for y in index * row..<(index + 1) * row:
+        for x in 0..<width:
+            if x < least and pixels[(y * width + x) * 4] < 128:
+                least = x
+    return least
+
+pub func symbols(device: gpu.Device) -> !:
+    var items: ListItem[3] = [ListItem(text = "Hello", symbol = "color-correction"), ListItem(text = "Hello", symbol = "no-such-icon"), ListItem(text = "Hello")]
+    let listing = try interop.Reference[ListView].adopt(new ListView(items, row_height = (f64)row) in memory.heap, ui.list_view_type, memory.heap)
+    defer listing.release()
+    let root = listing.as_interface[Widget](listing.value())
+    defer root.release()
+    let white = gpu.Color(1.0, 1.0, 1.0)
+    let black = gpu.Color()
+    let theme = ui.Theme(background = white, panel = white, foreground = black, muted = black)
+    let app = try interop.Reference[Application].adopt(new Application(root, theme = theme) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    let laid = app.value().layout((f64)width, (f64)(row * 3))
+    defer laid.release()
+    try laid.get()
+    var texture = try gpu.Texture.create(device, (u32)width, (u32)(row * 3), gpu.Format.rgba8)
+    defer texture.destroy()
+    var pixels = try new u8[width * row * 3 * 4] in memory.heap
+    defer free(pixels) in memory.heap
+    let frame = try texture.frame()
+    defer frame.release()
+    let target = try frame.value().target()
+    defer target.release()
+    let drawn = app.value().render(target)
+    defer drawn.release()
+    try drawn.get()
+    _ = try frame.value().present(white)
+    try texture.read(pixels)
+    let icon = leftmost(pixels, 0)
+    let kept = leftmost(pixels, 1)
+    let plain = leftmost(pixels, 2)
+    assert(plain < width and kept > plain + 8 and icon + 8 < kept)
+    print(f"ok list symbols: icon from {icon}, text after an unknown symbol from {kept}, plain text from {plain}")
