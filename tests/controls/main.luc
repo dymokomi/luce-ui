@@ -11,7 +11,7 @@ from wide_text import wide_text
 from panes import panes
 from contextual import contextual
 from hover import hover
-from buttons import buttons, disabled_buttons, pen_fields
+from buttons import buttons, disabled_buttons, pen_fields, button_tooltips
 from drops import drops
 from drags import drags, grid_drags, grid_visible
 from grids import grid_flows
@@ -121,6 +121,7 @@ pub func main(arguments: list[str]) -> int!:
     buttons()
     pen_fields()
     disabled_buttons()
+    button_tooltips()
     drops()
     drags()
     grid_drags()

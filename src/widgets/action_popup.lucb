@@ -32,7 +32,8 @@ let chevron_room: f64 = 16.0
 ## every typed word. A command with items is a submenu's row: pointing at it,
 ## Right, Enter or a click opens its items beside the row in a nested popup,
 ## and choosing there closes every menu of the chain. Commands with an icon
-## draw it before their caption.
+## draw it before their caption. `on_close` hears the outermost list close: after
+## the chosen command has run, or dismissed with nothing chosen.
 pub struct ActionPopup: Widget:
     let box: interop.Reference[Layout]
     let font: interop.Reference[Font]
@@ -62,6 +63,8 @@ pub struct ActionPopup: Widget:
     var holder: ActionPopup*?
     ## The display row whose submenu is open, -1 when none is.
     var opened: i64
+    ## Who hears the outermost list close.
+    let closing: interop.Signal[unit]
 
     pub func init(commands: const interop.Reference[Command][], font: interop.Reference[Font], searchable: bool = false) -> !:
         if commands.length == 0 or commands.length > 4096:
@@ -76,6 +79,8 @@ pub struct ActionPopup: Widget:
         box.value().set_cursor(input.Cursor.pointer)
         box.value().set_popup(true)
         box.value().set_visible(false)
+        let closing = try interop.Signal[unit]()
+        errdefer closing.release()
         var query = try LineInput()
         self.searchable = searchable
         self.query = query
@@ -89,6 +94,7 @@ pub struct ActionPopup: Widget:
             box.value().set_popup_placement(layout.PopupPlacement.window_top)
             box.value().set_animate_open(true)
         self.box = box
+        self.closing = closing
         self.font = font.clone()
         self.commands = copied
         self.selected = -1
@@ -105,6 +111,18 @@ pub struct ActionPopup: Widget:
 
     pub func layout() -> interop.Reference[Layout]:
         return self.box.clone()
+
+    ## Hear the list close: once a chosen command has run, or when it is
+    ## dismissed (Escape, a press outside) with nothing chosen. A submenu
+    ## closing alone is not the menu closing.
+    pub func on_close(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.closing.connect(callback)
+
+    ## The outermost list of this chain closed: tell its listeners.
+    func tell_closed() -> interop.Outcome[unit]:
+        if let up = self.holder:
+            return up.tell_closed()
+        return self.closing.emit(())
 
     ## Replace the presented commands, for a context menu whose entries depend on
     ## what was clicked. Any open filtering and selection reset with the new set.
@@ -511,7 +529,11 @@ pub struct ActionPopup: Widget:
             up = menu.holder
         self.pressed = -1
         self.picked = (i64)self.matches[(usize)self.selected]
-        return action.value().trigger()
+        let triggered = action.value().trigger()
+        if not triggered.is_success():
+            return triggered
+        triggered.release()
+        return self.tell_closed()
 
     pub func event(event: Event) -> interop.Outcome[unit]:
         self.show_revealed()
@@ -529,11 +551,16 @@ pub struct ActionPopup: Widget:
             else:
                 self.box.value().repaint()
         if event.cancelled:
+            let shown = self.box.value().is_visible()
             self.dismiss()
             self.pressed = -1
+            if shown and self.holder == none:
+                return self.tell_closed()
         elif event.kind == input.EventKind.key_down:
             if event.key == input.Key.escape or (event.key == input.Key.left and self.holder != none):
                 self.dismiss()
+                if event.key == input.Key.escape and self.holder == none:
+                    return self.tell_closed()
             elif event.key == input.Key.right and self.selected >= 0 and self.commands.values()[self.matches[(usize)self.selected]].value().has_items():
                 self.open_submenu(self.selected, true) catch failure:
                     return result.failure[unit](failure.code, failure.message)
@@ -580,6 +607,8 @@ pub struct ActionPopup: Widget:
             self.child = none
             child.release()
         self.holder = none
+        self.closing.close()
+        self.closing.release()
         self.query.close()
         self.commands.close()
         self.font.release()
@@ -589,6 +618,7 @@ pub struct ActionPopup: Widget:
         if let child = self.child:
             child.trace(visit, context)
         self.commands.trace(visit, context)
+        self.closing.trace(visit, context)
         self.font.trace(visit, context)
         self.box.trace(visit, context)
 

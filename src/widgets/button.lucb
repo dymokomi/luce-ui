@@ -1,5 +1,5 @@
-## Buttons: the Button widget, its resting styles, and the cursor policy that
-## follows an action's enabled state.
+## Buttons: the Button widget, its resting styles, its tooltip, and the cursor
+## policy that follows an action's enabled state.
 from luce_gpu import gpu
 import interop
 from luce_std import math
@@ -16,6 +16,7 @@ from cursor import CursorSource
 from geometry import Point
 import icons
 import time
+from widgets.tooltip import Tooltip, TipWait, tooltip_type
 
 ## Query shared action state without forcing a layout pass when it is enabled
 ## or disabled. The layout owns this policy; the action owns no widget edges.
@@ -47,7 +48,9 @@ pub enum ButtonStyle as u8:
 
 ## A push button with a text label, an icon, or both, clicked by the pointer or
 ## by Space or Enter while focused. Built on a Command, it takes the command's
-## label, enabled state and trigger instead of its own.
+## label, enabled state and trigger instead of its own. With `set_tooltip`, a
+## pointer resting on it shows a tooltip under it after a moment; `on_hover` hears
+## the pointer come onto it and leave.
 pub struct Button: Widget:
     let box: interop.Reference[Layout]
     var caption: interop.Owned[str]
@@ -70,6 +73,16 @@ pub struct Button: Widget:
     ## Off: the button takes no clicks and shows no hover, its icon and label pale
     ## (`set_enabled`), while its box still hears the pointer for a tooltip.
     var switched_on: bool
+    ## Whether the pointer is over the button, and who hears it come and go.
+    var hovered: bool
+    let hovering: interop.Signal[bool]
+    ## The tooltip (made by the first `set_tooltip`), its text and note, the wait
+    ## before it shows, and whether that wait runs (the pointer rests here).
+    var tip: interop.Reference[Tooltip]?
+    var tip_text: interop.Owned[str]
+    var tip_note: interop.Owned[str]
+    var tip_wait: TipWait
+    var tip_waiting: bool
 
     ## `text` and `action` are exclusive; `icon` names a luciaos-assets icon.
     pub func init(text: str = "", font: interop.Reference[Font]? = none, action: interop.Reference[Command]? = none, icon: str = "") -> !:
@@ -95,6 +108,8 @@ pub struct Button: Widget:
         errdefer signal.release()
         let holding = try interop.Signal[unit]()
         errdefer holding.release()
+        let hovering = try interop.Signal[bool]()
+        errdefer hovering.release()
         self.caption = try interop.copy_text(text)
         errdefer self.caption.release()
         self.glyph = try interop.copy_text(icon)
@@ -106,6 +121,13 @@ pub struct Button: Widget:
         self.hold_fired = false
         self.grouped = false
         self.switched_on = true
+        self.hovered = false
+        self.hovering = hovering
+        self.tip = none
+        self.tip_text = interop.Owned[str]("")
+        self.tip_note = interop.Owned[str]("")
+        self.tip_wait = TipWait()
+        self.tip_waiting = false
         self.pressed = false
         self.pressed_key = input.Key.unknown
         self.box = box
@@ -174,6 +196,68 @@ pub struct Button: Widget:
         self.hold_fired = true
         return self.holding.emit(())
 
+    ## Show `text` (with `note`, muted, under it: a shortcut) in a tooltip under
+    ## the button while the pointer rests on it, after the tooltip delay; above it
+    ## when there is no room below. Disabled buttons show theirs too. An empty
+    ## `text` takes the tooltip away.
+    pub func set_tooltip(text: str, note: str = "") -> !:
+        if self.tip == none and text != "":
+            let font = self.font.clone()
+            defer font.release()
+            let tip = try interop.Reference[Tooltip].adopt(new Tooltip(font) in memory.heap, tooltip_type, memory.heap)
+            errdefer tip.release()
+            let children: interop.Interface[Widget][1] = [tip.as_interface[Widget](tip.value())]
+            self.box.value().set_children(children) catch failure:
+                children[0].release()
+                error(failure.code, failure.message)
+            # The layout retained its child; this carrier was ours to drop.
+            children[0].release()
+            self.tip = tip
+        try replace_text(&self.tip_text, text)
+        try replace_text(&self.tip_note, note)
+        if let tip = self.tip:
+            if tip.value().is_open():
+                if text == "":
+                    tip.value().hide()
+                else:
+                    try self.show_tip()
+
+    ## How long the pointer rests on the button before its tooltip shows, in
+    ## seconds (the tooltip delay, 0.5, unless set).
+    pub func set_tip_delay(seconds: f64) -> !:
+        try self.tip_wait.set_delay(seconds)
+
+    ## The tooltip's text while it shows, else an empty text.
+    pub func shown_tooltip() -> str:
+        let tip = self.tip else return ""
+        return tip.value().text() if tip.value().is_open() else ""
+
+    ## Hear the pointer come onto the button (true) and leave it (false).
+    pub func on_hover(callback: interop.Callback[bool, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.hovering.connect(callback)
+
+    ## Whether the pointer is over the button.
+    pub func is_hovered() -> bool:
+        return self.hovered
+
+    func show_tip() -> !:
+        let tip = self.tip else return
+        let height = self.box.value().bounds().height
+        try tip.value().show(self.tip_text.value, self.tip_note.value, 0.0, height + 4.0, above = -4.0)
+
+    ## The pointer came onto the button or left it: tell the listeners, and start
+    ## or end the tooltip's wait.
+    func set_hovered(hovered: bool) -> interop.Outcome[unit]:
+        if hovered == self.hovered:
+            return result.success[unit](())
+        self.hovered = hovered
+        self.tip_waiting = hovered and self.tip_text.value.length > 0
+        if self.tip_waiting:
+            self.tip_wait.start()
+        elif let tip = self.tip:
+            tip.value().hide()
+        return self.hovering.emit(hovered)
+
     ## For an action button this connects to the action's trigger, so the callback
     ## also runs when the action fires from a shortcut or menu.
     pub func on_click(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
@@ -231,6 +315,11 @@ pub struct Button: Widget:
         return result.success[unit](())
 
     func paint(target: interop.View[gpu.RenderTarget]) -> !:
+        # The pointer has rested long enough: the tooltip shows (the loop drew this
+        # frame for it, when the wait ended).
+        if self.tip_waiting and self.tip_wait.due():
+            self.tip_waiting = false
+            try self.show_tip()
         var painter = try Painter(target)
         defer painter.close()
         let size = try target.get().size()
@@ -274,8 +363,18 @@ pub struct Button: Widget:
             try painter.triangle(Point(size.width - 3.0, size.height - 8.0), Point(size.width - 3.0, size.height - 3.0), Point(size.width - 8.0, size.height - 3.0), ink)
 
     pub func event(event: Event) -> interop.Outcome[unit]:
-        if event.kind == input.EventKind.pointer_moved and not event.cancelled:
-            return result.success[unit](())
+        if (event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_entered) and not event.cancelled:
+            return self.set_hovered(event.inside)
+        if event.kind == input.EventKind.pointer_left or event.cancelled:
+            let left = self.set_hovered(false)
+            if not left.is_success() or event.kind == input.EventKind.pointer_left:
+                return left
+            left.release()
+        # A press or a key takes the tooltip away until the pointer comes back.
+        if event.kind == input.EventKind.pointer_down or event.kind == input.EventKind.key_down:
+            self.tip_waiting = false
+            if let tip = self.tip:
+                tip.value().hide()
         if event.cancelled:
             self.pressed = false
             self.pressed_key = input.Key.unknown
@@ -324,6 +423,13 @@ pub struct Button: Widget:
         self.clicked.release()
         self.holding.close()
         self.holding.release()
+        self.hovering.close()
+        self.hovering.release()
+        if let tip = self.tip:
+            tip.release()
+        self.tip = none
+        self.tip_text.release()
+        self.tip_note.release()
         self.caption.release()
         self.glyph.release()
         self.box.release()
@@ -337,5 +443,20 @@ pub struct Button: Widget:
         self.glyph.trace(visit, context)
         self.clicked.trace(visit, context)
         self.holding.trace(visit, context)
+        self.hovering.trace(visit, context)
+        if let tip = self.tip:
+            tip.trace(visit, context)
+        self.tip_text.trace(visit, context)
+        self.tip_note.trace(visit, context)
 
 pub let button_type: interop.Type[Button] = interop.Type[Button]("Button", Button.close, Button.trace, closeable = true, main_thread = true)
+
+## Put a copy of `text` in `slot`, releasing what it held only once the slot no
+## longer does.
+func replace_text(slot: interop.Owned[str]*, text: str) -> !:
+    if slot.value == text:
+        return
+    let copy = try interop.copy_text(text)
+    let previous = *slot
+    *slot = copy
+    previous.release()

@@ -50,7 +50,7 @@ from text.line_input import LineInput
 from widgets.action_popup import ActionPopup, action_popup_type
 from widgets.color_editor import ColorEditor, color_editor_type
 from widgets.number_field import format_number
-from widgets.tooltip import Tooltip, tooltip_type
+from widgets.tooltip import Tooltip, TipWait, tooltip_type
 import measures
 from measures import Unit
 import icons
@@ -217,7 +217,7 @@ let popup_context: i64 = 2
 let popup_interpolation: i64 = 3
 
 ## A tooltip shows after the pointer rests this long on a row (nanoseconds), unless set.
-let tip_wait: u64 = 600000000
+let row_tip_delay: u64 = 600000000
 
 ## Room between lines, and between parts of a line.
 let line_gap: f64 = 2.0
@@ -292,10 +292,9 @@ pub struct ParameterPanel: Widget:
     var popup_row: i64
     var color_row: i64
     var color_shown: (i64, i64, i64)
-    ## The row whose tooltip is due, and since when the pointer rests there.
+    ## The row whose tooltip is due, and the wait before it shows.
     var tip_row: i64
-    var tip_since: u64
-    var tip_delay: u64
+    var tip_wait: TipWait
 
     ## A panel of `specs` in `font`; `label_width` fixes the label column (0 fits it
     ## to the labels), and `margin` is the room left and right of the rows (0 lines
@@ -392,8 +391,7 @@ pub struct ParameterPanel: Widget:
         self.color_row = -1
         self.color_shown = (0, 0, 0)
         self.tip_row = -1
-        self.tip_since = 0
-        self.tip_delay = tip_wait
+        self.tip_wait = TipWait(row_tip_delay)
         try self.set_specs(specs)
 
     pub func layout() -> interop.Reference[Layout]:

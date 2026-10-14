@@ -91,6 +91,12 @@ extend TextEditor:
     pub func on_change(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         return try self.changed.connect(callback)
 
+    ## Called when the editor loses the keyboard focus (a click elsewhere, Tab
+    ## away, the window going inactive): an application holding typed text back
+    ## takes it then.
+    pub func on_focus_lost(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.unfocused.connect(callback)
+
     ## Load new text: newlines are normalized, history is cleared, the caret goes
     ## to the start, scrolling resets and diagnostics are cleared. Notifies `on_change`.
     pub func set_text(text: str) -> interop.Outcome[unit]:

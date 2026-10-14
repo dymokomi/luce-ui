@@ -1,5 +1,7 @@
 from luce_ui.ui import Application, Widget, Layout, Size, Constraints, Event, Button, VStack, Font
-from luce_gpu.gpu import RenderTarget
+from luce_gpu.gpu import RenderTarget, Frame
+from luce_window import window
+import time
 from luce_window.input import EventKind, PointerKind
 
 ## Records the pointer buttons it is sent, as a canvas that pans with the middle button would.
@@ -104,3 +106,60 @@ pub func disabled_buttons() -> unit!:
     assert(clicks == 1 and button.is_enabled())
     connection.disconnect()
     app.close()
+
+## A button's tooltip shows once the pointer has rested on it for the delay:
+## the frame drawn when the wait ends shows it (the loop is woken for that
+## frame; no timer runs). Leaving or pressing hides it. `on_hover` hears the
+## pointer come on and leave, once each, a disabled button too.
+pub func button_tooltips() -> unit!:
+    let font = Font()
+    let button = Button(icon = "brush-tool", font = font)
+    let other = Button("Other", font = font)
+    let heard: list[bool] = []
+    let hovering = button.on_hover(func (over: bool) -> unit!: heard.append(over))
+    button.set_tooltip("Brush", "B")
+    button.set_tip_delay(0.15)
+    let app = Application(VStack([button, other]))
+    app.layout(200.0, 100.0)
+    let area = button.layout().bounds()
+    let x = area.x + area.width * 0.5
+    let y = area.y + area.height * 0.5
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x, y = y))
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x + 1.0, y = y))
+    assert(heard == [true])
+    draw(app)
+    assert(button.shown_tooltip() == "")
+    let started = time.now()
+    while time.now() - started < 200000000:
+        _ = 0
+    draw(app)
+    assert(button.shown_tooltip() == "Brush")
+    # Onto another button: the tip goes, the hover ends.
+    let beside = other.layout().bounds()
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = beside.x + 4.0, y = beside.y + 4.0))
+    assert(heard == [true, false] and button.shown_tooltip() == "")
+    # A press hides it; it waits again only when the pointer comes back.
+    button.set_tip_delay(0.0)
+    button.set_enabled(false)
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x, y = y))
+    draw(app)
+    assert(heard == [true, false, true] and button.shown_tooltip() == "Brush")
+    app.dispatch(Event(kind = EventKind.pointer_down, button = 0, x = x, y = y, inside = true))
+    app.dispatch(Event(kind = EventKind.pointer_up, button = 0, x = x, y = y, inside = true))
+    draw(app)
+    assert(button.shown_tooltip() == "")
+    # Out of the window; then an empty text takes the tooltip away.
+    app.dispatch(Event(kind = EventKind.pointer_left))
+    assert(heard == [true, false, true, false])
+    button.set_tooltip("")
+    app.dispatch(Event(kind = EventKind.pointer_moved, x = x, y = y))
+    draw(app)
+    assert(button.shown_tooltip() == "" and heard == [true, false, true, false, true])
+    hovering.disconnect()
+    app.close()
+
+func draw(app: Application) -> unit!:
+    let frame = Frame(window.Size(200.0, 100.0, 200.0, 100.0, 1.0))
+    app.layout(200.0, 100.0)
+    app.render(frame.target())
+    frame.close()

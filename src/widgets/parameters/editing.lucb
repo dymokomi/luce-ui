@@ -277,9 +277,7 @@ extend ParameterPanel:
             return
         self.hide_tip()
         self.tip_row = row
-        self.tip_since = time.now()
-        if row >= 0 and self.rows[(usize)row].doc.value.length > 0:
-            layout.wake_at(self.tip_since + self.tip_delay)
+        self.tip_wait.start(row >= 0 and self.rows[(usize)row].doc.value.length > 0)
 
     func hide_tip():
         self.tip_row = -1
@@ -297,7 +295,6 @@ extend ParameterPanel:
         let placed = self.rows[(usize)row]
         if placed.doc.value.length == 0 or not placed.shown:
             return
-        if time.now() < self.tip_since + self.tip_delay:
-            layout.wake_at(self.tip_since + self.tip_delay)
+        if not self.tip_wait.due():
             return
         try self.tip.value().show(placed.doc.value, placed.name.value, self.margin + 8.0, placed.y + placed.height + 2.0)

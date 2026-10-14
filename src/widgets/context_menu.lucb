@@ -43,6 +43,11 @@ pub struct ContextMenu: Widget:
     pub func on_open(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
         return try self.opening.connect(callback)
 
+    ## Hear the menu close: after the chosen command has run, or dismissed
+    ## with nothing chosen (what was set up for the opening is spent then).
+    pub func on_close(callback: interop.Callback[unit, unit]) -> interop.Reference[interop.Connection]!:
+        return try self.popup.value().on_close(callback)
+
     ## Choose the entries for the next opening, typically from an `on_open` handler
     ## that inspects the current selection before the menu is placed and shown.
     pub func set_commands(commands: const interop.Reference[Command][]) -> !:

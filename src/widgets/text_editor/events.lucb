@@ -32,6 +32,11 @@ extend TextEditor:
             if not changed.is_success():
                 return changed
             changed.release()
+        if event.kind == input.EventKind.focus_lost:
+            let told = self.unfocused.emit(())
+            if not told.is_success():
+                return told
+            told.release()
         # Completion follows the edit only once on_change has heard of it.
         self.follow_completion() catch failure:
             return result.failure[unit](failure.code, failure.message)

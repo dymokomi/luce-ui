@@ -3,7 +3,10 @@
 ## spans; see text.markup). It floats over the window at a point its owner gives,
 ## in the owner's points, and takes no input: the pointer passes through it. The
 ## parameter panel shows a row's doc in one, the text editor a diagnostic's
-## message or a hover provider's text.
+## message or a hover provider's text, a button its `set_tooltip` text.
+##
+## TipWait is the moment before a tip shows, shared by those owners: no timer,
+## the loop is asked for a frame when the tip is due and the owner's draw shows it.
 from luce_gpu import gpu
 import interop
 import ownership
@@ -12,6 +15,7 @@ import layout
 import result
 import text.cells as cell_widths
 import text.markup as markup
+import time
 from layout import Widget, Layout, Size, Constraints, Event, Rect
 from painter import Painter
 from font import Font
@@ -53,12 +57,13 @@ pub struct Tooltip: Widget:
         return self.body.value
 
     ## Show `body`, and `note` under it when not empty, with the tip's top-left at
-    ## (`x`, `y`) in the owner's points.
-    pub func show(body: str, note: str, x: f64, y: f64) -> !:
+    ## (`x`, `y`) in the owner's points; with `above`, a tip with no room below the
+    ## window's bottom goes above instead, its bottom at `above`.
+    pub func show(body: str, note: str, x: f64, y: f64, above: f64? = none) -> !:
         try replace(&self.body, body)
         try replace(&self.note, note)
         self.marked = false
-        try self.box.value().set_popup_point(x, y)
+        try self.box.value().set_popup_point(x, y, above = above)
         self.box.value().set_visible(true)
 
     ## Show `text` as markup: its first line a signature set in the code color,
@@ -144,6 +149,44 @@ pub struct Tooltip: Widget:
         self.font.trace(visit, context)
         self.body.trace(visit, context)
         self.note.trace(visit, context)
+
+## How long the pointer rests on something before its tooltip shows, unless
+## its owner sets another delay (nanoseconds).
+pub let tip_delay: u64 = 500000000
+
+## The wait before a tooltip shows: since when the pointer rests on what it
+## describes, and how long it must. Its owner starts it when the pointer comes to
+## rest on something new and asks `due` as it draws; the loop draws a frame when
+## the wait ends (layout.wake_at), so the tip shows then with no timer or polling.
+pub struct TipWait:
+    var since: u64
+    var delay: u64
+
+    pub func init(delay: u64 = tip_delay):
+        self.since = 0
+        self.delay = delay
+
+    ## Set the delay to `seconds` (0..60).
+    pub func set_delay(seconds: f64) -> !:
+        if not math.is_finite(seconds) or seconds < 0.0 or seconds > 60.0:
+            error(result.invalid, "a tooltip delay is 0..60 seconds")
+        self.delay = (u64)(seconds * 1.0e9)
+
+    ## The pointer came to rest now; with `wake`, ask for the frame that shows the
+    ## tip when the wait ends (without, a later `due` asks).
+    pub func start(wake: bool = true):
+        self.since = time.now()
+        if wake:
+            layout.wake_at(self.since + self.delay)
+
+    ## Whether the wait has ended; if not, the frame at its end is asked for again
+    ## (another wake-up may have been taken before it).
+    pub func due() -> bool:
+        let end = self.since + self.delay
+        if time.now() >= end:
+            return true
+        layout.wake_at(end)
+        return false
 
 pub let tooltip_type: interop.Type[Tooltip] = interop.Type[Tooltip]("Tooltip", Tooltip.close, Tooltip.trace, closeable = true, main_thread = true)
 

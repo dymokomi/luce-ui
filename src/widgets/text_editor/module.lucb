@@ -42,7 +42,7 @@ from text.projection import Projection
 from text.diff import LineDiff
 from text.diagnostics import Diagnostic, Diagnostics
 import text.diagnostic_drawing as diagnostic_drawing
-from widgets.tooltip import Tooltip, tooltip_type
+from widgets.tooltip import Tooltip, TipWait, tooltip_type
 from widgets.completion_popup import CompletionPopup, completion_popup_type, completion_rows
 from text.completions import CompletionList, CompletionTrigger, completion_list_type
 from font import Font, selected_font
@@ -57,6 +57,8 @@ pub struct TextEditor: Widget:
     let box: interop.Reference[Layout]
     var document: Document
     let changed: interop.Signal[unit]
+    ## Who hears the editor lose the keyboard focus.
+    let unfocused: interop.Signal[unit]
     let read_only: bool
     let line_numbers: bool
     let font: interop.Reference[Font]
@@ -93,8 +95,7 @@ pub struct TextEditor: Widget:
     var tip_row: i64
     var tip_first: i64
     var tip_x: f64
-    var tip_since: u64
-    var tip_delay: u64
+    var tip_wait: TipWait
     ## The hovered word's start and the scalar under the pointer (-1 for none), and
     ## whether the hover provider was asked about them already.
     var tip_word: i64
@@ -140,6 +141,8 @@ pub struct TextEditor: Widget:
         errdefer document.close()
         let changed = try interop.Signal[unit]()
         errdefer changed.release()
+        let unfocused = try interop.Signal[unit]()
+        errdefer unfocused.release()
         let swatch_activated = try interop.Signal[i64]()
         errdefer swatch_activated.release()
         let tip = try interop.Reference[Tooltip].adopt(new Tooltip(selected) in memory.heap, tooltip_type, memory.heap)
@@ -165,6 +168,7 @@ pub struct TextEditor: Widget:
         self.box = box
         self.document = document
         self.changed = changed
+        self.unfocused = unfocused
         self.read_only = read_only
         self.line_numbers = line_numbers
         self.font = selected
@@ -197,8 +201,7 @@ pub struct TextEditor: Widget:
         self.tip_row = -1
         self.tip_first = -1
         self.tip_x = 0.0
-        self.tip_since = 0
-        self.tip_delay = tip_wait
+        self.tip_wait = TipWait()
         self.tip_word = -1
         self.tip_offset = -1
         self.tip_asked = false
@@ -222,6 +225,8 @@ pub struct TextEditor: Widget:
         self.font.release()
         self.changed.close()
         self.changed.release()
+        self.unfocused.close()
+        self.unfocused.release()
         self.swatch_activated.close()
         self.swatch_activated.release()
         self.document.close()
@@ -259,6 +264,7 @@ pub struct TextEditor: Widget:
         self.font.trace(visit, context)
         self.box.trace(visit, context)
         self.changed.trace(visit, context)
+        self.unfocused.trace(visit, context)
         self.swatch_activated.trace(visit, context)
         if let tip = self.tip:
             tip.trace(visit, context)
@@ -270,8 +276,5 @@ pub struct TextEditor: Widget:
             completions.trace(visit, context)
         if let suggestions = self.suggestions:
             suggestions.trace(visit, context)
-
-## A diagnostic's tooltip shows after the pointer rests this long on it (nanoseconds), unless set.
-let tip_wait: u64 = 500000000
 
 pub let text_editor_type: interop.Type[TextEditor] = interop.Type[TextEditor]("Text editor", TextEditor.close, TextEditor.trace, closeable = true, main_thread = true)

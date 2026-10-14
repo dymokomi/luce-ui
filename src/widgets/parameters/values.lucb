@@ -237,9 +237,7 @@ extend ParameterPanel:
 
     ## How long the pointer rests on a row before its tooltip shows, in seconds (0.6 unless set).
     pub func set_tip_delay(seconds: f64) -> !:
-        if not math.is_finite(seconds) or seconds < 0.0 or seconds > 60.0:
-            error(result.invalid, "a tooltip delay is 0..60 seconds")
-        self.tip_delay = (u64)(seconds * 1.0e9)
+        try self.tip_wait.set_delay(seconds)
 
     ## Whether a row's tooltip shows.
     pub func is_tip_shown() -> bool:
