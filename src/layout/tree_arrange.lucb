@@ -21,7 +21,9 @@ extend Tree:
         extent(height) catch failure:
             return result.failure[unit](failure.code, failure.message)
         if self.count > 0 and self.width == width and self.height == height and self.version == layout_epoch():
-            return result.success[unit](())
+            if self.placed_version == placement_epoch():
+                return result.success[unit](())
+            return self.reposition(bounds_of(width, height))
         self.animating = false
         let replacement = new Entry[1024] --- in memory.heap catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -29,6 +31,7 @@ extend Tree:
         var committed = false
         defer discard_replacement(replacement, &count, &committed)
         let started = layout_epoch()
+        let placed = placement_epoch()
         gathering = gathering +? 1 else trap("UI arrangements exhausted")
         gather(self.root, replacement, &count, -1, 0, self.identifier, gathering) catch failure:
             return result.failure[unit](failure.code, failure.message)
@@ -66,32 +69,9 @@ extend Tree:
                                 math.clamp(size.height, box.minimum.height, box.maximum.height))
         if layout_epoch() != started:
             return result.failure[unit](result.busy, "a widget changed the tree during measurement")
-        let bounds = Rect(width = width, height = height)
-        place(replacement, 0, bounds, bounds) catch failure:
+        let bounds = bounds_of(width, height)
+        let popup = self.place_all(replacement, count, bounds) catch failure:
             return result.failure[unit](failure.code, failure.message)
-        var popup: u64 = 0
-        for entry in replacement[..<count]:
-            let box = entry.box.value()
-            if box.popup and entry.parent >= 0:
-                let anchor = replacement[(usize)entry.parent].box.value().rectangle
-                var placed = popup_rectangle(box.popup_placement, box.popup_point, box.popup_above, box.measured, anchor, bounds)
-                if box.animate_open and box.visible:
-                    if box.opening:
-                        # Grow downward from the pinned top: start at half height with the
-                        # same top and width, so the search field never moves — only the
-                        # bottom eases open. Height changes while open animate the same way.
-                        box.opening = false
-                        box.rectangle = Rect(placed.x, placed.y, placed.width, placed.height * 0.5)
-                    let eased = ease_rect(box.rectangle, placed, 0.22)
-                    if not settled(eased, placed):
-                        placed = eased
-                        self.animating = true
-                        bump_revision()
-                let position = find_entry(replacement, count, box.identifier) else trap("popup missing from tree")
-                place(replacement, position, placed, bounds) catch failure:
-                    return result.failure[unit](failure.code, failure.message)
-                if box.modal and box.visible:
-                    popup = box.identifier
         if popup != 0 and popup != self.focus:
             if self.return_focus == 0:
                 self.return_focus = self.focus
@@ -162,6 +142,7 @@ extend Tree:
         self.width = width
         self.height = height
         self.version = started
+        self.placed_version = placed
         for entry in self.entries[..<self.count]:
             let box = entry.box.value()
             box.application = self.identifier
@@ -172,6 +153,49 @@ extend Tree:
 
 ## Append `widget`'s visible subtree to `entries` in tree order. `stamp` marks each
 ## box gathered, so a widget reached twice is refused without searching the list.
+extend Tree:
+    ## Place the arranged boxes again from their measured sizes: what moved was a
+    ## split, a scroll offset or a popup's offset, not a size or the tree.
+    func reposition(bounds: Rect) -> interop.Outcome[unit]:
+        let placed = placement_epoch()
+        self.animating = false
+        _ = self.place_all(self.entries, self.count, bounds) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        self.placed_version = placed
+        self.update_hover()
+        return result.success[unit](())
+
+    ## Place `count` gathered boxes in `bounds`, then the popups over them, easing
+    ## those that animate open; the identifier of the visible modal popup, or 0.
+    func place_all(entries: Entry[], count: usize, bounds: Rect) -> u64!:
+        try place(entries, 0, bounds, bounds)
+        var popup: u64 = 0
+        for entry in entries[..<count]:
+            let box = entry.box.value()
+            if box.popup and entry.parent >= 0:
+                let anchor = entries[(usize)entry.parent].box.value().rectangle
+                var placed = popup_rectangle(box.popup_placement, box.popup_point, box.popup_above, box.measured, anchor, bounds)
+                if box.animate_open and box.visible:
+                    if box.opening:
+                        # Grow downward from the pinned top: start at half height with the
+                        # same top and width, so the search field never moves — only the
+                        # bottom eases open. Height changes while open animate the same way.
+                        box.opening = false
+                        box.rectangle = Rect(placed.x, placed.y, placed.width, placed.height * 0.5)
+                    let eased = ease_rect(box.rectangle, placed, 0.22)
+                    if not settled(eased, placed):
+                        placed = eased
+                        self.animating = true
+                        bump_placement()
+                let position = find_entry(entries, count, box.identifier) else trap("popup missing from tree")
+                try place(entries, position, placed, bounds)
+                if box.modal and box.visible:
+                    popup = box.identifier
+        return popup
+
+func bounds_of(width: f64, height: f64) -> Rect:
+    return Rect(width = width, height = height)
+
 func gather(widget: interop.Interface[Widget], entries: Entry[], count: usize*, parent: i64,
             depth: usize, application: u64, stamp: u64) -> !:
     if depth >= 64 or *count >= entries.length:

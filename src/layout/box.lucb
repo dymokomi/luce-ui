@@ -205,8 +205,10 @@ pub struct Layout:
     pub func set_popup_offset(x: f64, y: f64) -> !:
         if not math.is_finite(x) or not math.is_finite(y):
             error(result.invalid, "popup offsets must be finite")
+        if self.popup_point.x == x and self.popup_point.y == y:
+            return
         self.popup_point = Point(x, y)
-        self.invalidate()
+        self.reposition()
 
     pub func popup_offset() -> Point:
         return self.popup_point
@@ -430,6 +432,12 @@ pub struct Layout:
     pub func repaint():
         bump_paint()
 
+    ## Announce a change that moves boxes but resizes none: a split's fraction, a
+    ## scroll offset, a dialog dragged aside. The next arrangement places the tree
+    ## again from the sizes it has, so a splitter or scroll drag never remeasures.
+    pub func reposition():
+        bump_placement()
+
     ## Clamp the measured size to `minimum`..`maximum` (each extent in 0..16384); a
     ## stack grows or shrinks the box only within them.
     pub func set_limits(minimum: Size, maximum: Size) -> !:
@@ -500,8 +508,10 @@ pub struct Layout:
             error(result.invalid, "a split needs a horizontal/vertical axis and a fraction in 0..1")
         if self.items.length != 3:
             error(result.invalid, "a split needs two panes and one divider")
+        if self.split == fraction:
+            return
         self.split = fraction
-        self.invalidate()
+        self.reposition()
 
     pub func split_fraction() -> f64:
         return self.split else 0.5

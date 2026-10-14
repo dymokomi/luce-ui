@@ -300,6 +300,13 @@ pub struct State: Arrangement, CursorSource:
             defer box.release()
             box.value().invalidate()
 
+    ## Place the panels again from the sizes they have: a divider or a floating
+    ## window moved, or a floating window was resized.
+    pub func reposition():
+        if let box = self.box.get():
+            defer box.release()
+            box.value().reposition()
+
     ## Redraw on the arrangement there is: a change only drawing shows.
     pub func repaint():
         if let box = self.box.get():

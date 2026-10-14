@@ -25,6 +25,8 @@ pub struct Tree:
     var width: f64
     var height: f64
     var version: u64
+    ## The placement epoch of the last placing (`placement_epoch`).
+    var placed_version: u64
     var focus: u64
     var requested_focus: u64
     var capture: u64
@@ -59,6 +61,7 @@ pub struct Tree:
         self.width = 0.0
         self.height = 0.0
         self.version = 0
+        self.placed_version = 0
         self.focus = 0
         self.requested_focus = 0
         self.hover_box = 0

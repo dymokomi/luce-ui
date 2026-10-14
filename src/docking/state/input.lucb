@@ -197,4 +197,4 @@ extend State:
         let available = math.max(0.0, (bounds.width if horizontal else bounds.height) - 5.0)
         if available == 0.0: return
         self.model.nodes[self.resize].fraction = math.clamp(((x - bounds.x if horizontal else y - bounds.y) - self.grab) / available, 0.0, 1.0)
-        self.invalidate()
+        self.reposition()

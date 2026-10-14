@@ -83,7 +83,8 @@ pub struct ScrollView: Widget:
     ## growing (a section opening) is reached once it has room.
     pub func scroll_to(offset: f64):
         self.scroll.value().offset = math.max(0.0, offset)
-        self.box.value().invalidate()
+        # The content moves; nothing changes size.
+        self.box.value().reposition()
 
     func overflow() -> f64:
         return self.scroll.value().overflow(self.box.value().bounds().height)

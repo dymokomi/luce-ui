@@ -1,6 +1,6 @@
 ## What a pointer gesture costs: a scrub, a hover or a scroll repaints, and must
 ## never regather or remeasure the tree, however long it goes on.
-from luce_ui.ui import Application, Font, Slider, NumberField, TableView, TableColumn, TableCell, VStack, Widget, Layout, Size, Constraints, Event, ParameterPanel, ParameterSpec, ParameterKind, TextEditor
+from luce_ui.ui import Application, Font, Slider, NumberField, TableView, TableColumn, TableCell, VStack, Widget, Layout, Size, Constraints, Event, ParameterPanel, ParameterSpec, ParameterKind, TextEditor, SplitView, ScrollView, Button
 from luce_gpu.gpu import Frame, RenderTarget
 from luce_window import window
 from luce_window.input import EventKind
@@ -107,6 +107,38 @@ pub func interaction_cost() -> unit!:
         frame_once(second)
     assert(probe_two.measures == measured)
     second.close()
+    # Dragging a splitter and scrolling a scroll view move boxes; nothing is
+    # remeasured.
+    var buttons: list[Widget] = []
+    for index in 0..<60:
+        buttons.append(Button(f"item {index}", font = font))
+    let scroller = ScrollView(VStack(buttons))
+    let probe_three = Probe()
+    let split = SplitView(probe_three, scroller)
+    let third = Application(split)
+    third.layout(400.0, 400.0)
+    frame_once(third)
+    let handle = split.layout().child(1).layout().bounds()
+    let hx = handle.x + handle.width * 0.5
+    let hy = handle.y + 20.0
+    third.dispatch(Event(kind = EventKind.pointer_down, x = hx, y = hy))
+    frame_once(third)
+    measured = probe_three.measures
+    for index in 0..<moves:
+        third.dispatch(Event(kind = EventKind.pointer_moved, x = hx - 50.0 + float(index % 100), y = hy))
+        frame_once(third)
+    assert(probe_three.measures == measured)
+    third.dispatch(Event(kind = EventKind.pointer_up, x = hx, y = hy))
+    frame_once(third)
+    measured = probe_three.measures
+    let list_box = scroller.layout().bounds()
+    var scrolled = false
+    for index in 0..<moves:
+        third.dispatch(Event(kind = EventKind.scroll, x = list_box.x + 20.0, y = list_box.y + 20.0, scroll_y = -3.0 if index % 40 < 20 else 3.0))
+        frame_once(third)
+        scrolled = scrolled or scroller.offset() > 0.0
+    assert(probe_three.measures == measured and scrolled)
+    third.close()
     # A change that can resize a box still arranges again.
     probe.layout().invalidate()
     frame_once(app)

@@ -62,7 +62,7 @@ its command's. `Icon.set_enabled` draws an icon pale.
 
 `Layout` stores constraints and child ownership independently of control state.
 Use `set_size`, `set_limits`, `set_flex`, `set_shrink`, `set_enabled`, `set_focusable`,
-`set_interactive`, `invalidate` and `repaint`. `bounds` reports absolute logical points;
+`set_interactive`, `invalidate`, `reposition` and `repaint`. `bounds` reports absolute logical points;
 `child` returns a retained interface. A layout accepts at most 1024 children;
 a mounted tree accepts at most 1024 widgets and 64 levels. Dimensions, spacing,
 padding and weights must be finite and within 0–16384. A widget can have one parent
@@ -83,7 +83,9 @@ A custom Base struct or Luce class implements `Widget` with `layout`, `measure`,
 `draw` and `event`. Native interface methods use owned `Outcome` results; Luce
 methods use ordinary fallible returns. `measure` must not mutate the tree. After
 changing component state, invalidate its Layout when sizes or placement may change
-(the next frame regathers and remeasures the whole tree), or repaint it when only
+(the next frame regathers and remeasures the whole tree), reposition it when boxes
+move but none changes size (a split's fraction, a scroll offset, a dragged dialog:
+the next frame places the tree again from the sizes it has), or repaint it when only
 drawing changes (the next frame draws on the current arrangement): a scrubbed value,
 a hovered row or an inner scroll offset repaints. The framework guards active
 calls and retains the traversal while callbacks change the tree. Recursive

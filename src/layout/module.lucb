@@ -126,6 +126,7 @@ pub interface Widget:
 var serial: u64 = 0
 var revision: u64 = 0
 var arranged_revision: u64 = 0
+var placed_revision: u64 = 0
 var gathering: u64 = 0
 var wake: u64 = 0
 
@@ -143,6 +144,17 @@ func layout_epoch() -> u64:
 ## Move both epochs on: the arrangement may have changed, and the next frame must show it.
 func bump_revision():
     arranged_revision = arranged_revision +? 1 else trap("UI revision exhausted")
+    bump_paint()
+
+## The placement epoch: it moves for changes that move boxes without resizing
+## any (`Layout.reposition`), so the next arrangement places the boxes again
+## from the sizes it measured, without regathering or remeasuring.
+func placement_epoch() -> u64:
+    return placed_revision
+
+## Move the placement and drawing epochs on.
+func bump_placement():
+    placed_revision = placed_revision +? 1 else trap("UI revision exhausted")
     bump_paint()
 
 ## Move the drawing epoch on alone: the next frame must show a change that
