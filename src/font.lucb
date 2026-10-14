@@ -1,17 +1,24 @@
-## UI typography owns a native face and a bounded cache of grayscale text runs.
-## Font copies borrow; widgets clone the shared reference and release it on close.
+## UI typography owns a native face and a cache of the grayscale text runs frames
+## draw with it. Font copies borrow; widgets clone the shared reference and release
+## it on close.
 from luce_fonts import fonts
 from luce_gpu import gpu
 import interop
 from luce_std import math
 import memory
 import ownership
+import thread
+import strings
+from luce_window import window
 
+## One rasterized run: its text and that text's hash, the scale it was drawn at,
+## its coverage, and the serial of the frame that drew it last.
 struct CachedRun:
     var text: interop.Owned[str]?
+    var key: u64
     var bitmap: fonts.Bitmap
     var scale: f64
-    var used: u64
+    var frame: u64
 
     func close():
         if let text = self.text:
@@ -19,57 +26,145 @@ struct CachedRun:
         self.bitmap.close()
         self = CachedRun()
 
+## The runs live as long as frames draw them, not up to a size: once they have
+## doubled since the last sweep, the runs neither the current nor the previous
+## frame drew go. A scrubbed value draws a new text each frame, and each one goes
+## with the next sweep, so a long drag keeps about twice what the screen shows.
+## `index` finds a run by its text's hash: open addressing, at most half full,
+## each slot a run's position plus one, 0 empty.
 struct FontState:
     var face: fonts.Face
     var runs: CachedRun[]
-    var clock: u64
-    var bytes: usize
+    var count: usize
+    var index: u32[]
+    ## How many runs the last sweep kept: the next sweeps once there are twice as many.
+    var survivors: usize
+    var frame: u64
+    var previous_frame: u64
 
     func close():
-        for index in 0..<self.runs.length:
-            self.runs[index].close()
+        let count = self.count
+        self.count = 0
+        for at in 0..<count:
+            self.runs[at].close()
         if self.runs.length > 0:
             free(self.runs) in memory.heap
-        var empty: CachedRun[]
-        self.runs = empty
+        if self.index.length > 0:
+            free(self.index) in memory.heap
+        var no_runs: CachedRun[]
+        self.runs = no_runs
+        var no_index: u32[]
+        self.index = no_index
         self.face.close()
 
     pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
-        for run in self.runs:
+        for run in self.runs[..<self.count]:
             if let text = run.text:
                 text.trace(visit, context)
 
-    func raster(text: str, scale: f64) -> fonts.Bitmap!:
-        self.clock += 1
-        var oldest: usize = 0
-        for index in 0..<self.runs.length:
-            let run = self.runs[index]
-            if let cached = run.text:
-                if run.scale == scale and cached.value == text:
-                    self.runs[index].used = self.clock
-                    return run.bitmap
-            if run.used < self.runs[oldest].used:
-                oldest = index
+    ## The coverage of `text` at `scale`, drawn by frame `serial`: the cached run,
+    ## or a new one rasterized now.
+    func raster(text: str, scale: f64, serial: u64) -> fonts.Bitmap!:
+        if serial != self.frame:
+            self.previous_frame = self.frame
+            self.frame = serial
+        let key = text.hash()
+        if let found = self.find(text, key, scale):
+            self.runs[found].frame = serial
+            return self.runs[found].bitmap
+        if self.count >= sweep_floor and self.count >= self.survivors * 2:
+            self.sweep()
         let bitmap = try self.face.rasterize(text, scale)
         errdefer close_bitmap(bitmap)
         let copied = try interop.copy_text(text)
         errdefer copied.release()
-        # Evict least-recently-used runs before accepting another raster. The
-        # image limit and entry limit bound both pixel storage and string owners.
-        while self.bytes + bitmap.pixels.length > 16777216:
-            self.bytes -= self.runs[oldest].bitmap.pixels.length
-            self.runs[oldest].close()
-            var found = false
-            for index in 0..<self.runs.length:
-                if self.runs[index].text != none:
-                    if not found or self.runs[index].used < self.runs[oldest].used:
-                        oldest = index
-                        found = true
-        self.bytes -= self.runs[oldest].bitmap.pixels.length
-        self.runs[oldest].close()
-        self.runs[oldest] = CachedRun(copied, bitmap, scale, self.clock)
-        self.bytes += bitmap.pixels.length
+        try self.reserve(self.count + 1)
+        self.runs[self.count] = CachedRun(copied, key, bitmap, scale, serial)
+        self.count += 1
+        self.place(self.count - 1)
         return bitmap
+
+    ## The position of the run of `text` (whose hash is `key`) at `scale`, if cached.
+    func find(text: str, key: u64, scale: f64) -> usize?:
+        if self.index.length == 0:
+            return none
+        let mask = (u64)self.index.length - 1
+        var slot = key & mask
+        while self.index[(usize)slot] != 0:
+            let at = (usize)self.index[(usize)slot] - 1
+            if self.runs[at].key == key and self.runs[at].scale == scale:
+                if let cached = self.runs[at].text:
+                    if cached.value == text:
+                        return at
+            slot = (slot + 1) & mask
+        return none
+
+    ## Enter the run at position `at` in the index.
+    func place(at: usize):
+        let mask = (u64)self.index.length - 1
+        var slot = self.runs[at].key & mask
+        while self.index[(usize)slot] != 0:
+            slot = (slot + 1) & mask
+        self.index[(usize)slot] = (u32)(at + 1)
+
+    ## Room for `needed` runs, and an index at most half full with them.
+    func reserve(needed: usize) -> !:
+        if needed > self.runs.length:
+            var capacity: usize = 64 if self.runs.length == 0 else self.runs.length * 2
+            while capacity < needed:
+                capacity *= 2
+            var grown = try new CachedRun[capacity] in memory.heap
+            for at in 0..<self.count:
+                grown[at] = self.runs[at]
+            let previous = self.runs
+            self.runs = grown
+            if previous.length > 0:
+                free(previous) in memory.heap
+        if needed * 2 > self.index.length:
+            var slots: usize = 128 if self.index.length == 0 else self.index.length * 2
+            while slots < needed * 2:
+                slots *= 2
+            let grown = try new u32[slots] in memory.heap
+            let previous = self.index
+            self.index = grown
+            if previous.length > 0:
+                free(previous) in memory.heap
+            self.reindex()
+
+    ## Enter every run in an emptied index.
+    func reindex():
+        for slot in 0..<self.index.length:
+            self.index[slot] = 0
+        for at in 0..<self.count:
+            self.place(at)
+
+    ## Drop the runs neither this frame nor the one before drew. The kept runs move
+    ## to the front by swaps, so each run stays in the traced range exactly once;
+    ## each dropped one leaves that range before it is released (a release can
+    ## collect, which traces this state).
+    func sweep():
+        var kept: usize = 0
+        for at in 0..<self.count:
+            let frame = self.runs[at].frame
+            if frame == self.frame or frame == self.previous_frame:
+                let run = self.runs[at]
+                self.runs[at] = self.runs[kept]
+                self.runs[kept] = run
+                kept += 1
+        while self.count > kept:
+            self.count -= 1
+            let dropped = self.runs[self.count]
+            self.runs[self.count] = CachedRun()
+            close_run(dropped)
+        self.survivors = kept
+        self.reindex()
+
+## Below this many runs nothing is swept: a small cache costs nothing to keep.
+let sweep_floor: usize = 64
+
+func close_run(run: CachedRun):
+    var owned = run
+    owned.close()
 
 func close_bitmap(bitmap: fonts.Bitmap):
     var owned = bitmap
@@ -85,16 +180,19 @@ pub let default_font_size: f64 = 12.0
 ## Use one shared Font across controls to keep typography consistent.
 pub struct Font:
     var state: interop.Reference[FontState]
+    ## Whether this is the default `selected_font` shares, which forgets it on close.
+    var shared: bool
 
     pub func init(size: f64 = default_font_size, family: str = "") -> !:
         var reservation = try interop.Reservation[FontState](font_state_type)
         errdefer reservation.cancel()
         var face = try fonts.Face(size, family)
         errdefer face.close()
-        let runs = try new CachedRun[512] in memory.heap
-        errdefer free(runs) in memory.heap
-        let storage = try new FontState(face = face, runs = runs) in memory.heap
+        var runs: CachedRun[]
+        var index: u32[]
+        let storage = try new FontState(face = face, runs = runs, count = 0, index = index, survivors = 0, frame = 0, previous_frame = 0) in memory.heap
         self.state = reservation.publish(storage, memory.heap)
+        self.shared = false
 
     ## Replace the shared face only after loading succeeds. Controls retain the
     ## Font object, so a settings reload updates all of them together.
@@ -128,7 +226,7 @@ pub struct Font:
     ## Internal rendering entry: cache-owned pixels are copied into the frame.
     ## The application never sees native fonts, raster storage or backend objects.
     pub func draw(target: interop.View[gpu.RenderTarget], text: str, x: f64, y: f64, color: gpu.Color) -> !:
-        _ = try self.measure(text)
+        # Rasterizing checks the text; a cached run's text was checked when it was made.
         if text.length == 0:
             return
         let destination = try target.get()
@@ -136,12 +234,15 @@ pub struct Font:
         if size.width <= 0.0 or size.height <= 0.0:
             return
         let scale = math.clamp(size.scale, 0.5, 4.0)
-        let bitmap = try self.state.value().raster(text, scale)
+        let bitmap = try self.state.value().raster(text, scale, destination.frame_serial())
         let rectangle = gpu.Rect(x - bitmap.padding, y - bitmap.padding,
                                  (f64)bitmap.width / scale, (f64)bitmap.height / scale)
         try destination.mask(bitmap.pixels, bitmap.width, bitmap.height, rectangle, color)
 
     pub func close():
+        if self.shared:
+            self.shared = false
+            shared_default = none
         self.state.release()
 
     pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
@@ -149,7 +250,49 @@ pub struct Font:
 
 pub let font_type: interop.Type[Font] = interop.Type[Font]("Font", Font.close, Font.trace, closeable = true, main_thread = true)
 
+## The Font every widget given none shares on the main thread while any of them
+## lives: one native face and one run cache, not one of each per label. The
+## reference is borrowed (it holds no count); the Font forgets it on close, so the
+## default goes with the last widget using it.
+var shared_default: interop.Reference[Font]? = none
+
+## `font`, or the shared default; the caller releases the reference it gets.
 pub func selected_font(font: interop.Reference[Font]?) -> interop.Reference[Font]!:
     if let existing = font:
         return existing.clone()
-    return try interop.Reference[Font].adopt(new Font() in memory.heap, font_type, memory.heap)
+    if not thread.is_main():
+        return try interop.Reference[Font].adopt(new Font() in memory.heap, font_type, memory.heap)
+    if let shared = shared_default:
+        return shared.clone()
+    let made = try interop.Reference[Font].adopt(new Font() in memory.heap, font_type, memory.heap)
+    made.value().shared = true
+    shared_default = made
+    return made
+
+test "a long run of changing texts keeps as many runs as the frames draw":
+    var font = try Font()
+    defer font.close()
+    let state = font.state.value()
+    var digits: u8[32]
+    for step in 0..<3000:
+        var frame = try gpu.Frame(window.Size(200.0, 40.0, 200.0, 40.0, 1.0))
+        defer frame.close()
+        let target = try frame.target()
+        defer target.release()
+        try font.draw(target, "Opacity", 0.0, 0.0, gpu.Color())
+        # A scrubbed value: a new text every frame.
+        let shown = try strings.format_i64((i64)step, digits)
+        try font.draw(target, shown, 60.0, 0.0, gpu.Color())
+        if step == 0:
+            assert(state.count == 2)
+    # The label stays cached; the values drawn frames ago went.
+    assert(state.count <= sweep_floor * 2)
+    assert(state.find("Opacity", "Opacity".hash(), 1.0) != none)
+    assert(state.find("2999", "2999".hash(), 1.0) != none and state.find("5", "5".hash(), 1.0) == none)
+
+test "widgets given no font share one":
+    let first = try selected_font(none)
+    defer first.release()
+    let second = try selected_font(none)
+    defer second.release()
+    assert(first.value().state.value() == second.value().state.value())
