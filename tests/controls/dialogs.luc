@@ -3,6 +3,7 @@ from luce_gpu.gpu import Frame
 from luce_window.input import EventKind, Key
 from luce_window import window
 from luce_ui import ui
+from luce_std import process
 import platform
 from interop import Connection
 import time
@@ -338,6 +339,15 @@ pub func application_wakes() -> unit!:
         recover 0
     assert(refused and calls == 0)
     app.unwatch(1)
+    # A command told of through the notifier's waker: its wakes notify (the run loop's
+    # side is tests/pixels' run_loop_pixels).
+    let notifier = app.notifier(func () -> unit!:
+        calls += 1)
+    let shell = "cmd.exe" if platform.windows else "sh"
+    let command = process.Command(shell, ["/c", "exit 3"] if platform.windows else ["-c", "exit 3"], waker = notifier.waker())
+    assert(command.wait() == 3 and command.is_finished())
+    command.close()
+    notifier.close()
     app.close()
 
 ## A focused field takes the editing chords (select all, copy, cut, paste, undo,

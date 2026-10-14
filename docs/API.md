@@ -143,6 +143,10 @@ thread, or:
   however many notifies came before it. Background work keeps its results itself,
   in its own locked queue, and only says there are some: no timer polls for them.
   `close()` stops it; a handle outliving the notifier is harmless. Up to 256.
+  Work that takes a luce-std `wake.Waker` is handed `notifier.waker()` instead,
+  from Luce or Base: `process.Command(program, arguments, waker =
+  notifier.waker())` notifies as the program writes and once it ends, and the
+  callback reads `is_finished()` and `output()`.
 - A descriptor given to `watch(descriptor, callback, readable=true,
   writable=false)` turns ready: a socket, or outside Windows a pipe. The callback
   runs on the main loop; readiness is level-triggered, so read or write until the

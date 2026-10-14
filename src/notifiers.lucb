@@ -9,11 +9,17 @@
 ## was closed, and how many hold it (the notifier, the loop's registry and every
 ## handle); the last to let go frees it, so a handle may outlive the notifier and a
 ## notify racing a close is harmless.
+##
+## Background work that takes a luce-std `wake.Waker` (`process.Command`, a package's
+## job) is told of the same way: `Notifier.waker()` is a waker whose wakes notify, holding
+## the core as a handle does, from Luce as from Base.
 import interop
 import memory
 import ownership
+import platform
 import result
 import thread
+from luce_std import process, wake
 from luce_window import window
 
 struct NotifyCore:
@@ -64,12 +70,27 @@ pub struct Notifier:
         let core = self.core else error(result.invalid, "the notifier is closed")
         NotifyHandle(core = core).notify()
 
+    ## A waker for background work (`process.Command(..., waker = notifier.waker())`): its
+    ## wakes, from any thread, notify this notifier. It holds the notifier as a handle does
+    ## until the work and every other reference let it go.
+    pub func waker() -> interop.Reference[wake.Waker]!:
+        let core = self.core else error(result.invalid, "the notifier is closed")
+        core_hold(core)
+        return try wake.waker(wake_notify, (void*)core, wake_release)
+
     ## Stop the callback: notifies after this run nothing, and the loop lets it go.
     pub func close():
         let core = self.core else return
         self.core = none
         core.closed.store(1, .release)
         core_release(core)
+
+## A waker's wake and its last release: a handle's notify and release on the core.
+func wake_notify(context: void*):
+    NotifyHandle(core = (NotifyCore*)context).notify()
+
+func wake_release(context: void*):
+    core_release((NotifyCore*)context)
 
 pub let notifier_type: interop.Type[Notifier] = interop.Type[Notifier]("Notifier", Notifier.close, closeable = true, main_thread = true)
 
@@ -247,3 +268,26 @@ test "a closed notifier runs nothing, and a handle outliving it is harmless":
     let next = try notifiers.add(callback)
     defer next.release()
     assert(notifiers.slots[0].core != none)
+
+test "a command's waker notifies: its finish runs the callback, and closing it lets the notifier go":
+    let counter = try interop.Reference[Counter].adopt(new Counter() in memory.heap, counter_type, memory.heap)
+    defer counter.release()
+    let callback = try interop.Callback[unit, unit].bind_mutating(counter, Counter.hit)
+    defer callback.release()
+    var notifiers = Notifiers()
+    defer notifiers.close()
+    let notifier = try notifiers.add(callback)
+    defer notifier.release()
+    let core = notifier.value().core else trap("a new notifier has a core")
+    let waker = try notifier.value().waker()
+    var shell: const str[] = ["/c", "echo done"] if platform.windows else ["-c", "echo done"]
+    var command = try process.Command("cmd.exe" if platform.windows else "sh", shell, waker = waker)
+    waker.release()
+    # the registry, the notifier and the command's waker
+    assert(core.holders.load(.acquire) == 3)
+    assert(try command.wait() == 0)
+    assert(notifiers.waiting())
+    try serviced(&notifiers)
+    assert(counter.value().calls == 1 and not notifiers.waiting())
+    command.close()
+    assert(core.holders.load(.acquire) == 2)

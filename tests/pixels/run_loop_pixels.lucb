@@ -1,12 +1,12 @@
 ## The run loop sleeps until it has work: a watched socket turning readable, a wake_at
-## instant, or a worker's notify ends its wait. Each case is timed against the loop's one-second
+## instant, or a worker's notify ends its wait (a command's waker among them). Each case is timed against the loop's one-second
 ## safety ceiling, which is what would end the wait if neither did.
 import interop
 import memory
 import ownership
 import thread
 import time
-from luce_std import net
+from luce_std import net, process
 from luce_ui import ui
 from luce_ui.ui import Application, Spacer, Widget
 
@@ -47,6 +47,30 @@ struct Stopper:
         _ = context
 
 let stopper_type: interop.Type[Stopper] = interop.Type[Stopper]("run loop test stopper", Stopper.close, Stopper.trace)
+
+## Stops the application once its command has finished, however many of its wakes (output,
+## then the finish) ran the notifier's callback first.
+struct Finisher:
+    var app: Application*
+    var command: process.Command*?
+    var turns: i64
+
+    func notified(argument: unit) -> interop.Outcome[unit]:
+        _ = argument
+        self.turns += 1
+        if let command = self.command:
+            if command.is_finished():
+                self.app.stop()
+        return interop.Outcome[unit].success(interop.Owned[unit](()))
+
+    func close():
+        self.turns = 0
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        _ = visit
+        _ = context
+
+let finisher_type: interop.Type[Finisher] = interop.Type[Finisher]("run loop test finisher", Finisher.close, Finisher.trace)
 
 struct Delivery:
     var socket: net.Datagram*
@@ -122,7 +146,24 @@ pub func wakes() -> !:
     try notifying.join()
     assert(stopper.value().reads == 1 and notified >= 90000000 and notified < 900000000)
     notifier.value().close()
-    print("ok run loop wakes for watched sockets, wake_at and notifiers")
+    # A command's waker wakes it as the command writes and once it ends: no polling.
+    let finisher = try interop.Reference[Finisher].adopt(new Finisher(app = app.value(), command = none, turns = 0) in memory.heap, finisher_type, memory.heap)
+    defer finisher.release()
+    let on_command = try interop.Callback[unit, unit].bind_mutating(finisher, Finisher.notified)
+    defer on_command.release()
+    let commanded = try app.value().notifier(on_command)
+    defer commanded.release()
+    let waker = try commanded.value().waker()
+    var command = try process.Command("sh", ["-c", "sleep 0.1; echo done"], waker = waker)
+    defer command.close()
+    waker.release()
+    finisher.value().command = &command
+    let finished = try run_once(app)
+    assert(command.is_finished() and (command.exit_code() else -1) == 0)
+    assert(finisher.value().turns >= 1 and finished >= 90000000 and finished < 900000000)
+    finisher.value().command = none
+    commanded.value().close()
+    print("ok run loop wakes for watched sockets, wake_at, notifiers and a command's waker")
 
 ## A frame callback that fails every frame, and the error handler that hears of it.
 struct Failing:
