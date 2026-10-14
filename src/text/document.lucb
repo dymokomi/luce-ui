@@ -19,9 +19,9 @@ pub struct TextChange:
     pub let version: i64 = 0
 
 struct Edit:
-    let offset: usize
-    let removed: u32[]
-    let inserted: u32[]
+    var offset: usize
+    var removed: u32[]
+    var inserted: u32[]
     let anchor: usize
     let caret: usize
     var after_anchor: usize
@@ -40,6 +40,11 @@ pub struct Document:
     var retained_bytes: usize
     var revision: u64
     var change: TextChange
+    ## Whether the latest edit is a run of typing (or of Backspace or Delete) that
+    ## the next keystroke at its end joins, so undo takes back a word, not a
+    ## character, and history grows per action, not per key. A selection that
+    ## moves, undo, redo and loading end the run; so does a typed space or newline.
+    var typing: bool
 
     pub func init(text: str = "") -> !:
         let decoded = try decode(text)
@@ -55,6 +60,7 @@ pub struct Document:
         self.retained_bytes = 0
         self.revision = 0
         self.change = TextChange()
+        self.typing = false
 
     pub func length() -> usize:
         return self.count
@@ -98,6 +104,8 @@ pub struct Document:
     pub func select(anchor: usize, caret: usize) -> !:
         if anchor > self.count or caret > self.count:
             error(result.invalid, "selection is outside the document")
+        if anchor != self.selection_anchor or caret != self.selection_caret:
+            self.typing = false
         self.selection_anchor = anchor
         self.selection_caret = caret
 
@@ -147,6 +155,8 @@ pub struct Document:
         let removed = try copy(self.characters[start..<finish])
         errdefer release(removed)
         try self.reserve(self.count - removed.length + inserted.length)
+        if try self.join(start, finish, inserted, removed):
+            return
         # Everything that may allocate has succeeded; mutation is now atomic.
         while self.edit_count > self.edit_position:
             self.edit_count -= 1
@@ -163,14 +173,52 @@ pub struct Document:
         self.edit_count += 1
         self.edit_position = self.edit_count
         self.retained_bytes += cost
+        let keystroke = inserted.length + removed.length == 1 or (inserted.length == 1 and removed.length > 0)
+        self.typing = keystroke and not (inserted.length == 1 and breaks_typing(inserted[0]))
         self.replace_storage(start, removed.length, inserted)
         self.selection_caret = start + inserted.length
         self.selection_anchor = self.selection_caret
         self.revision += 1
 
+    ## Join a keystroke to the run of typing the latest edit holds: a scalar typed
+    ## at its end, or one erased just before (Backspace) or at (Delete) its start.
+    ## On success the text is changed and `inserted` and `removed` are consumed.
+    func join(start: usize, finish: usize, inserted: u32[], removed: u32[]) -> bool!:
+        if not self.typing or self.edit_count == 0 or self.edit_position != self.edit_count:
+            return false
+        if self.selection_anchor != self.selection_caret:
+            return false
+        let last = &self.edits[self.edit_count - 1]
+        let typed = start == finish and inserted.length == 1 and last.inserted.length > 0 and start == last.offset + last.inserted.length and self.selection_caret == start
+        let back = inserted.length == 0 and finish == start + 1 and last.inserted.length == 0 and finish == last.offset and self.selection_caret == finish
+        let forward = inserted.length == 0 and finish == start + 1 and last.inserted.length == 0 and start == last.offset and self.selection_caret == start
+        if not typed and not back and not forward:
+            return false
+        # Allocate first; then nothing below can fail.
+        let grown = try joined(last.inserted, inserted) if typed else (try joined(removed, last.removed) if back else try joined(last.removed, removed))
+        self.replace_storage(start, finish - start, inserted)
+        if typed:
+            release(last.inserted)
+            last.inserted = grown
+            self.typing = not breaks_typing(inserted[0])
+        else:
+            release(last.removed)
+            last.removed = grown
+            last.offset = start
+        release(inserted)
+        release(removed)
+        self.retained_bytes += 4
+        self.selection_caret = start + inserted.length
+        self.selection_anchor = self.selection_caret
+        last.after_anchor = self.selection_caret
+        last.after_caret = self.selection_caret
+        self.revision += 1
+        return true
+
     ## Revert the latest edit and restore the selection from before it. False
     ## when there is nothing to undo.
     pub func undo() -> bool!:
+        self.typing = false
         if self.edit_position == 0:
             return false
         let edit = self.edits[self.edit_position - 1]
@@ -185,6 +233,7 @@ pub struct Document:
     ## Reapply the next undone edit and the selection it ended with. False when
     ## there is nothing to redo.
     pub func redo() -> bool!:
+        self.typing = false
         if self.edit_position == self.edit_count:
             return false
         let edit = self.edits[self.edit_position]
@@ -200,6 +249,7 @@ pub struct Document:
     ## Ordinary cursor movement uses select and never modifies history.
     pub func complete_selection(anchor: usize, caret: usize) -> !:
         try self.select(anchor, caret)
+        self.typing = false
         if self.edit_position > 0:
             self.edits[self.edit_position - 1].after_anchor = anchor
             self.edits[self.edit_position - 1].after_caret = caret
@@ -281,6 +331,7 @@ pub struct Document:
         release(edit.inserted)
 
     func clear_history():
+        self.typing = false
         for index in 0..<self.edit_count:
             self.drop_edit(index)
         self.edit_count = 0
@@ -300,6 +351,19 @@ pub struct Document:
 func release(values: u32[]):
     if values.length > 0:
         free(values) in memory.heap
+
+## A space, tab or newline ends a run of typing: undo goes back a word at a time.
+func breaks_typing(scalar: u32) -> bool:
+    return scalar == 32 or scalar == 9 or scalar == 10
+
+## `first` then `second`, in new storage.
+func joined(first: const u32[], second: const u32[]) -> u32[]!:
+    let values = try new u32[first.length + second.length] --- in memory.heap
+    for index in 0..<first.length:
+        values[index] = first[index]
+    for index in 0..<second.length:
+        values[first.length + index] = second[index]
+    return values
 
 func copy(values: const u32[]) -> u32[]!:
     var copied: u32[]
@@ -364,9 +428,42 @@ test "invalid text and ranges leave a document unchanged":
     document.select(5, 0) catch failure:
         rejected = true
     assert(rejected and document.anchor() == 4)
+    # Pastes (more than one scalar) are separate edits; the oldest go past the limit.
     for index in 0..<140:
-        try document.insert("x")
+        try document.insert("xy")
     var undone: usize = 0
     while try document.undo():
         undone += 1
-    assert(undone == history_limit and document.length() == 16)
+    assert(undone == history_limit and document.length() == 28)
+
+test "typing joins one edit per word, and Backspace and Delete runs one each":
+    var document = try Document("")
+    defer document.close()
+    for byte in "one two".bytes:
+        var typed: u8[1] = [byte]
+        try document.insert((str)typed)
+    # "one " and "two": two edits, not seven.
+    assert(document.edit_count == 2)
+    # Backspace twice.
+    for step in 0..<2:
+        _ = step
+        try document.replace(document.caret() - 1, document.caret(), "")
+    assert(document.edit_count == 3)
+    let erased = try document.text()
+    defer erased.release()
+    assert(erased.value == "one t")
+    assert(try document.undo())
+    let restored = try document.text()
+    defer restored.release()
+    assert(restored.value == "one two" and document.caret() == 7)
+    assert(try document.undo())
+    let first = try document.text()
+    defer first.release()
+    assert(first.value == "one ")
+    # Moving the caret ends a run: typing after it is a new edit.
+    assert(try document.redo())
+    try document.select(0, 0)
+    var letter: u8[1] = [90]
+    try document.insert((str)letter)
+    try document.insert((str)letter)
+    assert(document.edit_count == 3)
