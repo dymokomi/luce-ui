@@ -16,6 +16,7 @@
 #       tree_focus.lucb     keyboard focus, Tab order, focus returning from popups
 #       tree_dispatch.lucb  routing input: pointer, keys, menus, dialogs, hover, cursors
 #       tree_draw.lucb      drawing boxes in order, popups over them with shadows
+#       layers.lucb         retained boxes: subtrees drawn into layers kept between frames
 #       drops.lucb          drags from other applications: the payload, drop areas
 #       placement.lucb      placing a box's children: stacks, splits and custom arrangements
 #
@@ -129,6 +130,7 @@ var arranged_revision: u64 = 0
 var placed_revision: u64 = 0
 var gathering: u64 = 0
 var wake: u64 = 0
+var layer_epoch: u64 = 0
 
 ## The drawing epoch: it moves whenever any box or the tree changes, so a
 ## frame loop can tell a redraw is due without asking every widget.
@@ -173,12 +175,19 @@ pub func wake_deadline() -> u64:
     return wake
 
 ## Whether the wake-up moment has come, forgetting it if so: the frame that
-## follows draws (a caret's blink, a press becoming a hold).
+## follows draws (a caret's blink, a press becoming a hold), retained layers too.
 pub func take_due_wake(now: u64) -> bool:
     if wake != 0 and wake <= now:
         wake = 0
+        refresh_layers()
         return true
     return false
+
+## Draw every retained layer (`Layout.set_retained`) again in the next frame, for
+## a change no box announced: `Application.invalidate`, a command, a new theme.
+pub func refresh_layers():
+    layer_epoch = layer_epoch +? 1 else trap("UI revision exhausted")
+    bump_paint()
 
 ## Layout owns child interfaces and geometry, never control-specific state.
 ## Parent/application membership is weak identity, so trees have no parent cycle.

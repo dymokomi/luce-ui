@@ -96,3 +96,34 @@ AppKit owns a tracking area synchronized to the view's visible rectangle;
 Windows rearms leave notifications on a new pointer interval. Both emit the same
 portable enter/leave values. Leaving a window clears hover without cancelling a
 captured drag.
+
+## When frames are drawn, and what draws again
+
+A frame is drawn only when something said what shows changed (docs/API.md lists
+the causes; `Application.needs_frame` answers). Input alone draws nothing, so a
+pointer moving over a 3D view costs no frame; luce-ui's widgets announce their
+own hover, press and selection changes, and light parts under the pointer with
+`Layout.hover_part`.
+
+A drawn frame still draws the whole window: luce-gpu presents each frame into a
+fresh swapchain image. Neither Metal (`CAMetalLayer` drawables) nor Vulkan
+(`VK_PRESENT_MODE_FIFO_KHR` images, `oldSwapchain`) promises an image keeps the
+pixels it last showed, so damage regions scissored over the previous contents
+would need an offscreen copy of the whole window kept between frames and blitted
+in (one full-window copy per frame plus a window-sized texture, and every widget
+drawing to that target): it saves fragment work on a large window but not the
+draw calls, CPU recording or the copy.
+
+What the frame avoids instead is the costly widget. `Layout.set_retained(true)`
+draws a box and its subtree into a layer of their own, an `rgba8` texture at the
+box's size and the window's backing scale (`Texture.frame(scale:)`), and later
+frames copy it into the window (`gpu.copy_image`, nearest, 1:1) until a digest of
+what it shows moves: its boxes' own `repaint`/`reposition`/`invalidate` stamps,
+their places and clips, hover and focus in it, the backing scale, and the layer
+epoch, which `Application.invalidate`, a command, a theme, a due wake-up and game
+mode move. A panel's hover or a value beside a retained 3D view leaves the view's
+draw alone. Costs: one texture per retained box (a 2000 by 1400 pixel viewport is
+11 MB), one copy draw per frame, and one extra render pass when the layer draws
+again. The layer starts as the theme's background, so the retained widget paints
+its whole box; popups it opens are drawn as usual. A frame without a device (a
+standalone frame in tests) draws the subtree directly. Up to eight layers.

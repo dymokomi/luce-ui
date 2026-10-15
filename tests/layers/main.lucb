@@ -1,0 +1,141 @@
+## Retained layers on a real device: a retained view draws once and its kept pixels
+## are copied into later frames until something in it changes; a view beside it
+## that repaints, or hover moving over that one, leaves it alone. The window is a
+## texture here, so it runs wherever a GPU device opens, without a desktop.
+from luce_gpu import gpu
+from luce_window import input
+import interop
+import memory
+import ownership
+from luce_ui import ui
+from luce_ui.ui import Application, Viewport, HStack, Widget, Painter, Rect, Event, Alignment
+
+## A viewport's drawing: it fills its box with `color` and counts its draws.
+struct Fill:
+    var color: gpu.Color
+    var draws: i64
+
+    pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
+        self.draws += 1
+        var painter = Painter(target) catch failure:
+            return interop.Outcome[unit].failure(failure.code, interop.copy_text(failure.message) catch exhausted: trap(exhausted.message))
+        defer painter.close()
+        painter.rectangle(Rect(0.0, 0.0, 100.0, 100.0), self.color) catch failure:
+            return interop.Outcome[unit].failure(failure.code, interop.copy_text(failure.message) catch exhausted: trap(exhausted.message))
+        return interop.Outcome[unit].success(interop.Owned[unit](()))
+
+    func close():
+        _ = self
+
+    func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):
+        _ = visit
+        _ = context
+
+let fill_type: interop.Type[Fill] = interop.Type[Fill]("test layer fill", Fill.close, Fill.trace)
+
+## Draw the application into `texture` as a window's frame at `scale`.
+func frame(app: interop.Reference[Application], texture: gpu.Texture, scale: f64) -> !:
+    let recording = try texture.frame(scale = scale)
+    defer recording.release()
+    let target = try recording.value().target()
+    defer target.release()
+    let rendered = app.value().render(target)
+    defer rendered.release()
+    try rendered.get()
+    _ = try recording.value().present(gpu.Color(0.0, 0.0, 0.0, 1.0))
+
+## Whether texel (`x`, `y`) of a `width`-texel-wide texture is red, or else blue.
+func red_at(texture: gpu.Texture, width: usize, x: usize, y: usize) -> bool!:
+    var pixels = try new u8[width * (usize)(try texture.height()) * 4] --- in memory.heap
+    defer free(pixels) in memory.heap
+    try texture.read(pixels)
+    let at = (y * width + x) * 4
+    if pixels[at] == 255 and pixels[at + 1] == 0 and pixels[at + 2] == 0:
+        return true
+    assert(pixels[at] == 0 and pixels[at + 1] == 0 and pixels[at + 2] == 255)
+    return false
+
+func make_view(color: gpu.Color) -> (interop.Reference[Viewport], interop.Reference[Fill], interop.Reference[interop.Connection])!:
+    let view = try interop.Reference[Viewport].adopt(new Viewport(100.0, 100.0) in memory.heap, ui.viewport_type, memory.heap)
+    errdefer view.release()
+    let box = view.value().layout()
+    defer box.release()
+    try box.value().set_size(100.0, 100.0)
+    box.value().set_interactive(true)
+    let fill = try interop.Reference[Fill].adopt(new Fill(color = color, draws = 0) in memory.heap, fill_type, memory.heap)
+    errdefer fill.release()
+    let callback = try interop.Callback[interop.View[gpu.RenderTarget], unit].bind_mutating(fill, Fill.draw)
+    defer callback.release()
+    let connection = try view.value().on_render(callback)
+    return (view, fill, connection)
+
+pub func main(arguments: str[]) -> i32!:
+    _ = arguments
+    var device = gpu.Device.open() catch failure:
+        print(f"skip: no GPU device ({failure.message})")
+        return 0
+    defer device.destroy()
+    let (scene, scene_fill, scene_connection) = try make_view(gpu.Color(1.0, 0.0, 0.0))
+    defer scene.release()
+    defer scene_fill.release()
+    defer scene_connection.release()
+    let (panel, panel_fill, panel_connection) = try make_view(gpu.Color(0.0, 0.0, 1.0))
+    defer panel.release()
+    defer panel_fill.release()
+    defer panel_connection.release()
+    let scene_box = scene.value().layout()
+    defer scene_box.release()
+    scene_box.value().set_retained(true)
+    let panel_box = panel.value().layout()
+    defer panel_box.release()
+    let scene_widget = scene.as_interface[Widget](scene.value())
+    defer scene_widget.release()
+    let panel_widget = panel.as_interface[Widget](panel.value())
+    defer panel_widget.release()
+    let row = try interop.Reference[ui.HStack].adopt(new HStack([scene_widget, panel_widget], 0.0, 0.0, Alignment.start) in memory.heap, ui.hstack_type, memory.heap)
+    defer row.release()
+    let root = row.as_interface[Widget](row.value())
+    defer root.release()
+    let app = try interop.Reference[Application].adopt(new Application(root) in memory.heap, ui.application_type, memory.heap)
+    defer app.release()
+    var window = try gpu.Texture.create(device, 200, 100, gpu.Format.rgba8)
+    defer window.destroy()
+    # The first frame draws both; the retained view's pixels are its layer's.
+    try frame(app, window, 1.0)
+    assert(scene_fill.value().draws == 1 and panel_fill.value().draws == 1)
+    assert(try red_at(window, 200, 50, 50))
+    # The panel repaints: it draws, the scene's layer is copied.
+    panel_box.value().repaint()
+    try frame(app, window, 1.0)
+    assert(scene_fill.value().draws == 1 and panel_fill.value().draws == 2)
+    assert(try red_at(window, 200, 50, 50))
+    assert(not try red_at(window, 200, 150, 50))
+    # Hover over the panel leaves the layer; hover coming onto the scene draws it.
+    _ = app.value().dispatch(Event(kind = input.EventKind.pointer_moved, x = 150.0, y = 50.0))
+    try frame(app, window, 1.0)
+    assert(scene_fill.value().draws == 1)
+    _ = app.value().dispatch(Event(kind = input.EventKind.pointer_moved, x = 50.0, y = 50.0))
+    try frame(app, window, 1.0)
+    assert(scene_fill.value().draws == 2)
+    # Its own repaint, and the application's invalidate, draw it again.
+    scene_box.value().repaint()
+    try frame(app, window, 1.0)
+    assert(scene_fill.value().draws == 3)
+    app.value().invalidate()
+    try frame(app, window, 1.0)
+    assert(scene_fill.value().draws == 4)
+    # At twice the backing scale the layer is drawn again at that size.
+    var sharp = try gpu.Texture.create(device, 400, 200, gpu.Format.rgba8)
+    defer sharp.destroy()
+    try frame(app, sharp, 2.0)
+    assert(scene_fill.value().draws == 5)
+    assert(try red_at(sharp, 400, 199, 100))
+    assert(not try red_at(sharp, 400, 201, 100))
+    # No longer retained, it draws every frame.
+    scene_box.value().set_retained(false)
+    try frame(app, sharp, 2.0)
+    try frame(app, sharp, 2.0)
+    assert(scene_fill.value().draws == 7)
+    app.value().close()
+    print("PASS retained layers draw only when they change")
+    return 0

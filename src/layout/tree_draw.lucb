@@ -8,7 +8,7 @@ extend Tree:
     ## Draw every visible box in tree order, each clipped to its box, then every
     ## popup subtree over the rest with its shadow — a popup opened inside another
     ## (a menu in a dialog) over that one. The lit drop area goes over the pass it
-    ## belongs to.
+    ## belongs to. A retained box's subtree comes from its kept layer (`draw_layer`).
     pub func draw(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         var failed: interop.Outcome[unit]? = none
         var deepest: usize = 0
@@ -16,55 +16,77 @@ extend Tree:
             let depth = popup_depth(self.entries, index)
             if depth > deepest:
                 deepest = depth
+        self.begin_layers()
         for pass in 0..<(deepest + 1):
+            # The end of the retained subtree the pass is inside, which its layer drew.
+            var layered_end: usize = 0
             for index in 0..<self.count:
-                if popup_depth(self.entries, index) != pass:
+                if index < layered_end or popup_depth(self.entries, index) != pass:
                     continue
                 let entry = self.entries[index]
                 let box = entry.box.value()
                 if box.clipping.width <= 0.0 or box.clipping.height <= 0.0:
                     continue
-                let native_target = target.get() catch failure:
-                    return result.failure[unit](failure.code, failure.message)
-                # Shadows use the window target before popup clipping. They do
-                # not enlarge layout or hit bounds, and remain sharp at any scale.
-                if box.popup:
-                    Tree.draw_shadow(target, box.rectangle, box.appearance) catch failure:
+                var drawn: interop.Outcome[unit]? = none
+                if box.retained and not box.popup:
+                    let layered = self.draw_layer(index, pass, target) catch failure:
                         return result.failure[unit](failure.code, failure.message)
-                let clipped = native_target.clipped(box.clipping) catch failure:
-                    return result.failure[unit](failure.code, failure.message)
-                defer clipped.release()
-                let native_clipped = clipped.get() catch failure:
-                    return result.failure[unit](failure.code, failure.message)
-                let region = native_clipped.region(box.rectangle) catch failure:
-                    return result.failure[unit](failure.code, failure.message)
-                defer region.release()
-                entry.widget.enter() catch failure:
-                    return result.failure[unit](failure.code, failure.message)
-                defer entry.widget.leave()
-                var widget = entry.widget.value()
-                let drawn = widget.draw(region)
-                if not drawn.is_success():
+                    if let outcome = layered:
+                        layered_end = entry.end
+                        drawn = outcome
+                if drawn == none:
+                    drawn = self.draw_entry(index, target, Point())
+                let outcome = drawn else continue
+                if not outcome.is_success():
                     # One widget that cannot draw (a document past the GPU's
                     # memory) must not blank the window: the rest still draw,
                     # and the first failure is reported once they have.
                     if failed == none:
-                        failed = drawn
+                        failed = outcome
                     else:
-                        drawn.release()
+                        outcome.release()
                     continue
-                drawn.release()
+                outcome.release()
             # Over everything in its pass, the lit drop area.
             if let hovered = self.find(self.drop_hover):
                 if popup_depth(self.entries, hovered) == pass:
                     self.draw_drop_overlay(target) catch failure:
                         return result.failure[unit](failure.code, failure.message)
+        self.release_unused_layers()
         # Over everything, the drag inside the window at the pointer.
         self.draw_drag_badge(target) catch failure:
             return result.failure[unit](failure.code, failure.message)
         if let first = failed:
             return first
         return result.success[unit](())
+
+    ## Draw the box at `index` into `target`, clipped to its box, the frame's
+    ## origin at `origin` in the window (a layer's corner). A popup's shadow goes
+    ## first, outside its clip.
+    func draw_entry(index: usize, target: interop.View[gpu.RenderTarget], origin: Point) -> interop.Outcome[unit]:
+        let entry = self.entries[index]
+        let box = entry.box.value()
+        let native_target = target.get() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        let rectangle = Rect(box.rectangle.x - origin.x, box.rectangle.y - origin.y, box.rectangle.width, box.rectangle.height)
+        # Shadows use the window target before popup clipping. They do
+        # not enlarge layout or hit bounds, and remain sharp at any scale.
+        if box.popup:
+            Tree.draw_shadow(target, rectangle, box.appearance) catch failure:
+                return result.failure[unit](failure.code, failure.message)
+        let clipped = native_target.clipped(Rect(box.clipping.x - origin.x, box.clipping.y - origin.y, box.clipping.width, box.clipping.height)) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer clipped.release()
+        let native_clipped = clipped.get() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        let region = native_clipped.region(rectangle) catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer region.release()
+        entry.widget.enter() catch failure:
+            return result.failure[unit](failure.code, failure.message)
+        defer entry.widget.leave()
+        var widget = entry.widget.value()
+        return widget.draw(region)
 
     ## A soft drop shadow around the whole popup: several expanding layers, densest at
     ## the box and fading outward, with a slight downward bias so the surface reads as

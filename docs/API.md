@@ -62,7 +62,7 @@ its command's. `Icon.set_enabled` draws an icon pale.
 
 `Layout` stores constraints and child ownership independently of control state.
 Use `set_size`, `set_limits`, `set_flex`, `set_shrink`, `set_enabled`, `set_focusable`,
-`set_interactive`, `invalidate`, `reposition`, `repaint` and `hover_part`. `bounds` reports absolute logical points;
+`set_interactive`, `invalidate`, `reposition`, `repaint`, `hover_part` and `set_retained` (a subtree kept in a layer; see DESIGN.md). `bounds` reports absolute logical points;
 `child` returns a retained interface. A layout accepts at most 1024 children;
 a mounted tree accepts at most 1024 widgets and 64 levels. Dimensions, spacing,
 padding and weights must be finite and within 0–16384. A widget can have one parent

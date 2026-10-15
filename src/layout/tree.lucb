@@ -49,6 +49,8 @@ pub struct Tree:
     ## The box hover last lit (`update_hover`), or 0: when another is lit the
     ## window draws again, and a move that lights the same one draws nothing.
     var lit_box: u64
+    ## The retained boxes' kept layers (tree_draw), up to `layer_limit`.
+    var layers: Layer[]
 
     ## A tree rooted at `content`, which must be visible and parentless; nothing is
     ## gathered until the first arrangement.
@@ -69,6 +71,8 @@ pub struct Tree:
         self.requested_focus = 0
         self.hover_box = 0
         self.lit_box = 0
+        var no_layers: Layer[]
+        self.layers = no_layers
         self.capture = 0
         self.secondary_holder = 0
         self.return_focus = 0
@@ -93,6 +97,7 @@ pub struct Tree:
         try theme.validate()
         self.appearance = theme
         bump_revision()
+        refresh_layers()
 
     func find(identifier: u64) -> usize?:
         if identifier == 0:
@@ -149,6 +154,7 @@ pub struct Tree:
         var empty: Entry[]
         self.entries = empty
         release_entries(previous, previous_count)
+        self.drop_layers()
         self.root.release()
 
     pub func trace(visit: func(ownership.Object*, void*) -> unit, context: void*):

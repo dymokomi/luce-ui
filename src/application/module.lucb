@@ -197,6 +197,7 @@ pub struct Application:
     ## move that changes none of these costs no frame.
     pub func invalidate():
         self.dirty = true
+        layout.refresh_layers()
 
     ## Whether the next turn draws a frame (see `invalidate`), leaving aside a due
     ## wake-up and a skipped frame's backoff.
@@ -471,8 +472,9 @@ pub struct Application:
                 return result.failure[unit](failure.code, failure.message)
             if handled:
                 # A command changes the application's state, which some widget
-                # may draw without having heard: draw a frame.
+                # may draw without having heard: draw a frame, retained layers too.
                 self.dirty = true
+                layout.refresh_layers()
                 return result.success[unit](())
         return self.tree.dispatch(event)
 
@@ -506,6 +508,9 @@ pub struct Application:
         self.begin_operation() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer self.end_operation()
+        # Game mode draws from frame callbacks that announce nothing.
+        if self.game:
+            layout.refresh_layers()
         self.dirty = false
         self.last_epoch = layout.epoch()
         let native = target.get() catch failure:

@@ -1,0 +1,186 @@
+#==============================================================================================
+#
+#   layout/layers - Retained boxes: subtrees drawn into layers kept between frames
+#
+#   DESCRIPTION:
+#       A retained box (`Layout.set_retained`) and the boxes under it draw into a texture
+#       of the box's size at the window's backing scale, which each frame copies into the
+#       window. The layer draws again only when a digest of what it shows moves: its boxes'
+#       own change stamps (`Layout.painted`), their places, clips, hover and focus, the
+#       backing scale, and the layer epoch (`refresh_layers`). Anything else that changes
+#       in the window (a panel's hover, a value beside it) leaves it as it is.
+#
+#==============================================================================================
+
+## The most retained boxes a window keeps layers for; more draw as other boxes do.
+let layer_limit: usize = 8
+
+## The draws one layer's frame may record: luce-gpu's ceiling, as a window's.
+let layer_draws: usize = 65536
+
+## One kept layer: the retained box it belongs to (0 for a free slot), its texture
+## and texel size, the digest of what it shows, and whether this frame drew it.
+struct Layer:
+    var identifier: u64
+    var texture: gpu.Texture
+    var width: u32
+    var height: u32
+    var digest: u64
+    var used: bool
+
+extend Tree:
+    ## Draw the retained box at `index`, with the part of its subtree drawn in
+    ## `pass`, from its kept layer, drawing the layer again first when what it
+    ## shows changed. None when no layer can be kept for it (a frame without a
+    ## device, a box too large, every layer taken): the caller draws the subtree
+    ## as usual. Otherwise the outcome of the subtree's widgets, the first failure.
+    func draw_layer(index: usize, pass: usize, target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]?!:
+        let box = self.entries[index].box.value()
+        let native = try target.get()
+        let size = try native.size()
+        if size.width <= 0.0:
+            return none
+        let scale = size.pixel_width / size.width
+        let columns = math.ceil(box.rectangle.width * scale)
+        let rows = math.ceil(box.rectangle.height * scale)
+        if not (scale >= 1.0 and scale <= 16.0) or columns < 1.0 or rows < 1.0 or columns > 16384.0 or rows > 16384.0:
+            return none
+        var device = gpu.device_of(native) catch failure:
+            return none
+        defer device.destroy()
+        let slot = try self.layer_slot(box.identifier) else return none
+        let layer = &self.layers[slot]
+        layer.used = true
+        let digest = self.subtree_digest(index, pass, scale)
+        var stale = digest != layer.digest
+        if layer.width != (u32)columns or layer.height != (u32)rows:
+            var previous = layer.texture
+            layer.texture = gpu.Texture()
+            layer.width = 0
+            layer.height = 0
+            previous.destroy()
+            layer.texture = try gpu.Texture.create(device, (u32)columns, (u32)rows, gpu.Format.rgba8)
+            layer.width = (u32)columns
+            layer.height = (u32)rows
+            stale = true
+        var outcome = result.success[unit](())
+        if stale:
+            outcome.release()
+            outcome = try self.render_layer(index, pass, layer.texture, scale, box.appearance.background)
+            # A layer whose widgets failed draws again next frame.
+            layer.digest = digest if outcome.is_success() else 0
+        let clipped = try native.clipped(box.clipping)
+        defer clipped.release()
+        try gpu.copy_image(try clipped.get(), layer.texture, box.rectangle)
+        return outcome
+
+    ## Draw the subtree at `index` (its boxes drawn in `pass`) into `texture`, a
+    ## point being `scale` texels, over the box's `background`.
+    func render_layer(index: usize, pass: usize, texture: gpu.Texture, scale: f64, background: gpu.Color) -> interop.Outcome[unit]!:
+        let entry = self.entries[index]
+        let origin = Point(entry.box.value().rectangle.x, entry.box.value().rectangle.y)
+        let frame = try texture.frame(scale = scale)
+        defer frame.release()
+        let root = try frame.value().target()
+        defer root.release()
+        try root.value().allow_draws(layer_draws)
+        var failed: interop.Outcome[unit]? = none
+        for inner in index..<entry.end:
+            let box = self.entries[inner].box.value()
+            if popup_depth(self.entries, inner) != pass or box.clipping.width <= 0.0 or box.clipping.height <= 0.0:
+                continue
+            let drawn = self.draw_entry(inner, root, origin)
+            if drawn.is_success():
+                drawn.release()
+            elif failed == none:
+                failed = drawn
+            else:
+                drawn.release()
+        _ = try frame.value().present(background)
+        if let first = failed:
+            return first
+        return result.success[unit](())
+
+    ## What the layer of the retained box at `index` shows, as a number: its boxes'
+    ## change stamps, places, clips and hover and focus flags, the backing `scale`
+    ## and the layer epoch. The pointer's position is not in it: a widget that draws
+    ## at the pointer repaints (`Layout.hover_part`).
+    func subtree_digest(index: usize, pass: usize, scale: f64) -> u64:
+        var digest = mix(1469598103934665603, layer_epoch)
+        digest = mix(digest, quantized(scale))
+        for inner in index..<self.entries[index].end:
+            if popup_depth(self.entries, inner) != pass:
+                continue
+            let box = self.entries[inner].box.value()
+            digest = mix(digest, box.identifier)
+            digest = mix(digest, box.painted)
+            for value in [box.rectangle.x, box.rectangle.y, box.rectangle.width, box.rectangle.height,
+                          box.clipping.x, box.clipping.y, box.clipping.width, box.clipping.height]:
+                digest = mix(digest, quantized(value))
+            var flags: u64 = 0
+            var bit: u64 = 1
+            for set in [box.hovered, box.pointer_within, box.focused, box.focus_within, box.drop_hovered, box.active]:
+                if set:
+                    flags += bit
+                bit *= 2
+            digest = mix(digest, flags)
+        return digest
+
+    ## The slot of the layer kept for box `identifier`, taking a free one; none
+    ## when every one is taken.
+    func layer_slot(identifier: u64) -> usize?!:
+        if self.layers.length == 0:
+            let made = try new Layer[layer_limit] --- in memory.heap
+            for slot in 0..<layer_limit:
+                made[slot] = Layer(identifier = 0, texture = gpu.Texture(), width = 0, height = 0, digest = 0, used = false)
+            self.layers = made
+        var open: usize? = none
+        for slot in 0..<self.layers.length:
+            if self.layers[slot].identifier == identifier:
+                return slot
+            if open == none and self.layers[slot].identifier == 0:
+                open = slot
+        let chosen = open else return none
+        self.layers[chosen].identifier = identifier
+        self.layers[chosen].digest = 0
+        return chosen
+
+    ## Mark every layer unused before a frame draws.
+    func begin_layers():
+        for slot in 0..<self.layers.length:
+            self.layers[slot].used = false
+
+    ## Give back the layers the frame did not draw: their boxes are gone, hidden or
+    ## no longer retained.
+    func release_unused_layers():
+        for slot in 0..<self.layers.length:
+            if self.layers[slot].identifier != 0 and not self.layers[slot].used:
+                free_layer(&self.layers[slot])
+
+    ## Give back every layer, when the tree closes.
+    func drop_layers():
+        if self.layers.length == 0:
+            return
+        for slot in 0..<self.layers.length:
+            free_layer(&self.layers[slot])
+        let previous = self.layers
+        var none_left: Layer[]
+        self.layers = none_left
+        free(previous) in memory.heap
+
+func free_layer(layer: Layer*):
+    var texture = layer.texture
+    layer.texture = gpu.Texture()
+    layer.identifier = 0
+    layer.width = 0
+    layer.height = 0
+    layer.digest = 0
+    layer.used = false
+    texture.destroy()
+
+func mix(digest: u64, value: u64) -> u64:
+    return (digest ^ value) *% 1099511628211
+
+## A coordinate in 64ths of a point, as a nonnegative number for the digest.
+func quantized(value: f64) -> u64:
+    return (u64)((i64)(math.clamp(value, -1048576.0, 1048576.0) * 64.0) + 134217728)

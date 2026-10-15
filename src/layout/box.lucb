@@ -66,6 +66,12 @@ pub struct Layout:
     var pointer: Point
     ## The part of the widget lit under the pointer (`hover_part`), -1 for none.
     var lit_part: i64
+    ## The drawing epoch of this box's last own change (`repaint`, `reposition`,
+    ## `invalidate`): a retained layer holding it draws again when it moves.
+    var painted: u64
+    ## Whether this box and its subtree are drawn into a layer of their own and
+    ## kept (`set_retained`).
+    var retained: bool
     var editing: bool
     var hover_transparent: bool
     var drop_target: bool
@@ -141,6 +147,8 @@ pub struct Layout:
         self.pointer_within = false
         self.pointer = Point()
         self.lit_part = -1
+        self.painted = 0
+        self.retained = false
         self.editing = false
         self.hover_transparent = false
         self.drop_target = false
@@ -440,18 +448,39 @@ pub struct Layout:
     ## loop presents a frame; there is no per-box dirty state.
     pub func invalidate():
         bump_revision()
+        self.painted = epoch()
 
     ## Announce a change only drawing shows (a value, a highlight, a scroll offset
     ## inside the widget): the run loop presents a frame on the arrangement it has.
     ## A pointer drag that repaints each move costs a draw, never a relayout.
     pub func repaint():
         bump_paint()
+        self.painted = epoch()
 
     ## Announce a change that moves boxes but resizes none: a split's fraction, a
     ## scroll offset, a dialog dragged aside. The next arrangement places the tree
     ## again from the sizes it has, so a splitter or scroll drag never remeasures.
     pub func reposition():
         bump_placement()
+        self.painted = epoch()
+
+    ## Draw this box and its subtree into a layer of their own, kept between frames:
+    ## a frame redraws the layer only when something in it changed (a box's own
+    ## `repaint`, `reposition` or `invalidate`, its place or size, hover or focus in
+    ## it, `Application.invalidate`, a due wake-up, game mode), and otherwise copies
+    ## the kept pixels. For a costly widget, such as a 3D view, that must not draw
+    ## again when only a panel beside it changes. The widget paints its whole box
+    ## (the layer starts as the theme's background, not what is behind the box), and
+    ## a change it draws must be announced on a box of the subtree: another box's
+    ## repaint does not reach the layer. Popups it opens draw as usual. Where a frame
+    ## has no device (a standalone frame in tests) the subtree draws as any other.
+    pub func set_retained(retained: bool):
+        if retained != self.retained:
+            self.retained = retained
+            self.repaint()
+
+    pub func is_retained() -> bool:
+        return self.retained
 
     ## Clamp the measured size to `minimum`..`maximum` (each extent in 0..16384); a
     ## stack grows or shrinks the box only within them.
