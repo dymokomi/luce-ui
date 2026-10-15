@@ -366,6 +366,7 @@ pub struct TableView: Widget:
         let activate = self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
         if self.reselected or self.picked.lead != lead_before or self.picked.count() != count_before:
+            self.box.value().repaint()
             let told = self.selection_changed.emit(self.picked.lead)
             if not activate or not told.is_success():
                 return told
@@ -408,9 +409,9 @@ pub struct TableView: Widget:
                 self.box.value().set_cursor(input.Cursor.resize_horizontal)
             else:
                 self.box.value().set_cursor(input.Cursor.pointer)
-            # Repaint on every move so the hovered row keeps up with the pointer;
-            # set_cursor alone does not invalidate.
-            self.box.value().repaint()
+            # The hovered row is lit: a move draws only when it reaches another row.
+            let row = (i64)math.floor((event.y - hh + self.scroll) / rh)
+            self.box.value().hover_part(row if event.y >= hh and row < (i64)self.rows else -1)
             return false
         if event.kind == input.EventKind.scroll:
             let scale = 1.0 if event.scroll_unit == input.ScrollUnit.points else rh * 3.0

@@ -122,10 +122,16 @@ pub struct TextPrompt: Widget:
         return self.submitted.emit(text.value)
 
     pub func event(event: Event) -> interop.Outcome[unit]:
+        var selected = false
         if self.editable:
             let inset = self.box.value().theme().inset(self.font)
-            self.text.pointer(event, self.font, inset, self.row_height(), self.box.value().bounds().width - inset * 2.0, self.row_height()) catch failure:
+            selected = self.text.pointer(event, self.font, inset, self.row_height(), self.box.value().bounds().width - inset * 2.0, self.row_height()) catch failure:
                 return result.failure[unit](failure.code, failure.message)
+        # A move lights the button under the pointer; it draws only when that changes.
+        if event.kind == input.EventKind.pointer_moved and not event.cancelled and not selected:
+            let bounds = self.box.value().bounds()
+            self.box.value().hover_part((0 if event.x < bounds.width * 0.5 else 1) if event.inside and event.y >= bounds.height - self.row_height() else -1)
+            return result.success[unit](())
         if event.cancelled or (event.kind == input.EventKind.key_down and event.key == input.Key.escape):
             self.box.value().set_visible(false)
             self.pressed = -1

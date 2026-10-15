@@ -31,6 +31,7 @@ from completion import completion, hover_text
 from appearance import appearance_follows
 from submenus import submenus
 from interaction_cost import interaction_cost
+from redraws import redraws, row_redraws
 
 class Custom: Widget:
     let box: Layout
@@ -150,6 +151,8 @@ pub func main(arguments: list[str]) -> int!:
     appearance_follows()
     submenus()
     interaction_cost()
+    redraws()
+    row_redraws()
     let font = Font(size = 14.0)
     assert(font.size() == 14.0 and font.measure("ii") == font.measure("WW"))
     let button = Button("pause", font = font)

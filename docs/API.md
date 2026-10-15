@@ -20,7 +20,7 @@ All objects and callbacks belong to the main thread.
 | `SplitView` | Two widgets, `axis`, preferred `fraction`, `handle_width`; `fraction`, `set_fraction`, `layout` |
 | `Viewport` | Preferred minimum width/height; `on_render`, `layout` |
 | `SceneView` | `SceneView(scene, camera, renderer=none, width=320, height=240)`: a Viewport drawing a luce-3d scene; `scene`, `camera`, `renderer`, `layout` |
-| `Application` | Content, title, dimensions, optional `game`/`fps`/`fullscreen`; `run`, `stop`, `close`, `on_frame`, `after`/`every`/`post`/`cancel`, `wake_at`/`wake_after`, `watch`/`unwatch`, `title`/`set_title`, `set_game`, `set_fps`, `set_fullscreen`, `set_commands`, `command`, `set_error_handler`, `failure_shown`, `on_crash`, `appearance`/`on_appearance`, `layout`, `dispatch`, `render` |
+| `Application` | Content, title, dimensions, optional `game`/`fps`/`fullscreen`; `run`, `stop`, `close`, `on_frame`, `after`/`every`/`post`/`cancel`, `wake_at`/`wake_after`, `watch`/`unwatch`, `title`/`set_title`, `set_game`, `set_fps`, `set_fullscreen`, `set_commands`, `command`, `set_error_handler`, `failure_shown`, `on_crash`, `appearance`/`on_appearance`, `invalidate`/`needs_frame`, `layout`, `dispatch`, `render` |
 | `CrashWindow` | `CrashWindow(report, theme=Theme())`: the window a crashed program is started again to show; `run(frame_limit=0)` answers `CrashChoice.quit` or `.reopen`, `application` |
 | `TextField` | `TextField(text, placeholder=..., cells=12, secure=false)`; `text`, `set_text`, `on_change` (each edit), `on_commit` (Enter or focus loss, when changed), `on_submit` (every Enter, changed or not), `select_all` |
 | `Raster` | Mutable RGBA surface; `set_pixel`, `put`, `fill`, `fill_rect`, `dab`, `draw`, `color_at` |
@@ -62,7 +62,7 @@ its command's. `Icon.set_enabled` draws an icon pale.
 
 `Layout` stores constraints and child ownership independently of control state.
 Use `set_size`, `set_limits`, `set_flex`, `set_shrink`, `set_enabled`, `set_focusable`,
-`set_interactive`, `invalidate`, `reposition` and `repaint`. `bounds` reports absolute logical points;
+`set_interactive`, `invalidate`, `reposition`, `repaint` and `hover_part`. `bounds` reports absolute logical points;
 `child` returns a retained interface. A layout accepts at most 1024 children;
 a mounted tree accepts at most 1024 widgets and 64 levels. Dimensions, spacing,
 padding and weights must be finite and within 0–16384. A widget can have one parent
@@ -91,6 +91,22 @@ a hovered row or an inner scroll offset repaints. The framework guards active
 calls and retains the traversal while callbacks change the tree. Recursive
 application layout, input dispatch or rendering returns `busy`; component state
 changes take effect on the next traversal.
+
+Input draws nothing by itself: the run loop presents a frame only when something
+said what shows changed. That is a Layout's `repaint`, `reposition` or
+`invalidate` (or a luce-ui setter, which calls one), `Application.invalidate()`,
+the pointer coming onto another box (`is_hovered`, `contains_pointer`), keyboard
+focus moving, a command's shortcut running, a due `layout.wake_at` (a caret's
+blink), a resize, the window gaining or losing focus, an appearance change, and
+every turn in game mode; `Application.needs_frame()` tells whether one is due. So a
+pointer moving over a 3D view or an empty panel costs no frame, and a widget whose
+event handler changes what it draws must repaint. A widget that lights part of
+itself under the pointer (a row, a button, a handle) names that part as the pointer
+moves with `Layout.hover_part(part)` (-1 for none): the frame is drawn only when the
+part changes. `on_frame` callbacks run every turn (each batch of input, timer,
+notifier and wake-up, and at least once a second while idle) before the loop decides
+whether to draw; one that changes what a widget draws invalidates, and an animation
+asks for its next turn with `wake_after`.
 
 `Viewport.on_render` receives a checked standard `gpu.RenderTarget` for that
 widget. Its viewport and clipping cannot escape ancestor bounds. Retained targets,

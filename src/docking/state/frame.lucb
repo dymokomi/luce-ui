@@ -46,6 +46,12 @@ pub struct Frame: Widget:
         let base = stack.value().bounds()
         state.value().float_event(self.slot, event, event.x + mine.x - base.x, event.y + mine.y - base.y) catch failure:
             return result.failure[unit](failure.code, failure.message)
+        # The close button lights under the pointer: a move draws only when it
+        # comes onto the button or leaves it.
+        if event.kind == input.EventKind.pointer_moved and not event.cancelled:
+            let close = state.value().float_close(self.slot)
+            let over = event.inside and strip.contains(close, event.x + mine.x - base.x, event.y + mine.y - base.y)
+            self.box.value().hover_part(1 if over else 0)
         return result.success[unit](())
 
     pub func close():

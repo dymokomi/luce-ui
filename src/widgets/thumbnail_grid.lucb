@@ -600,13 +600,16 @@ pub struct ThumbnailGrid: Widget:
         let count_before = self.picked.count()
         let outcome = self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
+        let reselected = self.picked.lead != lead_before or self.picked.count() != count_before or outcome == 4
+        if reselected:
+            self.box.value().repaint()
         if outcome == 1:
             return self.activated.emit(self.picked.lead)
         if outcome == 2:
             return self.resized.emit((i64)(self.cell + 0.5))
         if outcome == 3:
             return self.dropped.emit(())
-        if self.picked.lead != lead_before or self.picked.count() != count_before or outcome == 4:
+        if reselected:
             return self.selected.emit(self.picked.lead)
         return result.success[unit](())
 
@@ -619,7 +622,8 @@ pub struct ThumbnailGrid: Widget:
             return 0
         match event.kind:
             .pointer_moved:
-                self.box.value().repaint()
+                # The hovered tile is lit: a move draws only when it reaches another.
+                self.box.value().hover_part(self.item_at(event.x, event.y))
                 if self.gesture.moved(event.x, event.y):
                     try self.start_drag()
             .pointer_up:

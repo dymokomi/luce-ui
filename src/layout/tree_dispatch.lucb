@@ -341,14 +341,23 @@ extend Tree:
 
     ## Hover is derived from current geometry, including after layout changes
     ## beneath a stationary pointer. Updating it never remeasures the widget tree.
+    ## A different box lit draws a frame (its hover, its ancestors'
+    ## `contains_pointer`); the same box lit draws nothing.
     func update_hover():
+        let lit = self.find_hovered()
+        if lit != self.lit_box:
+            self.lit_box = lit
+            bump_paint()
+
+    ## Mark the box under the pointer and its ancestors, and answer its identifier, or 0.
+    func find_hovered() -> u64:
         for entry in self.entries[..<self.count]:
             let box = entry.box.value()
             box.hovered = false
             box.pointer_within = false
             box.pointer = Point(self.pointer_x - box.rectangle.x, self.pointer_y - box.rectangle.y)
         if not self.pointer_present:
-            return
+            return 0
         var hovered: usize? = none
         let popup = self.popup_index()
         if let active = popup:
@@ -362,12 +371,13 @@ extend Tree:
                 if (popup == none or in_popup(self.entries, index)) and path_enabled(self.entries, index) and not box.hover_transparent and inside(box.clipping, self.pointer_x, self.pointer_y):
                     hovered = index
                     break
-        let index = hovered else return
+        let index = hovered else return 0
         self.entries[index].box.value().hovered = true
         var ancestor = (i64)index
         while ancestor >= 0:
             self.entries[(usize)ancestor].box.value().pointer_within = true
             ancestor = self.entries[(usize)ancestor].parent
+        return self.entries[index].box.value().identifier
 
     ## The pointer moved off the box it was over (onto another, or out of the
     ## window): that box's widget hears pointer_left, as when it leaves the

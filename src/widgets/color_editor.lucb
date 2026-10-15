@@ -137,7 +137,9 @@ pub struct ColorEditor: Widget:
     pub func event(event: Event) -> interop.Outcome[unit]:
         let handled = self.handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
-        self.box.value().repaint()
+        # A move draws only when it changed a channel or selected in the hex field.
+        if handled or event.kind != input.EventKind.pointer_moved:
+            self.box.value().repaint()
         if handled:
             var buffer: u8[8]
             return self.changed.emit(self.hex_string_into(buffer))
@@ -168,8 +170,10 @@ pub struct ColorEditor: Widget:
                     return try self.set_channel(channel, ColorEditor.value_at(event.x, tx, tw))
         # Route keyboard and pointer to the hex field.
         if self.editing_hex or event.kind == input.EventKind.text_input:
-            self.field.pointer(event, self.font, inset + self.font.value().advance() * 0.5, hy, width - inset * 2.0, rh) catch failure:
+            let selected = self.field.pointer(event, self.font, inset + self.font.value().advance() * 0.5, hy, width - inset * 2.0, rh) catch failure:
                 return false
+            if selected:
+                self.box.value().repaint()
             let mutated = self.field.event(event) catch failure:
                 return false
             if mutated:

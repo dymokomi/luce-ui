@@ -1,0 +1,122 @@
+## When the run loop draws: input alone draws nothing; a frame is due only when
+## something changed what shows (`Application.needs_frame`). Each step plays the
+## loop's part: dispatch an event, then draw when a frame is due.
+from luce_ui.ui import Application, Font, Button, Checkbox, Slider, ListView, ListItem, TableView, TableColumn, TableCell, TextField, VStack, HStack, Widget, Layout, Size, Constraints, Event, Command, Shortcut
+from luce_gpu.gpu import Frame, RenderTarget
+from luce_window import window
+from luce_window.input import EventKind, Key
+
+## A widget that counts its draws, standing in for a 3D viewport: it fills its
+## box and draws nothing at the pointer.
+class Scene: Widget:
+    let box: Layout
+    pub var draws: int = 0
+
+    pub func init(self) -> unit!:
+        self.box = Layout()
+        self.box.set_interactive(true)
+        self.box.set_flex()
+
+    pub func layout(self) -> Layout:
+        return self.box
+
+    pub func measure(self, available: Constraints) -> Size!:
+        return Size(200.0, 200.0)
+
+    pub func draw(self, target: RenderTarget) -> unit!:
+        _ = target
+        self.draws += 1
+
+    pub func event(self, event: Event) -> unit!:
+        _ = event
+
+func frame_once(app: Application) -> unit!:
+    let frame = Frame(window.Size(400.0, 400.0, 400.0, 400.0, 1.0))
+    app.render(frame.target())
+    frame.close()
+
+## Dispatch, then draw if a frame is due, as a turn of the loop does; whether it drew.
+func turn(app: Application, event: Event) -> bool!:
+    app.dispatch(event)
+    if not app.needs_frame():
+        return false
+    frame_once(app)
+    return true
+
+func move(app: Application, x: float, y: float) -> bool!:
+    return turn(app, Event(kind = EventKind.pointer_moved, x = x, y = y))
+
+pub func redraws() -> unit!:
+    let font = Font()
+    let scene = Scene()
+    let button = Button("Render", font = font)
+    let check = Checkbox("Grid", font = font)
+    let slider = Slider("Size", 0.0, 1.0, 0.5, font = font)
+    let field = TextField("name", font = font)
+    let app = Application(HStack([scene, VStack([button, check, slider, field])]))
+    app.layout(400.0, 400.0)
+    frame_once(app)
+    assert(not app.needs_frame())
+    # A hundred moves over the viewport: the first lights it, the rest draw nothing.
+    let area = scene.layout().bounds()
+    var frames = 0
+    for index in 0..<100:
+        if move(app, area.x + 10.0 + float(index), area.y + 10.0 + float(index % 7)):
+            frames += 1
+    assert(frames == 1 and scene.draws == 2)
+    # Hover onto a button draws once, moves on it nothing, leaving it once.
+    let face = button.layout().bounds()
+    assert(move(app, face.x + 2.0, face.y + 2.0))
+    assert(not move(app, face.x + 4.0, face.y + 3.0))
+    assert(move(app, area.x + 10.0, area.y + 10.0))
+    # A checkbox, a slider and a text field light on entry and draw nothing
+    # for moves over them; the slider's drag draws every move.
+    for control in [check.layout(), slider.layout(), field.layout()]:
+        let box = control.bounds()
+        assert(move(app, box.x + 2.0, box.y + 2.0))
+        assert(not move(app, box.x + 5.0, box.y + 3.0))
+    let track = slider.layout().bounds()
+    assert(turn(app, Event(kind = EventKind.pointer_down, x = track.x + track.width * 0.5, y = track.y + track.height * 0.5)))
+    assert(move(app, track.x + track.width * 0.25, track.y + track.height * 0.5))
+    assert(turn(app, Event(kind = EventKind.pointer_up, x = track.x + track.width * 0.25, y = track.y + track.height * 0.5)))
+    # Typing into the field draws; pointer moves across it without a drag do not.
+    let entry = field.layout().bounds()
+    assert(turn(app, Event(kind = EventKind.pointer_down, x = entry.x + 4.0, y = entry.y + 4.0)))
+    # The release changes nothing that shows.
+    assert(not turn(app, Event(kind = EventKind.pointer_up, x = entry.x + 4.0, y = entry.y + 4.0)))
+    assert(turn(app, Event(kind = EventKind.text_input, codepoint = 97)))
+    assert(not move(app, entry.x + 8.0, entry.y + 4.0))
+    # A key nobody takes draws nothing; a command's shortcut draws.
+    assert(not turn(app, Event(kind = EventKind.key_down, key = Key.f5)))
+    let toggle = Command("Toggle", Shortcut(Key.f6), id = "toggle")
+    app.set_commands([toggle])
+    assert(turn(app, Event(kind = EventKind.key_down, key = Key.f6)))
+    # An application's own request draws, once.
+    app.invalidate()
+    assert(app.needs_frame())
+    frame_once(app)
+    assert(not app.needs_frame())
+    app.close()
+
+## Rows light under the pointer: a move draws only when it reaches another row.
+pub func row_redraws() -> unit!:
+    let font = Font()
+    var items: list[ListItem] = []
+    var cells: list[TableCell] = []
+    for index in 0..<40:
+        items.append(ListItem(f"item {index}"))
+        cells.append(TableCell(text = f"row {index}"))
+    let listing = ListView(items, font = font)
+    let table = TableView([TableColumn(title = "Name", weight = 1.0)], cells, font = font)
+    let app = Application(HStack([listing, table]))
+    app.layout(400.0, 400.0)
+    frame_once(app)
+    # Rows are a little over 20 points: a point apart is one row, 60 another.
+    for box in [listing.layout().bounds(), table.layout().bounds()]:
+        assert(move(app, box.x + 10.0, box.y + 100.0))
+        assert(not move(app, box.x + 30.0, box.y + 101.0))
+        assert(move(app, box.x + 30.0, box.y + 160.0))
+    let grid = table.layout().bounds()
+    # A click selects, and draws.
+    assert(turn(app, Event(kind = EventKind.pointer_down, x = grid.x + 40.0, y = grid.y + 160.0)))
+    app.close()

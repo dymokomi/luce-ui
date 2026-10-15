@@ -73,9 +73,10 @@ extend ParameterPanel:
             if kind == input.EventKind.pointer_moved and not inside and event.button == 0 and self.press_row < 0:
                 let (row, part, component) = self.hit(event.x, event.y)
                 self.set_hot(row, part, component)
-            try self.input.pointer(Event(kind = event.kind, x = event.x - field.x, y = event.y - field.y, button = event.button, shift = event.shift),
-                                   self.font, inset, 0.0, field.width - inset * 2.0, field.height)
-            self.box.value().repaint()
+            let selected = try self.input.pointer(Event(kind = event.kind, x = event.x - field.x, y = event.y - field.y, button = event.button, shift = event.shift),
+                                                  self.font, inset, 0.0, field.width - inset * 2.0, field.height)
+            if selected or kind != input.EventKind.pointer_moved:
+                self.box.value().repaint()
             return true
         if kind == input.EventKind.focus_lost:
             try self.end_editing(true)
@@ -157,6 +158,7 @@ extend ParameterPanel:
     func key(event: Event) -> !:
         if self.current < 0 or self.current >= (i64)self.total or not self.rows[(usize)self.current].shown:
             self.current = self.next_row(-1, false)
+            self.box.value().repaint()
         let row = self.current
         if row < 0:
             return

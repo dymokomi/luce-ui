@@ -180,7 +180,6 @@ pub struct Slider: Widget:
         if event.kind == input.EventKind.pointer_moved:
             if self.dragging:
                 return self.change(self.value_at(event.x, bounds.width, bounds.height))
-            self.box.value().repaint()
         elif event.kind == input.EventKind.pointer_up and event.button == 0:
             self.dragging = false
             self.box.value().repaint()

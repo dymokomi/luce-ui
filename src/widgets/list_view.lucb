@@ -189,6 +189,11 @@ pub struct ListView: Widget:
                 var chosen: i64[1] = [self.selection]
                 try self.box.value().start_drag(self.gesture.dragged_kind(), chosen)
             return false
+        if event.kind == input.EventKind.pointer_moved:
+            # The hovered row is lit: a move draws only when it reaches another row.
+            let row = (i64)math.floor((event.y + self.scroll) / self.row_height())
+            self.box.value().hover_part(row if row < (i64)self.items.length else -1)
+            return false
         if event.kind == input.EventKind.pointer_up:
             _ = self.gesture.release()
             return false

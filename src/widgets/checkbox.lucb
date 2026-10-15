@@ -110,9 +110,7 @@ pub struct Checkbox: Widget:
         if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
             self.box.value().request_focus()
             return self.toggle()
-        if event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_left:
-            self.box.value().invalidate()
-        elif event.kind == input.EventKind.key_down and not event.repeated and (event.key == input.Key.space or event.key == input.Key.enter):
+        if event.kind == input.EventKind.key_down and not event.repeated and (event.key == input.Key.space or event.key == input.Key.enter):
             return self.toggle()
         return result.success[unit](())
 

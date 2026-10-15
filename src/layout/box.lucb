@@ -64,6 +64,8 @@ pub struct Layout:
     var hovered: bool
     var pointer_within: bool
     var pointer: Point
+    ## The part of the widget lit under the pointer (`hover_part`), -1 for none.
+    var lit_part: i64
     var editing: bool
     var hover_transparent: bool
     var drop_target: bool
@@ -138,6 +140,7 @@ pub struct Layout:
         self.hovered = false
         self.pointer_within = false
         self.pointer = Point()
+        self.lit_part = -1
         self.editing = false
         self.hover_transparent = false
         self.drop_target = false
@@ -310,8 +313,20 @@ pub struct Layout:
         return self.pointer_within
 
     ## Coordinates are local to this layout, valid while contains_pointer is true.
+    ## A move of the pointer alone draws no frame: a widget that draws something
+    ## at the pointer says what changed (`hover_part`, `repaint`).
     pub func pointer_position() -> Point:
         return self.pointer
+
+    ## For a widget that lights a part of itself under the pointer (a row, a
+    ## button, a handle): name the part the pointer is over now, -1 for none, as
+    ## it moves. The window draws again only when the part changes, so moves
+    ## within one part cost nothing. The pointer coming onto or leaving the box
+    ## (`is_hovered`, `contains_pointer`) draws again by itself.
+    pub func hover_part(part: i64):
+        if part != self.lit_part:
+            self.lit_part = part
+            self.repaint()
 
     # mark: Drop areas =========================================================================
 

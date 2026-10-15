@@ -46,6 +46,32 @@ extend State:
         self.drag_inside = false
         self.show_visible()
 
+    ## Which piece of the chrome lights under (`x`, `y`), as the chrome draws its
+    ## hover (a divider, a tab or its close button, a strip button), as one number;
+    ## 0 for none. The stack draws again only when it changes (`Layout.hover_part`).
+    pub func chrome_part(x: f64, y: f64) -> i64:
+        let geometry = self.geometry(self.size())
+        if self.model.root == 0:
+            let add = gpu.Rect(math.max(0.0, self.size().width - self.height()), 0.0, self.height(), self.height())
+            return 1 if strip.contains(add, x, y) else 0
+        for group in 1..<self.model.nodes.length:
+            let node = self.model.nodes[group]
+            if not node.used: continue
+            let base = (i64)group * 4096
+            if node.first != 0:
+                if strip.contains(geometry.dividers[group], x, y): return base + 1
+                continue
+            let header = self.strip(group, geometry.panes[group])
+            if strip.contains(header.previous, x, y): return base + 2
+            if strip.contains(header.next, x, y): return base + 3
+            if strip.contains(header.add, x, y): return base + 4
+            for order in header.first..<header.first + header.count:
+                let bounds = header.tab(order)
+                if bounds.width > 0.0 and strip.contains(bounds, x, y):
+                    let closing = x >= bounds.x + bounds.width - bounds.height
+                    return base + 8 + (i64)order * 2 + (1 if closing else 0)
+        return 0
+
     ## The stack's own input, for presses on its chrome rather than panel content.
     ## A press on a divider drags it; on an add button it opens the menu on
     ## release; on a tab it selects it, or on the tab's close button asks to close

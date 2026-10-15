@@ -16,6 +16,9 @@ extend TextEditor:
                 self.swatch_hover = over
                 self.box.value().set_cursor(input.Cursor.pointer if over else input.Cursor.text)
             self.rest_pointer(event.x, event.y)
+            # The gutter lights the row under the pointer (a fold's marker): a move
+            # draws only when it reaches another row.
+            self.box.value().hover_part((i64)math.floor((event.y + self.scroll_y) / self.font.value().line_height()) if event.x < self.gutter_width() else -1)
             return result.success[unit](())
         # Anything else (a press, a key, a scroll, the pointer leaving) ends a tooltip.
         self.forget_tip()

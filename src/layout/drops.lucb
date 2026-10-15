@@ -60,6 +60,9 @@ func free_text(text: str):
 
 ## The drag inside the window ends, whichever way: its payload goes.
 func end_drag():
+    # The badge goes with it.
+    if drag_active:
+        bump_paint()
     drag_pending = false
     drag_active = false
     drag_source = 0
@@ -280,6 +283,7 @@ extend Tree:
         drag_pending = false
         drag_active = true
         drag_copy_now = event.modifiers.alt
+        bump_paint()
         let cancelled = self.cancel(self.capture)
         if not cancelled.is_success():
             end_drag()
@@ -298,12 +302,17 @@ extend Tree:
                 self.pointer_y = event.y
                 self.pointer_present = math.is_finite(event.x) and math.is_finite(event.y)
                 drag_copy_now = event.modifiers.alt
+                # The badge follows the pointer.
+                bump_paint()
                 return self.dispatch_drag(input.EventKind.drag_moved, event.x, event.y)
             .pointer_left:
                 self.pointer_present = false
+                bump_paint()
                 return self.leave_drop()
             .modifiers_changed:
-                drag_copy_now = event.modifiers.alt
+                if drag_copy_now != event.modifiers.alt:
+                    drag_copy_now = event.modifiers.alt
+                    bump_paint()
                 if not self.pointer_present:
                     return result.success[unit](())
                 return self.dispatch_drag(input.EventKind.drag_moved, self.pointer_x, self.pointer_y)

@@ -168,6 +168,11 @@ pub struct ConfirmDialog: Widget:
             let bounds = self.box.value().bounds()
             if event.inside and event.y >= bounds.height - self.row_height() and pressed >= 0 and self.slot_role(event.x) == pressed:
                 return self.choose(pressed)
+        elif event.kind == input.EventKind.pointer_moved:
+            # The button under the pointer is lit: a move draws only when it reaches another.
+            let bounds = self.box.value().bounds()
+            self.box.value().hover_part((i64)math.clamp(event.x / (bounds.width / 3.0), 0.0, 2.0) if event.inside and event.y >= bounds.height - self.row_height() else -1)
+            return result.success[unit](())
         self.box.value().invalidate()
         return result.success[unit](())
 

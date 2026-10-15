@@ -38,7 +38,10 @@ pub struct Application:
     var running: bool
     var operating: bool
     var closed: bool
+    ## Whether the next turn draws a frame though no epoch moved: `invalidate`, a
+    ## resize, a command run, a skipped present.
     var dirty: bool
+    ## The drawing epoch (`layout.epoch`) the last frame drew.
     var last_epoch: u64
     var last_render: u64
     ## A digest of the render failure last reported, 0 after a clean frame: a
@@ -182,9 +185,23 @@ pub struct Application:
         self.operating = false
 
     ## Request that the next loop iteration present a frame, for a change that no
-    ## input event announced — a timer, a background result, or a script mutation.
+    ## widget announced: a timer, a background result, or a script mutation drawn
+    ## by a widget that does not repaint for it.
+    ##
+    ## Input alone draws nothing. A frame is drawn when the layout's drawing epoch
+    ## moved (a widget's `repaint`, `reposition` or `invalidate`, or a luce-ui
+    ## setter), when the pointer lights another box, when keyboard focus moves,
+    ## after a command's shortcut ran, on a resize, the window gaining or losing
+    ## focus, or an appearance change, for a due wake-up (`layout.wake_at`: a
+    ## caret's blink), after `invalidate`, and every turn in game mode. A pointer
+    ## move that changes none of these costs no frame.
     pub func invalidate():
         self.dirty = true
+
+    ## Whether the next turn draws a frame (see `invalidate`), leaving aside a due
+    ## wake-up and a skipped frame's backoff.
+    pub func needs_frame() -> bool:
+        return self.game or self.dirty or layout.epoch() != self.last_epoch
 
     ## Run a callback once, `seconds` from now, on the main loop. A UI change it
     ## makes is presented on its own, since mutating a widget marks the tree dirty.
@@ -244,7 +261,14 @@ pub struct Application:
     pub func unwatch(id: i64):
         self.watches.remove(id)
 
-    ## Frame callbacks receive elapsed seconds since the preceding iteration.
+    ## Frame callbacks receive elapsed seconds since the preceding iteration. They run
+    ## once every turn of the loop, before it decides whether to draw: after each
+    ## batch of input, a timer, a watch, a notifier, a wake-up (`wake_after`), and at
+    ## least once a second while idle. A turn draws a frame only when something
+    ## asked for one (`invalidate`), so a callback that changes what a widget
+    ## draws must say so: a luce-ui setter, the widget's `repaint`, or `invalidate`.
+    ## Connecting one asks for no frames: an animation asks for its next turn with
+    ## `wake_after` and draws by invalidating.
     pub func on_frame(callback: interop.Callback[f64, unit]) -> interop.Reference[interop.Connection]!:
         try self.check()
         return try self.frames.connect(callback)
@@ -446,6 +470,9 @@ pub struct Application:
             let handled = dispatched.get() catch failure:
                 return result.failure[unit](failure.code, failure.message)
             if handled:
+                # A command changes the application's state, which some widget
+                # may draw without having heard: draw a frame.
+                self.dirty = true
                 return result.success[unit](())
         return self.tree.dispatch(event)
 
@@ -473,11 +500,14 @@ pub struct Application:
         try layout.set_drop_payload(paths)
 
     ## Arrange the tree at the target's size and draw it into the target. The
-    ## caller acquires and presents the frame.
+    ## caller acquires and presents the frame. What it draws is no longer due
+    ## (`needs_frame`); a change made while drawing (an animation's next step) is.
     pub func render(target: interop.View[gpu.RenderTarget]) -> interop.Outcome[unit]:
         self.begin_operation() catch failure:
             return result.failure[unit](failure.code, failure.message)
         defer self.end_operation()
+        self.dirty = false
+        self.last_epoch = layout.epoch()
         let native = target.get() catch failure:
             return result.failure[unit](failure.code, failure.message)
         let size = native.size() catch failure:
@@ -649,12 +679,11 @@ pub struct Application:
             delivered.release()
             if not self.running:
                 break
-            # Present only when something changed: an input event marked us dirty, a
-            # widget bumped the layout epoch, or a focused caret is due to blink. An
-            # idle window with no focused editor renders nothing and rests the GPU.
-            # Game mode presents every serviced turn so a software renderer can run
-            # at the requested fps without a layout mutation each frame.
-            let epoch_now = layout.epoch()
+            # Present only when something changed (`invalidate` lists what does) or
+            # a focused caret is due to blink. An idle window, or a pointer moving
+            # over nothing that lights up, renders nothing and rests the GPU. Game
+            # mode presents every serviced turn so a software renderer can run at
+            # the requested fps without a layout mutation each frame.
             let moment = time.now()
             # A frame the GPU skipped (a locked screen, a sleeping display) waits out
             # its backoff before it is drawn again.
@@ -664,7 +693,7 @@ pub struct Application:
             let caret_due = layout.take_due_wake(moment)
             if caret_due and retrying:
                 self.dirty = true
-            if not retrying and (self.game or self.dirty or epoch_now != self.last_epoch or caret_due):
+            if not retrying and (self.needs_frame() or caret_due):
                 let frame = surface.frame() catch failure:
                     return result.failure[unit](failure.code, failure.message)
                 defer frame.release()
@@ -711,8 +740,8 @@ pub struct Application:
                 # dirty and is retried after a backoff.
                 if not resized:
                     self.retry.presented(presented, moment)
-                self.dirty = presented == gpu.PresentResult.skipped
-                self.last_epoch = epoch_now
+                if presented == gpu.PresentResult.skipped:
+                    self.dirty = true
                 self.last_render = moment
             count += 1
             if frame_limit > 0 and count >= frame_limit:
@@ -757,9 +786,12 @@ pub struct Application:
 
     ## Apply one event: request a close (honoring the close handler), re-layout on a
     ## resize, or dispatch it to the tree — routing a dispatch failure to the error
-    ## handler when one is set. Every event marks the frame dirty so it is presented.
+    ## handler when one is set. Input draws a frame only when what it changed says
+    ## so (`invalidate`); the window's own changes (a resize, gaining or losing
+    ## focus, a new appearance) always draw, which also redraws a window shown again.
     func handle_event(host: window.Window, event: input.Event) -> interop.Outcome[unit]:
-        self.dirty = true
+        if event.kind == input.EventKind.resized or event.kind == input.EventKind.focus_gained or event.kind == input.EventKind.focus_lost or event.kind == input.EventKind.appearance_changed:
+            self.dirty = true
         self.retry.interrupt()
         if event.kind == input.EventKind.close_requested:
             if let handler = self.close_handler:
@@ -814,7 +846,7 @@ pub struct Application:
             return budget
         # A widget that changed the layout while drawing (an accordion easing a
         # section open) wants the next frame at once, not after the next event.
-        if not retrying and (self.dirty or self.tree.is_animating() or layout.epoch() != self.last_epoch):
+        if not retrying and (self.needs_frame() or self.tree.is_animating()):
             return 0
         # A notify that came during the turn: its wake may have been taken already.
         if self.notifiers.waiting():

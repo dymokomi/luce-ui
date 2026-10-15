@@ -1,6 +1,7 @@
 ## Dynamic workspace composition. Applications supply panels and respond to add
 ## and close requests; the framework owns all geometry and docking interaction.
 from luce_gpu import gpu
+from luce_window import input
 import interop
 import memory
 from luce_std import math
@@ -336,6 +337,13 @@ pub struct DStack: Widget:
     pub func event(event: Event) -> interop.Outcome[unit]:
         self.state.value().handle(event) catch failure:
             return result.failure[unit](failure.code, failure.message)
+        # A move lights the chrome under the pointer, drawn only when that changes
+        # (a drag draws itself); anything else may change a press or the divider
+        # the keys move, and draws.
+        if event.kind == input.EventKind.pointer_moved and not event.cancelled:
+            self.box.value().hover_part(self.state.value().chrome_part(event.x, event.y) if event.inside else 0)
+        else:
+            self.box.value().repaint()
         return result.success[unit](())
 
     pub func close():

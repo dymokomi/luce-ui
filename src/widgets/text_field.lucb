@@ -179,9 +179,10 @@ pub struct TextField: Widget:
                 self.box.value().invalidate()
                 return result.success[unit](())
         if event.kind == input.EventKind.pointer_down or event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_up:
-            self.input.pointer(event, self.font, inset, 0.0, bounds.width - inset * 2.0, bounds.height) catch failure:
+            let selected = self.input.pointer(event, self.font, inset, 0.0, bounds.width - inset * 2.0, bounds.height) catch failure:
                 return result.failure[unit](failure.code, failure.message)
-            self.box.value().invalidate()
+            if selected:
+                self.box.value().repaint()
             return result.success[unit](())
         if event.kind == input.EventKind.focus_lost:
             return self.commit()

@@ -111,7 +111,9 @@ pub struct ShortcutField: Widget:
 
     pub func event(event: Event) -> interop.Outcome[unit]:
         if event.cancelled or not self.box.value().is_enabled():
-            self.recording = false
+            if self.recording:
+                self.recording = false
+                self.box.value().repaint()
             return result.success[unit](())
         if event.kind == input.EventKind.pointer_down and event.button == 0 and event.inside:
             self.box.value().request_focus()
@@ -122,8 +124,6 @@ pub struct ShortcutField: Widget:
             self.recording = false
             self.box.value().invalidate()
             return result.success[unit](())
-        if event.kind == input.EventKind.pointer_moved or event.kind == input.EventKind.pointer_entered or event.kind == input.EventKind.pointer_left:
-            self.box.value().invalidate()
         if event.kind == input.EventKind.key_down and not event.repeated:
             if self.recording:
                 return self.record(event)

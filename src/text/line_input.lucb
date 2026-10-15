@@ -136,17 +136,24 @@ pub struct LineInput:
                 try editing.move(&self.document, self.document.last() if not event.shift and self.document.first() != self.document.last() else offset, event.shift)
         return before != self.document.version()
 
-    pub func pointer(event: Event, font: interop.Reference[Font], x: f64, y: f64, width: f64, height: f64) -> !:
+    ## Place the caret with a press in the field (`x`, `y`, `width`, `height`) and
+    ## select by dragging; whether the field shows anything different, so a plain
+    ## pointer move over it draws nothing.
+    pub func pointer(event: Event, font: interop.Reference[Font], x: f64, y: f64, width: f64, height: f64) -> bool!:
         if event.kind == input.EventKind.pointer_up or event.cancelled:
             self.dragging = false
-            return
+            return false
+        let anchor = self.document.anchor()
+        let caret = self.document.caret()
+        let first = self.first
         if event.kind == input.EventKind.pointer_down and event.button == 0 and event.x >= x and event.x < x + width and event.y >= y and event.y < y + height:
             self.first = self.window_start(visible_cells(font, width))
             let offset = self.offset_at(font.value().advance(), event.x - x)
-            try self.document.select(self.document.anchor() if event.shift else offset, offset)
+            try self.document.select(anchor if event.shift else offset, offset)
             self.dragging = true
         elif event.kind == input.EventKind.pointer_moved and self.dragging:
-            try self.document.select(self.document.anchor(), self.offset_at(font.value().advance(), event.x - x))
+            try self.document.select(anchor, self.offset_at(font.value().advance(), event.x - x))
+        return self.document.anchor() != anchor or self.document.caret() != caret or self.first != first
 
     ## The caret boundary nearest a point `x` points right of the shown text's left
     ## edge, in cells of `advance` points from the first shown scalar.
